@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.4.0 - agents never sleep, an open market, scenarios, a self-limiting bag
+
+- Ranking is by matched stakes (the most uncertain runs first), ties to the cheapest, then the oldest; `[pit] rank = "matched_per_usd"` keeps the old per-dollar order.
+- A wallet may post at most `[pit] max_posts_per_hour` jobs an hour (default 4; the house is exempt).
+- `budget_s` is capped at 3600: a longer spec is refused, and every run stops at `min(2 x budget_s, 3600)`.
+- Scenario jobs: `scenario = "<name>"` on a lane with a `runner` template gets a harness-supplied driver and preflight; the driver is recorded on the claim row.
+- `q list --scenarios` prints the scenario names, read from `[bench] scenario_dir` (default `scenarios/` in the state directory); `q add` refuses an unknown one.
+- `q status` tags a job with no `run` or `scenario` as `desk`, and `q why` calls it `undriven`.
+- No spend cap by default: `[autopilot] max_usd_per_hour` unset or 0 reports the hour spend and never blocks.
+- The hour spend counts the last result per job, so a cost correction replaces the row it corrects.
+- `max_subagent_runs_per_hour` is a budget, not a gate: over it the loop writes one `auto refuse` row per hour and keeps going.
+- Concurrency defaults to one sub per persistent agent plus one for the reflection pass (`max_concurrent_subagents` still overrides).
+- Agents never sleep: each persistent agent is re-woken `[autopilot] idle_wake_gap_s` (90) after its turn ends; a result of its own wakes it at once.
+- Agent prompts: an experiment is a runnable job, idle compute is a bug, and every turn must leave the market changed; the pit skill's step 5 says the same.
+- A desk job is re-handed to its proposer every heartbeat window until it has a result; the third re-hand is flagged `desk-stalled` in the reflection digest.
+- `[autopilot] allowed_tools` gives subs an explicit tool allowlist (`--allowedTools`), and `add_dirs` passes directories a sub may touch (`--add-dir`).
+- Per-lane idle clock: `idle_s` in `/market.json`, one `auto idle` row after 5 minutes, red in the terminal after 2 minutes, and idle lanes are named first in agent prompts.
+- The terminal's agents panel lists root agents only, with their turn count and the age of the last turn; the header reads `N agents · M turns`.
+- The bag: a spec is drawn at most once per `[bag] min_interval_minutes` (120), counting any job on the same scenario and lane.
+- The bag: a spec whose last `[bag] quarantine_after` (3) results were fail or invalid leaves the rotation (the invalid streak is lane-wide) until a pass or a `bag-readmit <spec>` note.
+- The bag: an invalid draw does not count toward the day's `max_per_day`.
+- The bag: a `bag-reset <lane>` auto note clears a lane's invalid backoff.
+- The bag: scalar keys under `[bag]` apply to every lane unless the lane sets its own, and a spec's own budget beats the lane's fallback.
+- The bag: at the daily cap, the tick, `q status` and `q why` say `daily cap reached, resets <next 00:00Z>`.
+- Reflection's `rows` predicate counts work rows only (nodes, results, cancels, decisions, claims, bets, edges).
+- `q edge` refuses a node that does not exist; `q result` refuses a job on a dead branch without `--force`; a verdict-only correction keeps the cost already booked.
+- A proposer that settles its own run-less job at $0 gets its own bets refunded instead of winning the pot.
+- Fixed: a hand-back with no job names its wake or result ref instead of `handback:?`.
+- Fixed: a heartbeat test depended on the time of day.
+
 ## 0.3.2 - claim push is opt-in and always releases on failure; orphaned claims settle invalid; bag preflight and backoff; junk rows are not events
 
 - `[git] push` (default false): `q run` claims are a local commit unless it is true; with no remote it is a local lock. A claim whose push keeps failing is released, never stranded. Autopilot settles a claim with no live run after 2x budget + 60 s as `invalid`.

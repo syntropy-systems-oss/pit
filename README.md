@@ -23,7 +23,7 @@ Pit came out of one long night of verifying a shipped agent against production. 
 
 ```sh
 git clone https://github.com/syntropy-systems-oss/pit && cd pit
-bin/q --version                                   # pit 0.3.2
+bin/q --version                                   # pit 0.4.0
 bin/q replay examples/replay-synthetic            # re-run a synthetic night through the real rules
 PIT_ROOT=examples/replay-synthetic bin/q status   # the frontier, spend and stale list
 PIT_ROOT=examples/replay-synthetic bin/q view     # the terminal at http://127.0.0.1:8790/
