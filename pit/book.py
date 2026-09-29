@@ -62,7 +62,7 @@ class Book:
                     self._add(a, usd)
             elif t == "node" and r.get("kind") == "job" and r["spec"].get("proposer"):
                 self.proposers[r["id"]] = r["spec"]["proposer"]
-                if not r["spec"].get("seed") and r["spec"]["proposer"] != HUMAN:   # seeds and human posts debit no wallet
+                if not r["spec"].get("seed") and not r["spec"].get("bag") and r["spec"]["proposer"] != HUMAN:   # seeds, bag draws and human posts debit no wallet
                     self._add(self.wallet(r["spec"]["proposer"]), -r["spec"].get("budget_usd", 0))
             elif t == "claim":
                 closed.add(r["job"])
@@ -245,7 +245,7 @@ def board_events(rows: list[dict], book: Book, fam: set[str], since: int) -> lis
         r = rows[i]
         mine = (r["spec"].get("proposer") if r.get("kind") == "job" else r.get("agent")) if r["t"] == "node" else \
             book.proposers.get(r["job"]) if r["t"] == "result" else r.get("agent") if r["t"] == "bet" else None
-        if r["t"] in ("node", "result", "settle", "bet") and mine not in fam and "seed" not in r.get("tags", []):
+        if r["t"] in ("node", "result", "settle", "bet") and mine not in fam and not {"seed", "bag"} & set(r.get("tags", [])):
             out.append(i)
     return out
 
@@ -258,7 +258,7 @@ def digest(rows: list[dict], events: list[int]) -> str:
         if r["t"] == "node" and r.get("kind") == "job":
             for v in variants(r["spec"]):
                 t = book.totals(r["id"], v)
-                lines[f"m{r['id']}/{v}"] = (f"new market {r['id']}/{v} PASS ${t['pass']:.2f} / FAIL ${t['fail']:.2f} · "
+                lines[f"m{r['id']}/{v}"] = (f"new market {r['id']}/{v}{' [bag]' if r['spec'].get('bag') else ''} PASS ${t['pass']:.2f} / FAIL ${t['fail']:.2f} · "
                                             f"${r['spec'].get('budget_usd', 0)} {r['spec'].get('lane')} · {r['spec'].get('question', '')[:60]}")
         elif r["t"] == "node":
             lines[f"f{r['id']}"] = f"finding {r['id']}: {r.get('text', '')[:80]}"
@@ -384,8 +384,8 @@ def calibration(rows: list[dict]) -> str:
         other = "fail" if b["side"] == "pass" else "pass"
         herd = tot[b["side"]] > tot[other]
         tot[b["side"]] += b["usd"]
-        if "seed" in b.get("tags", []):
-            continue                      # the house's seed is not a forecast
+        if {"seed", "bag"} & set(b.get("tags", [])):
+            continue                      # the house's seed and bag stakes are not forecasts
         s = stats.setdefault(b["book"], {"bets": 0, "wins": 0, "staked": 0.0, "returned": 0.0, "brier": [],
                                          "herd": 0, "self": 0})
         if "self" in b.get("tags", []):

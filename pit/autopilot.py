@@ -18,13 +18,21 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import lanes, ledger as L, book as B, reflect
+from . import bag, lanes, ledger as L, book as B, reflect
 
 REPO = Path(__file__).resolve().parent.parent
 RULES = ("Money is a scheduling signal, not real. Never spend real money, never send messages to people, never touch "
          "production; bench runs use mocks only; nothing over an hour.")
+CLAIM = ("Your brief is a claim to prove or refute; it is your goal. This turn: (1) state the claim in one line and the "
+         "strongest evidence for and against it from your thread. (2) Your next experiment: name the cheapest run "
+         "that could change your mind and post it (`q post --as <you>` — you pay; if you cannot afford the lane you "
+         "want, post it on a cheaper lane or `q sleep --until-balance` naming the run). Posting is the primary action "
+         "every turn unless you are waiting on a run of yours; or record a finding if your evidence already settles something.")
+BOARD = ("The board is context. If an open run bears on your claim you may bet on it (that is how you get paid for "
+         "understanding what others are finding), and you may bet where you have a reason even if it does not. The market "
+         "is not the goal: it buys you time on the machines and pays you for understanding.")
 DEFAULTS = {"max_usd_per_hour": 40.0, "max_concurrent_subagents": 3, "any_workers": 2, "permission_mode": "",
-            "max_subagent_runs_per_hour": 12}
+            "max_subagent_runs_per_hour": 12, "heartbeat_minutes": 20, "heartbeat_min_usd": 1.0}
 
 
 def conf(cfg: dict) -> dict:
@@ -40,7 +48,7 @@ def subagent_runs(rows: list[dict], now: datetime) -> int:
     """Real-token spawns (hand-backs, event wakes + reflections) in the last hour."""
     cut = B.iso(now - timedelta(hours=1))
     return sum(1 for r in rows if r["t"] == "auto" and r["ts"] >= cut and
-               (r["type"] in ("handback", "reflect") or (r["type"] == "wake" and r["reason"].startswith("event:"))))
+               (r["type"] in ("handback", "reflect") or (r["type"] == "wake" and r["reason"].startswith(("event:", "heartbeat")))))
 
 
 def duration(text: str) -> float:
@@ -61,6 +69,13 @@ def awake(rows: list[dict]) -> list[str]:
         elif r["t"] == "sleep" and book.wallet(r["agent"]) in last:
             last[book.wallet(r["agent"])] = -1
     return sorted(a for a, i in last.items() if i >= 0)
+
+
+def last_acted(rows: list[dict], book: B.Book, agent: str) -> str | None:
+    """ts of the newest post, bet or finding by the agent or its subs."""
+    fam = book.family(agent)
+    return max((r["ts"] for r in rows if (r["t"] == "bet" and r.get("agent") in fam) or (r["t"] == "node" and (
+        r["spec"].get("proposer") if r.get("kind") == "job" else r.get("agent")) in fam)), default=None)
 
 
 def status(rows: list[dict], cfg: dict, now: datetime) -> dict:
@@ -138,6 +153,7 @@ class Autopilot:
                   f"subagents {len(self.subs)}/{self.c['max_concurrent_subagents']} · "
                   f"subagent_runs_hour {subagent_runs(rows, now)} / {self.c['max_subagent_runs_per_hour']} · STOP file absent")
         self.dispatch(rows, now)
+        bag.regressions(self.lg, self.echo)
         self.desk()
         self.handback(now)
         self.events(now)
@@ -161,7 +177,7 @@ class Autopilot:
                 self.echo(f"{head} busy ({', '.join(sorted(busy))})")
                 continue
             if not picks:
-                self.echo(f"{head} free, nothing runnable with a `run`")
+                self.fill_from_bag(lane, head, st, rows, now, spent, cap)
                 continue
             if spent > cap:
                 self.echo(f"{head} REFUSED {picks[0]}: hour spend ${spent:.2f} > cap ${cap:.2f}")
@@ -179,6 +195,34 @@ class Autopilot:
                 self.echo(f"{head} gate {gate} · pick {j} ({why}) · claim + run, stop at {2 * s['budget_s']}s")
                 self.auto("dispatch", why, lane, j, book.proposers.get(j))
                 self.runs[j] = (lane, self.spawn_run(j, now))
+
+    def fill_from_bag(self, lane, head, st, rows, now, spent, cap):
+        """Idle lane (B.order had nothing dispatchable): post one bag draw as `house` and run it. Spend counts against the hour cap."""
+        c = bag.conf(self.cfg, lane)
+        if not c or not c["enabled"]:
+            return self.echo(f"{head} free, nothing runnable with a `run`")
+        n, no = bag.today(rows, lane, now), f"{head} free, nothing runnable; bag "
+        if bag.active(st, lane):
+            return self.echo(f"{no}{n}/{c['max_per_day']} today: one bag job at a time")
+        if n >= c["max_per_day"]:
+            return self.echo(f"{no}{n}/{c['max_per_day']} today: cap reached")
+        if spent > cap:
+            self.auto("refuse", f"bag: hour spend ${spent:.2f} > cap ${cap:.2f}", lane)
+            return self.echo(f"{no}REFUSED: hour spend ${spent:.2f} > cap ${cap:.2f}")
+        ok, gate = lanes.gate_open(self.cfg, lane)
+        if not ok:
+            return self.echo(f"{no}{n}/{c['max_per_day']} today: gate {gate}")
+        drawn = bag.draw(self.root, rows, self.cfg, lane, c, now, self.echo)
+        if not drawn:
+            return self.echo(f"{no}{n}/{c['max_per_day']} today: empty (no valid spec in {c['specs']})")
+        s, last = drawn
+        spec = bag.post(self.lg, self.cfg, s, lane, c, stamp(now))
+        stake = B.Book(self.lg.rows()).totals(spec["id"], "main")["pass"]
+        why = f"bag draw {s['id']}, last run {last or 'never'}, house PASS ${stake:.2f}"
+        self.echo(f"{head} gate {gate} · BAG {spec['id']} ({why}; ${spec['budget_usd']} / {spec['budget_s']}s; "
+                  f"bag {n + 1}/{c['max_per_day']} today) · post as house + claim + run, stop at {2 * spec['budget_s']}s")
+        self.auto("dispatch", why, lane, spec["id"], B.HOUSE)
+        self.runs[spec["id"]] = (lane, self.spawn_run(spec["id"], now))
 
     def desk(self):
         """A frontier job with no `run` is work for its proposer: hand it over as a wake (once)."""
@@ -251,6 +295,7 @@ class Autopilot:
         book = B.Book(rows)
         if self.base is None:
             self.base = len(rows)
+            self.t0 = B.iso(now)      # the heartbeat clock starts with the loop
         due = []
         for a, r in book.agents.items():
             if r["kind"] != "persistent" or a == B.REFLECT or a in self.subs or B.explicit_sleep(rows, book, a):
@@ -261,8 +306,10 @@ class Autopilot:
             ev = B.board_events(rows, book, book.family(a), self.seen[a])
             if ev:
                 due.append((ev[0], a, ev))
+            elif self.idle(rows, book, a, now):
+                due.append((len(rows), a, []))
         for _, a, ev in sorted(due):
-            why = f"event:{len(ev)} rows"
+            why = f"event:{len(ev)} rows" if ev else "heartbeat"
             if len(self.subs) >= self.c["max_concurrent_subagents"]:
                 self.echo(f"wake {a}: REFUSED, subagents at cap {self.c['max_concurrent_subagents']} ({why})")
                 self.auto("refuse", f"subagents at cap {self.c['max_concurrent_subagents']}", agent=a)
@@ -273,9 +320,16 @@ class Autopilot:
                 sub = self.register(a, f"autopilot wake: {why}", now)
                 self.echo(f"wake {a}: spawn {sub} (sonnet) for {why}")
                 self.echo_wake(a, why)
-                text = "Since you last looked:\n" + B.digest(self.lg.rows(), ev)
+                text = "Since you last looked:\n" + B.digest(self.lg.rows(), ev) if ev else \
+                    f"Nothing on the board has moved for you in {self.c['heartbeat_minutes']} minutes."
                 self.subs[a] = (sub, self.claude(sub, "sonnet", self.prompt(sub, a, [], text)), None)
                 self.seen[a] = len(self.lg.rows())
+
+    def idle(self, rows, book, a, now) -> bool:
+        """Heartbeat: funded, and no post/bet/finding, wake or loop start in the last heartbeat window."""
+        cut = B.iso(now - timedelta(minutes=self.c["heartbeat_minutes"]))
+        woke = max((r["ts"] for r in rows if r["t"] == "auto" and r["type"] == "wake" and r["agent"] == a), default="")
+        return book.balance(a) >= self.c["heartbeat_min_usd"] and max(last_acted(rows, book, a) or "", woke, self.t0) < cut
 
     def capped(self, now) -> bool:
         return subagent_runs(self.lg.rows(), now) >= self.c["max_subagent_runs_per_hour"]
@@ -335,10 +389,11 @@ class Autopilot:
             f"You are {sub}, a sub of {agent}: act `--as {sub}`; your bets and posts book to {agent}. "
             f"The CLI is {REPO}/bin/q (on PATH as q; PIT_ROOT is set).",
             f"q thread {agent}:\n" + B.thread(self.lg.rows(), agent),
-            "\n".join(t for _, _, t in items), digest,
-            f"Decide: bet, post (you pay), record a finding, or pass. You MUST end your turn with exactly one sleep: "
-            f"`q sleep --as {sub} --until-event` to pass, or a longer condition (`--until-balance N`, "
-            f"`--until-result <job>`, `--minutes N`) with a one-line note. Never just stop."]))
+            "\n".join(t for _, _, t in items),
+            f"Your claim ({agent}'s brief): {B.Book(rows).agents[agent]['brief']}", CLAIM, digest, BOARD,
+            f"You MUST end your turn with exactly one sleep: `q sleep --as {sub} --until-result <your job>` when you have "
+            f"a run in flight, `--until-event` otherwise (`--until-balance N`, `--minutes N` also work), with a one-line "
+            f"note. Passing (posting nothing) is allowed only with a one-line reason. Never just stop."]))
 
     def env(self) -> dict:
         return {**os.environ, "PIT_ROOT": str(self.root), "PATH": f"{REPO / 'bin'}:{os.environ.get('PATH', '')}",

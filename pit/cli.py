@@ -233,7 +233,7 @@ def cmd_finding(a):
     root, lg, cfg = ctx()
     st = L.fold(lg.rows())
     fid = a.id or f"F:{a.source}-{sum(1 for f in st.findings.values() if f['from'] == a.source) + 1}"
-    lg.append({"t": "node", "kind": a.kind, "id": fid, "from": a.source, "text": a.text})
+    lg.append({"t": "node", "kind": a.kind, "id": fid, "from": a.source, "text": a.text, **({"agent": a.agent} if a.agent else {})})
     if a.source:
         lg.append({"t": "edge", "type": "produces", "from": a.source, "to": fid})
     for kind in ("refutes", "refines", "supersedes"):
@@ -380,7 +380,8 @@ def main(argv=None):
     p = sub.add_parser("finding"); p.add_argument("--from", dest="source"); p.add_argument("--text", required=True)
     p.add_argument("--id"); p.add_argument("--kind", default="finding", choices=("finding", "hypothesis"))
     p.add_argument("--refutes", action="append"); p.add_argument("--refines", action="append")
-    p.add_argument("--supersedes", action="append"); p.set_defaults(f=cmd_finding)
+    p.add_argument("--supersedes", action="append"); p.add_argument("--as", dest="agent", help="the agent recording it")
+    p.set_defaults(f=cmd_finding)
     p = sub.add_parser("edge"); p.add_argument("src"); p.add_argument("type", choices=L.EDGE_TYPES); p.add_argument("dst"); p.set_defaults(f=cmd_edge)
     p = sub.add_parser("review", help="re-admit a stale node"); p.add_argument("id"); p.add_argument("--note", required=True); p.set_defaults(f=cmd_review)
     p = sub.add_parser("result", help="record a hand-run result"); p.add_argument("id")

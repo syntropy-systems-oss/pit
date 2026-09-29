@@ -1,7 +1,7 @@
 """market_json(): what the terminal (view/terminal.html) needs, folded from the (already sliced) ledger. Read-only; reuses ledger.fold and B.Book/order/sleepers/calibration."""
 from datetime import datetime, timezone
 
-from . import autopilot, ledger as L, book as B
+from . import autopilot, bag, ledger as L, book as B
 
 TAPE = 200
 
@@ -121,7 +121,8 @@ def market_json(rows: list[dict], cfg: dict, now: datetime | None = None) -> dic
         q = [j for j in order if st.jobs[j]["spec"]["lane"] == name]
         lane_out.append({"lane": name, "price": l.get("usd_per_h", 0), "box": l.get("box", ""), "running": run,
                          "depth": len(q), "queue": [{"task": j, "score": mk[j]["score"], "matched": mk[j]["matched"], "budget": mk[j]["budget"],
-                                                     "fallback": j in fb, "proposer": mk[j]["proposer"]} for j in q], "spend_today": spend.get(name, 0.0)})
+                                                     "fallback": j in fb, "proposer": mk[j]["proposer"]} for j in q], "spend_today": spend.get(name, 0.0),
+                         "bag": (lambda c: c and {"n": bag.today(rows, name, now), "max": c["max_per_day"]})(bag.conf(cfg, name))})
 
     sleepers, fams = B.sleepers(rows), {}
     agents = []
@@ -129,7 +130,7 @@ def market_json(rows: list[dict], cfg: dict, now: datetime | None = None) -> dic
         z = sleepers.get(a)
         w = book.wallet(a)
         agents.append({"id": a, "kind": r["kind"], "parent": r.get("parent"), "brief": r["brief"], "wallet": w, "balance": round(book.balance(a), 4),
-                       "series": series.get(w, [])[-80:], "sleeping": bool(z and not z["wake"]),
+                       "series": series.get(w, [])[-80:], "last_acted": autopilot.last_acted(rows, book, a), "sleeping": bool(z and not z["wake"]),
                        "sleep": None if not z else {"until": B.until_text(z["sleep"]["until"]), "note": z["sleep"].get("note", ""), "since": z["sleep"]["ts"],
                                                      "woke": z["wake"]["reason"] if z["wake"] else None}})
     claimed = {}

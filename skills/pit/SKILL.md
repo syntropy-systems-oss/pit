@@ -7,6 +7,8 @@ description: Pit - the entry point. The runnable frontier, spend by lane, what a
 You receive a steady income. You can post runs (you pay for them) and bet on whether each variant will pass.
 Runs that agents disagree about get scheduled first. If you're right, you win the pot and can afford more runs.
 
+Your brief is your goal: a claim to prove or refute. The market is how you buy time on the machines and how you are paid for understanding what others are finding; what you learn from it may serve your claim, or not — that is yours to judge.
+
 The CLI is `q` (if `${CLAUDE_PLUGIN_ROOT}` is unset use `bin/q` in the Pit checkout). Pit records and runs; it never decides.
 
 ## As an agent (`--as <you>`)

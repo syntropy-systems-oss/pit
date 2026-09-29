@@ -198,6 +198,47 @@ class Autopilot(unittest.TestCase):
             self.assertIn("You MUST end your turn with exactly one sleep", c)
         self.assertEqual({r["note"] for r in self.lg.rows() if r["t"] == "sleep"}, {"auto: sub ended without sleeping"})
 
+    def test_wake_prompt_carries_the_claim_block(self):
+        ap = self.ap()
+        ap.tick()
+        add(self.lg, {**job("n1"), "proposer": "human"}, ts=L.now())
+        ap.tick()
+        ap.wait()
+        for c in self.stub_calls():
+            self.assertIn("Your claim (", c)
+            self.assertRegex(c, r"a brief: what a is trying to understand|b brief: what b is trying to understand")
+            self.assertIn(A.CLAIM, c)
+            self.assertLess(c.index("Your claim ("), c.index("Since you last looked:"))   # claim, experiment, then the board
+            self.assertLess(c.index("Your next experiment"), c.index("The board is context"))
+            self.assertIn("Your brief is a claim to prove or refute; it is your goal. This turn: (1) state the claim", c)
+            self.assertIn("--until-result <your job>", c)
+
+    def test_heartbeat_wakes_an_idle_funded_agent_once_per_window(self):
+        ap = self.ap()
+        t0 = datetime.now(timezone.utc)
+        ap.tick(t0)
+        self.lg.append({"t": "sleep", "agent": "b", "until": {"balance": 999}, "note": ""})   # b: explicit sleep
+        self.lg.append({"t": "node", "kind": "finding", "id": "F1", "text": "x", "agent": "a"})   # a acted just now
+        ap.tick(t0 + timedelta(minutes=10))
+        ap.wait()
+        self.assertEqual(self.wakes(""), [])                     # inside the window: nobody
+        self.assertGreaterEqual(B.Book(self.lg.rows()).balance("a"), 1.0)
+        ap.tick(t0 + timedelta(minutes=25))
+        ap.wait()
+        self.assertEqual(self.wakes(""), [("a", "heartbeat")])   # a idle 25 min; b explicitly sleeping stays asleep
+        rows = self.lg.rows()                                  # the wake itself starts a new window
+        self.assertFalse(ap.idle(rows, B.Book(rows), "a", datetime.now(timezone.utc)))
+        c = self.stub_calls()[-1]
+        self.assertIn(A.CLAIM, c)
+
+    def test_heartbeat_counts_against_the_cap(self):
+        ap = self.ap(sub_cap=0)
+        t0 = datetime.now(timezone.utc)
+        ap.tick(t0)
+        ap.tick(t0 + timedelta(minutes=25))
+        self.assertEqual(self.wakes(""), [])
+        self.assertTrue(self.auto("refuse"))
+
     def test_pass_sleeps_until_event_and_is_not_rewoken_without_one(self):
         ap = self.ap()
         ap.tick()

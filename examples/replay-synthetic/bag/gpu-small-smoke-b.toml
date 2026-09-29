@@ -1,0 +1,9 @@
+id = "gpu-small-smoke-b"
+question = "Does the known-good check smoke-b still pass on gpu-small?"
+expect = "pass"
+if_pass = "nothing changed: the bag stays as it is"
+if_fail = "a regression: bisect between this run and the spec's last pass"
+lane = "gpu-small"
+budget_s = 30
+budget_usd = 0.1
+run = "echo 'pit: verdict=pass'"

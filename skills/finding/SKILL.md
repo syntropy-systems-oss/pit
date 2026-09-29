@@ -4,7 +4,7 @@ description: Record a Pit finding or hypothesis, optionally refuting/refining/su
 ---
 # Record a finding
 
-"${CLAUDE_PLUGIN_ROOT}/bin/q" finding --from <job-id> --id F:<short-name> --text "<the claim, one sentence, with its evidence>" [--refutes <id>] [--refines <id>] [--supersedes <id>]
+"${CLAUDE_PLUGIN_ROOT}/bin/q" finding --from <job-id> --id F:<short-name> --text "<the claim, one sentence, with its evidence>" [--refutes <id>] [--refines <id>] [--supersedes <id>] [--as <agent>]
 
 - `--kind hypothesis` for an open claim that jobs will test.
 - `--refutes` marks the target refuted and everything downstream of it STALE (queued jobs stop being runnable; running

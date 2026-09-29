@@ -302,6 +302,7 @@ function renderLanes(m) {
   setHTML("lanes", m.lanes.map(l => {
     const r = l.running, pct = r ? Math.min(100, 100 * r.elapsed_s / Math.max(1, r.budget_s)) : 0, q = l.queue.slice(0, 8);
     return `<div class="lane" title="${esc(l.box || "")}"><div class="top"><span class="name">${esc(l.lane)}</span><span class="dim">${usd(l.price)}/h</span><span class="num fg2" title="spent today">${usd(l.spend_today)}</span></div>` +
+      (l.bag ? `<div class="dim">bag: ${l.bag.n}/${l.bag.max} today</div>` : "") +
       (r ? `<div class="st"><span class="b acc">run</span><span class="chip" data-task="${esc(r.job)}">${esc(r.job)}</span>${r.fallback ? '<span class="b q">fbk</span>' : ""}</div>` +
         `<div class="pr"><div class="prog" role="progressbar" aria-label="${esc(r.job)} elapsed of budget" aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100"><i class="${r.elapsed_s > r.budget_s ? "over" : ""}" style="width:${pct}%"></i></div>` +
         `<span class="num">${mmss(r.elapsed_s)}<span class="dim"> / ${mmss(r.budget_s)}</span></span></div>`
@@ -388,7 +389,7 @@ function renderAgents(m) {
     const c = cal[a.wallet], own = a.kind === "persistent";
     return `<div class="ag${d ? " sub" : ""}${S.agent === a.id ? " sel" : ""}" data-agent="${esc(a.id)}" tabindex="0" role="button" aria-label="open ${esc(a.id)}'s thread">` +
       `<div class="l1"><b>${esc(a.id)}</b>${a.sleeping ? '<span class="b acc">sleep</span>' : ""}<span class="num">${own ? usd(a.balance) : '<span class="dim">sub</span>'}</span></div>` +
-      `<div class="l2">${a.sleeping ? "wakes " + esc(a.sleep.until) : own && c ? `won ${c.wins}/${c.bets} · brier ${c.brier}` : esc(a.brief)}</div>${own ? spark(a.series) : ""}</div>`;
+      `<div class="l2">${a.sleeping ? "wakes " + esc(a.sleep.until) : own && c ? `won ${c.wins}/${c.bets} · brier ${c.brier}` : esc(a.brief)}${own ? ` · acted ${a.last_acted ? hms(a.last_acted) : "never"}` : ""}</div>${own ? spark(a.series) : ""}</div>`;
   }).join("") || `<div class="empty">no agents: add one with <code>q agent add &lt;id&gt; --brief "..."</code></div>`;
   const pnl = c => (parseFloat(c.returned) || 0) - (parseFloat(c.staked) || 0);
   const calt = m.calibration.length ? `<table id="cal" aria-label="calibration"><colgroup><col><col style="width:48px"><col style="width:64px"><col style="width:56px"><col style="width:48px"></colgroup>` +

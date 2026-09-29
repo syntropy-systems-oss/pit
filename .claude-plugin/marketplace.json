@@ -3,6 +3,6 @@
   "owner": { "name": "Syntropy Systems" },
   "description": "Pit: a prediction market that schedules experiments",
   "plugins": [
-    { "name": "pit", "source": "./", "description": "Pit: a prediction market that schedules experiments, over a ledger of jobs, findings and priced lanes.", "version": "0.2.0", "author": { "name": "Syntropy Systems" } }
+    { "name": "pit", "source": "./", "description": "Pit: a prediction market that schedules experiments, over a ledger of jobs, findings and priced lanes.", "version": "0.3.0", "author": { "name": "Syntropy Systems" } }
   ]
 }

@@ -13,7 +13,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import NAME, lanes, ledger as L, book as B, reflect
+from . import NAME, bag, lanes, ledger as L, book as B, reflect
 
 HUMAN = re.compile(r"\b(human|owner|approv\w*|decide|decision|ask)\b", re.I)
 MAX_LINES = 20
@@ -38,6 +38,10 @@ def status_block(root, today: str | None = None) -> str:
     for r in st.results:
         if r["ts"].startswith(today):
             spend[r["cost"]["lane"]] = spend.get(r["cost"]["lane"], 0) + r["cost"]["usd"]
+    for n in cfg["lanes"]:
+        c = bag.conf(cfg, n)
+        if c and c["enabled"]:
+            lines.append(f"  {n} bag: {bag.today(L.Ledger(root / 'ledger').rows(), n, datetime.now(timezone.utc))}/{c['max_per_day']} today")
     lines.append("  spend today: " + (", ".join(f"{k} ${v:.2f}" for k, v in sorted(spend.items())) or "$0"))
     rows = L.Ledger(root / "ledger").rows()
     since, why = reflect.since_last(rows), reflect.due(rows, datetime.now(timezone.utc), cfg)

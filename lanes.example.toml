@@ -53,4 +53,34 @@ max_concurrent_subagents = 3    # hand-back agents + the reflection pass alive a
 max_subagent_runs_per_hour = 12  # real-token guard: hand-backs, wakes and reflections started in the last hour; over it they are refused (reason `subagent cap`) and retried next tick
 any_workers = 2                 # lane `any` runs this many jobs at once
 permission_mode = ""            # claude -p --permission-mode; "" = the repo's, then the user's Claude Code defaultMode
+heartbeat_minutes = 20          # an idle, funded agent asleep until-event is woken after this long without acting (reason `heartbeat`)
+heartbeat_min_usd = 1.0         # ...if its balance is at least this (the cheapest lane's minimum post)
 # kill file: autopilot/STOP (checked every tick). Standing rules injected into every prompt: pit.autopilot.RULES
+
+# The bag (pit/bag.py): a lane with nothing runnable draws one known-good spec (least recently run first), posts it as
+# `house` (tag `bag`, a house PASS stake of house_stake usd per variant from the vig pool) and runs it. A failed run
+# becomes a "REGRESSION:" finding naming the spec's last pass. budget_usd / budget_s override the spec's; bag spend counts
+# against the hour cap; one bag job per lane at a time; a spec may carry its own max_per_day. Paths are relative to the state root.
+[bag.gpu-small]
+specs = ["bag/gpu-small-*.toml"]
+max_per_day = 6
+budget_usd = 0.5
+budget_s = 60
+house_stake = 0.25
+enabled = true
+
+[bag.gpu-large]
+specs = ["bag/gpu-large-*.toml"]
+max_per_day = 2
+budget_usd = 1
+budget_s = 60
+house_stake = 0.25
+enabled = true
+
+[bag.ci]
+specs = ["bag/ci-*.toml"]
+max_per_day = 2
+budget_usd = 1
+budget_s = 60
+house_stake = 0.25
+enabled = false                 # off until you want the house running builds

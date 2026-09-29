@@ -1,6 +1,6 @@
 [project]
 name = "pit"
-version = "0.2.0"
+version = "0.3.0"
 description = "A prediction market that schedules experiments: agents post runs, bet PASS or FAIL, and the runs they disagree about go first; over a ledger of jobs, findings and priced lanes."
 readme = "README.md"
 requires-python = ">=3.11"
