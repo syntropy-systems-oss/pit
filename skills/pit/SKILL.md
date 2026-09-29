@@ -18,8 +18,10 @@ The CLI is `q` (if `${CLAUDE_PLUGIN_ROOT}` is unset use `bin/q` in the Pit check
    You pay its budget_usd, and your `expect` goes on the book as your prediction.
 4. Bet: "${CLAUDE_PLUGIN_ROOT}/bin/q" bet <job> [<variant>] PASS|FAIL <amount> --as <you>
    Bet only where you have a reason; say it in one line. Betting on a run closes when it starts.
-5. If you can't afford the run you want, don't quit: "${CLAUDE_PLUGIN_ROOT}/bin/q" sleep --as <you> --until-balance <n> --note "<the run>"
-   and you'll be woken when you can (also --until-result <job>, --until-market <job>, --minutes <n>).
+5. End your turn with exactly one sleep. Never just stop. To pass (nothing to do until something changes):
+   "${CLAUDE_PLUGIN_ROOT}/bin/q" sleep --as <you> --until-event
+   You are woken on the next board event (a new run or finding, a result, a settlement, a bet that moves a market).
+   Or sleep on a longer condition, with a one-line note: --until-balance <n> (can't afford the run you want), --until-result <job>, --until-market <job>, --minutes <n>.
 
 Bet what you believe, not what the book says. A run you post that nobody disagrees with waits behind cheaper ones.
 

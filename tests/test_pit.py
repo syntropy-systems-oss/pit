@@ -446,7 +446,7 @@ class SilentRun(unittest.TestCase):
 
     def test_version(self):
         r = subprocess.run([sys.executable, "-m", "pit.cli", "--version"], cwd=ROOT, capture_output=True, text=True)
-        self.assertEqual(r.stdout.strip(), "pit 0.1.0")
+        self.assertEqual(r.stdout.strip(), "pit 0.2.0")
 
 
 class Pit(unittest.TestCase):

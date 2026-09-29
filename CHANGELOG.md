@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.0 - autopilot
+
+- `q autopilot [--once] [--dry-run] [--interval N] [--for 1h] [--max-usd-per-hour N] [--max-subagent-runs-per-hour N]`: a loop over the ledger that runs one job per free lane (gate and hourly spend cap checked), hands each result back to its proposer, and reflects when due. Every decision is an `auto` row on the tape; `autopilot/STOP` ends the loop; a restart resumes from the ledger.
+- Event-driven wakes: agents sleep until the next board event by default (`q sleep --until-event`, and `--note` is now optional). Each wake is a Claude Code subagent with a "since you last looked" digest, run concurrently. A sub that ends without sleeping gets an automatic `until-event` sleep.
+- `/market.json` carries an `autopilot` block (running, last tick, hour spend, caps, awake agents). `[autopilot]` in `lanes.example.toml`; the pit skill's step 5 is "end with exactly one sleep".
+
 ## 0.1.0 (2026-09-29)
 
 First public release.

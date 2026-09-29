@@ -198,7 +198,7 @@ def check_post(book: Book, cfg: dict, spec: dict, agent: str) -> str | None:
 
 # ---- sleep: an agent that cannot act yet hands the house a wake condition -------------------------------
 
-WAKE_KEYS = ("balance", "result", "market", "minutes")
+WAKE_KEYS = ("balance", "result", "market", "minutes", "event")
 
 
 def sleep_row(book: Book, agent: str, until: dict, note: str) -> dict:
@@ -206,7 +206,7 @@ def sleep_row(book: Book, agent: str, until: dict, note: str) -> dict:
     if agent not in book.agents:
         raise SystemExit(f"no agent {agent} (q agent add)")
     if not until:
-        raise SystemExit("q sleep needs a condition: --until-balance, --until-result, --until-market or --minutes")
+        raise SystemExit("q sleep needs a condition: --until-event, --until-balance, --until-result, --until-market or --minutes")
     return {"t": "sleep", "agent": agent, "until": until, "note": note}
 
 
@@ -225,8 +225,55 @@ def sleepers(rows: list[dict]) -> dict[str, dict]:
     return out
 
 
+def explicit_sleep(rows: list[dict], book: Book, agent: str) -> dict | None:
+    """The agent's (or its subs') standing sleep row with an explicit condition, else None. An `event` sleep, a
+    wake, or any claim/bet/post by the family clears it: that agent is event-driven (autopilot wakes it on board events)."""
+    fam, cur = book.family(agent), None
+    for r in rows:
+        actor = r.get("agent") if r["t"] in ("claim", "bet", "sleep", "wake") else \
+            r["spec"].get("proposer") if r["t"] == "node" and r.get("kind") == "job" else None
+        if actor in fam:
+            cur = r if r["t"] == "sleep" and "event" not in r["until"] else None
+    return cur
+
+
+def board_events(rows: list[dict], book: Book, fam: set[str], since: int) -> list[int]:
+    """Row indexes >= since that are board events to `fam`: a new job or finding node, a result, a settle, or a
+    (non-seed) bet. Its own posts, bets, findings and its own jobs' results are not events (hand-backs cover those)."""
+    out = []
+    for i in range(since, len(rows)):
+        r = rows[i]
+        mine = (r["spec"].get("proposer") if r.get("kind") == "job" else r.get("agent")) if r["t"] == "node" else \
+            book.proposers.get(r["job"]) if r["t"] == "result" else r.get("agent") if r["t"] == "bet" else None
+        if r["t"] in ("node", "result", "settle", "bet") and mine not in fam and "seed" not in r.get("tags", []):
+            out.append(i)
+    return out
+
+
+def digest(rows: list[dict], events: list[int]) -> str:
+    """'Since you last looked' (<= 30 lines): new markets with PASS/FAIL totals, moved markets, results, settlements, findings."""
+    book, st, lines = Book(rows), L.fold(rows), {}
+    for i in events:
+        r = rows[i]
+        if r["t"] == "node" and r.get("kind") == "job":
+            for v in variants(r["spec"]):
+                t = book.totals(r["id"], v)
+                lines[f"m{r['id']}/{v}"] = (f"new market {r['id']}/{v} PASS ${t['pass']:.2f} / FAIL ${t['fail']:.2f} · "
+                                            f"${r['spec'].get('budget_usd', 0)} {r['spec'].get('lane')} · {r['spec'].get('question', '')[:60]}")
+        elif r["t"] == "node":
+            lines[f"f{r['id']}"] = f"finding {r['id']}: {r.get('text', '')[:80]}"
+        elif r["t"] == "result":
+            lines[f"r{r['job']}"] = f"result {r['job']}: {r['verdict']}"
+        elif r["t"] == "settle":
+            lines[f"s{r['job']}/{r['variant']}"] = f"settled {r['job']}/{r['variant']}: {r['outcome']}"
+        elif r["t"] == "bet" and f"m{r['job']}/{r['variant']}" not in lines:
+            t = book.totals(r["job"], r["variant"])
+            lines[f"b{r['job']}/{r['variant']}"] = f"market moved {r['job']}/{r['variant']}: PASS ${t['pass']:.2f} / FAIL ${t['fail']:.2f}"
+    return "\n".join(_cap(list(lines.values()), 30, "events"))
+
+
 def until_text(u: dict) -> str:
-    return ", ".join(filter(None, [u.get("balance") is not None and f"balance ${u['balance']:.2f}",
+    return ", ".join(filter(None, [u.get("event") and "the next board event", u.get("balance") is not None and f"balance ${u['balance']:.2f}",
                                    u.get("result") and f"{u['result']} has a result",
                                    u.get("market") and f"{u['market']}'s market moves",
                                    u.get("minutes") and f"{u['minutes']} min"]))

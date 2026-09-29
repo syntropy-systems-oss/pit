@@ -1,7 +1,7 @@
 """market_json(): what the terminal (view/terminal.html) needs, folded from the (already sliced) ledger. Read-only; reuses ledger.fold and B.Book/order/sleepers/calibration."""
 from datetime import datetime, timezone
 
-from . import ledger as L, book as B
+from . import autopilot, ledger as L, book as B
 
 TAPE = 200
 
@@ -158,7 +158,7 @@ def market_json(rows: list[dict], cfg: dict, now: datetime | None = None) -> dic
     return {"agents": agents, "markets": markets, "tape": events[-TAPE:][::-1], "lanes": lane_out, "calibration": _calibration(rows), "threads": threads,
             "top": {"mint_per_h": sum(l.get("usd_per_h", 0) for l in lanes.values()), "house": round(book.flows.get(B.HOUSE, 0.0), 4), "escrow": round(escrow, 4),
                     "spend_today": spend, "story": story},
-            "rows": len(rows), "row_ts": [r["ts"] for r in rows], "now": now.isoformat(timespec="seconds"), "generated_at": L.now()}
+            "autopilot": autopilot.status(rows, cfg, now), "rows": len(rows), "row_ts": [r["ts"] for r in rows], "now": now.isoformat(timespec="seconds"), "generated_at": L.now()}
 
 
 def _age(ts, now):

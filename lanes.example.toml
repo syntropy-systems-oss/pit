@@ -45,3 +45,12 @@ enabled = true
 default_stake = 0.25            # the automatic stake a post puts on its `expect`, per variant
 vig_rate = 0.02                 # of each settled pot, to the house
 house_seed = 1.00               # the house stakes a reflect-planted root this much per variant from its vig, capped by the pool
+
+# q autopilot (pit/autopilot.py): dispatch per free lane, hand results back to the proposer, reflect when due.
+[autopilot]
+max_usd_per_hour = 40           # stop dispatching while the ledger's result spend over the last hour exceeds this (--max-usd-per-hour overrides)
+max_concurrent_subagents = 3    # hand-back agents + the reflection pass alive at once
+max_subagent_runs_per_hour = 12  # real-token guard: hand-backs, wakes and reflections started in the last hour; over it they are refused (reason `subagent cap`) and retried next tick
+any_workers = 2                 # lane `any` runs this many jobs at once
+permission_mode = ""            # claude -p --permission-mode; "" = the repo's, then the user's Claude Code defaultMode
+# kill file: autopilot/STOP (checked every tick). Standing rules injected into every prompt: pit.autopilot.RULES

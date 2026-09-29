@@ -127,7 +127,7 @@ def cmd_tick(a):
 
 def cmd_sleep(a):
     root, lg, cfg = ctx()
-    until = {"balance": a.until_balance, "result": a.until_result, "market": a.until_market, "minutes": a.minutes}
+    until = {"event": a.until_event or None, "balance": a.until_balance, "result": a.until_result, "market": a.until_market, "minutes": a.minutes}
     row = lg.append(B.sleep_row(B.Book(lg.rows()), a.agent, until, a.note))
     sync(root, lg, f"sleep {a.agent}")
     print(f"{a.agent} sleeps until {B.until_text(row['until'])}")
@@ -349,6 +349,13 @@ def cmd_replay(a):
     replay(a.dir, Path(a.dir) if (Path(a.dir) / "lanes.toml").exists() else find_root(), a.out)
 
 
+def cmd_autopilot(a):
+    from .autopilot import Autopilot
+    root, lg, cfg = ctx()
+    Autopilot(root, lg, cfg, dry=a.dry_run, cap=a.max_usd_per_hour,
+              sub_cap=a.max_subagent_runs_per_hour, for_=a.for_).loop(a.interval, a.once)
+
+
 def cmd_view(a):
     from .view import serve
     root, lg, cfg = ctx()
@@ -390,9 +397,11 @@ def main(argv=None):
     p.add_argument("--stake", type=float, default=0.0, help="--as human: the stake per variant on its expect")
     p.set_defaults(f=cmd_post)
     p = sub.add_parser("sleep", help="sleep until a condition; q tick wakes the agent")
-    p.add_argument("--as", dest="agent", required=True); p.add_argument("--until-balance", type=float)
+    p.add_argument("--as", dest="agent", required=True)
+    p.add_argument("--until-event", action="store_true", help="wake on the next board event (autopilot's default for every agent)")
+    p.add_argument("--until-balance", type=float)
     p.add_argument("--until-result"); p.add_argument("--until-market"); p.add_argument("--minutes", type=float)
-    p.add_argument("--note", required=True); p.set_defaults(f=cmd_sleep)
+    p.add_argument("--note", default=""); p.set_defaults(f=cmd_sleep)
     p = sub.add_parser("bet", help="q bet <job> [<variant>] PASS|FAIL <amount> --as <agent>")
     p.add_argument("job"); p.add_argument("args", nargs="+"); p.add_argument("--as", dest="agent", required=True)
     p.set_defaults(f=cmd_bet)
@@ -414,6 +423,13 @@ def main(argv=None):
     p.set_defaults(f=cmd_reflect)
     p = sub.add_parser("metrics", help="derived per-node numbers: cost, budget ratios, lineage spend, depth"); p.add_argument("id", nargs="?")
     p.set_defaults(f=cmd_metrics)
+    p = sub.add_parser("autopilot", help="run the loop: dispatch per free lane, hand results back to agents, reflect")
+    p.add_argument("--once", action="store_true"); p.add_argument("--interval", type=float, default=60)
+    p.add_argument("--max-usd-per-hour", type=float, help="default: [autopilot] max_usd_per_hour (40)")
+    p.add_argument("--max-subagent-runs-per-hour", type=int, help="default: [autopilot] max_subagent_runs_per_hour (12)")
+    p.add_argument("--for", dest="for_", help="stop the loop after this wall time: 1h, 45m, 2h30m, or seconds")
+    p.add_argument("--dry-run", action="store_true", help="print the plan; write, claim, run and spawn nothing")
+    p.set_defaults(f=cmd_autopilot)
     p = sub.add_parser("view", help="serve the terminal (markets, lanes, agents, tape) at http://127.0.0.1:8790/"); p.add_argument("--port", type=int, default=8790); p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--no-open", action="store_true"); p.set_defaults(f=cmd_view)
     p = sub.add_parser("replay"); p.add_argument("dir"); p.add_argument("--out", help="write the simulated ledger here (ndjson)")

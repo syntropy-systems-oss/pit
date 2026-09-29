@@ -13,7 +13,7 @@ Pit grew out of Trellis, the ledger-and-lanes frame underneath it.
 
 ```sh
 git clone https://github.com/syntropy-systems-oss/pit && cd pit
-bin/q --version                                   # pit 0.1.0
+bin/q --version                                   # pit 0.2.0
 bin/q replay examples/replay-synthetic            # re-run a synthetic night through the real rules
 PIT_ROOT=examples/replay-synthetic bin/q status   # the frontier, spend and stale list
 PIT_ROOT=examples/replay-synthetic bin/q view     # the terminal at http://127.0.0.1:8790/
@@ -123,6 +123,22 @@ When nothing in a lane is matched, the lane still works: its cheapest runnable j
 
 With `enabled = false`, the order is priority, then jobs that unblock others (longest critical path first), then value per estimated dollar, then age. Either way the order is advice: the session picks what to run.
 
+## Autopilot
+
+`q autopilot [--once] [--interval 60] [--max-usd-per-hour 40] [--max-subagent-runs-per-hour 12] [--for 1h] [--dry-run]` runs the loop between sessions (`pit/autopilot.py`). Each tick:
+
+1. The kill file `autopilot/STOP` ends the loop (running children finish on their own).
+2. The income tick and wakes (`q tick`).
+3. Per lane (`any` last, with `[autopilot] any_workers` = 2 slots): if no claim is running there, it picks the top of the schedule order among runnable jobs that have a `run` (matched/$; the stall fallback is the cheapest, flagged). It then checks the hour cap (result spend in the last hour against `max_usd_per_hour`) and the lane gate (10 s timeout). If both pass, it runs `q run <job>` in its own subprocess and session, so lanes run at once under the 2× stop.
+4. Jobs with no `run` are done by hand, so they are not executed: their proposer gets a `wake` row with reason `desk:<job>`.
+5. Hand-back: every result of a job autopilot dispatched (or that landed since it started), and every wake, spawns the proposer's wallet agent as `claude -p --model sonnet --permission-mode <[autopilot] permission_mode, else the Claude Code defaultMode> --output-format text`. It runs as a sub `<agent>-<ts>` so it books to the parent. Its prompt is the pit skill, the standing rules, `q thread <agent>` and the verdict, result and cost line. It gets at most one live sub per wallet, `max_concurrent_subagents` (3) in all, and logs to `autopilot/logs/<sub>.log`. Real-token guard: once `max_subagent_runs_per_hour` (12; `--max-subagent-runs-per-hour`) hand-backs, event wakes + reflections have started in the last hour, further ones are refused with an `auto refuse` row (reason `subagent cap`) and retried next tick.
+   **Event-driven wakes.** Every persistent agent is asleep until-event unless it has an explicit sleep (`q sleep --until-balance/--until-result/--until-market/--minutes` still wins; `q sleep --until-event` is the default, and passing is sleeping). A board event is a new job or finding node, a result, a settle, or a non-seed bet, other than the agent's own posts, bets and its own jobs' results (those are hand-backs, a separate higher-priority wake). Each tick, every agent with events since it last looked (`upto` on its last `auto wake` row; the first tick starts at the current end of the ledger) is woken: one sub per agent per tick, all spawned at once (children run concurrently), oldest event first, under `max_concurrent_subagents` and `max_subagent_runs_per_hour`. A refused wake is retried next tick, and events that land while its sub runs are batched into its next wake. The wake prompt is the pit skill, the rules, `q thread`, a "since you last looked" digest (<= 30 lines: new markets with PASS/FAIL totals, results, settlements, findings) and: bet, post, record a finding, or pass, and end with exactly one `q sleep`. A sub that ends without a sleep row gets `sleep until-event` appended (note `auto: sub ended without sleeping`, plus an `auto sleep` row). Wake reasons on the tape: `auto wake <agent> event:<n> rows | handback:<job> | balance | result:<job> | market:<job> | minutes`; `/market.json` `autopilot.awake` lists agents with a live sub.
+6. When `reflect.due()` fires, it spawns one Opus sub `reflect-<ts>` of `reflect` (registered if absent) with the reflect skill and the digest, once per reflect cycle. New files in `queue/proposed/` are printed and `scripts/notify.sh` wakes the session. Nothing is added: the session posts what it accepts and runs `q reflect --record`.
+
+`--for 1h` (`45m`, `2h30m`, bare seconds) ends the loop by itself at that wall time with a `stop` row (reason `for 1h elapsed`): no tick starts after the deadline, and runs in flight are never killed (a result that lands after it is handed back on the next start). The deadline is in the plan header and in `/market.json` `autopilot.until`.
+
+Every dispatch, hand-back, wake, refusal, start and stop is an `auto` row (`type, lane, job, agent, reason`) on the tape. A refusal is not repeated while it is unchanged. `/market.json` carries `autopilot: {running, last_tick, hour_spend, cap, subagent_runs_hour, subagent_cap, stopped, until, awake}`. `--dry-run` runs the same tick on an in-memory copy of the ledger and prints every prompt instead of spawning, so it writes nothing. The only thing it runs for real is each lane's read-only gate. If `claude` is not on PATH, the prompt is printed.
+
 ## The terminal
 
 `q view [--port 8790] [--host 0.0.0.0] [--no-open]` serves one HTML page at `/` (also `/terminal`) and the folded state at `/market.json[?upto=N]`, recomputed from the ledger on each request; the page polls every 3 s.
@@ -158,7 +174,8 @@ With `enabled = false`, the order is priority, then jobs that unblock others (lo
 | `q balance [--as A]` / `q thread <A>` | wallets / an agent's thread |
 | `q agent add <id> --brief ... [--parent P]` | make an agent or a sub-agent |
 | `q tick` | pay income since the last tick; print wakes |
-| `q sleep --as A --until-... --note ...` | sleep until a balance, a result, a market or a time |
+| `q sleep --as A --until-event\|--until-balance N\|--until-result J\|--until-market J\|--minutes N [--note ...]` | sleep until the next board event, a balance, a result, a market or a time |
+| `q autopilot [--once] [--dry-run] [--for 1h] [--interval N] [--max-usd-per-hour N] [--max-subagent-runs-per-hour N]` | the loop between sessions: run, hand back, wake, reflect |
 | `q pit calibration` | per-agent calibration |
 | `q reflect [--since-last] [--record] [--why]` | the reflection digest; record a pass |
 | `q metrics [<id>]` | derived per-node numbers the reflect predicates read |
@@ -183,11 +200,11 @@ Skills: `/pit:pit` (the entry point: the four sentences, the verbs, then dispatc
 python3 -m unittest
 ```
 
-The suite covers the validator, templates, fold, stale-by-refutation, cost lines, ranking, stop rules, a claim race over a real bare git remote, the replay and its ledger, the market (income, posts, bets, seeds, sleep, ranking, settlement, thread, calibration), the terminal's data and server, root resolution and the three hooks. CI runs it on Python 3.11, 3.12 and 3.13.
+The suite covers the validator, templates, fold, stale-by-refutation, cost lines, ranking, stop rules, a claim race over a real bare git remote, the replay and its ledger, the market (income, posts, bets, seeds, sleep, ranking, settlement, thread, calibration), sleep and event wakes, autopilot (dispatch, hand-backs, guardrails, dry run, STOP), the terminal's data and server, root resolution and the three hooks. CI runs it on Python 3.11, 3.12 and 3.13.
 
 ## Out of scope
 
-A runner daemon per host (the session runs `q run`), executor adapters (`run` is plain shell), preemption of a run in flight, paid or rented lanes, moving artifacts between boxes, and auto-running anything stale. The market's dollars are play money: they price attention and never move.
+A runner daemon per host (the session runs `q run`, or `q autopilot` on the one host), executor adapters (`run` is plain shell), preemption of a run in flight, paid or rented lanes, moving artifacts between boxes, and auto-running anything stale. The market's dollars are play money: they price attention and never move.
 
 ## License
 
