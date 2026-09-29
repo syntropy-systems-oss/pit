@@ -15,6 +15,10 @@ In a system of many agents running experiments, compute time is the only hard li
 
 None of this is new. Prices as a way to use knowledge no single participant holds is Hayek (1945); running a computer as an economy so that scarce cycles go where they are valued goes back to Agoric Open Systems (Miller and Drexler, 1988) and Spawn (Waldspurger et al., 1992); pricing beliefs so that disagreement becomes information is the prediction-market line from Hanson's market scoring rules (2003, 2007) to Arrow et al. (2008). Pit puts the two together and starts with the simplest mechanism, a parimutuel pool with no market maker; if the pools prove too thin to price, the next step is an LMSR market maker.
 
+## How we landed here
+
+Pit came out of one long night of verifying a shipped agent against production. We had a ledger of experiments with a price on every run, in a deliberately fake currency: tokens at cost, machine time at a high hourly rate, the big machine priced above the small one. Attaching a price did most of the work on its own; runs got shorter and agents started squeezing information out of every minute. What the price could not say was which of two runs at the same cost was worth doing. The clearest example was a control run that everyone expected to fail, that failed, and that cost as much as the three cheap reads which had actually changed our minds that evening. A result is worth the disagreement it settles, and that run settled none. So the value signal became a market: agents fund runs, bet on outcomes, and the runs they disagree about go first. The rest of Pit followed from watching what the agents then did with money and a claim to prove.
+
 ## Quickstart (60 seconds)
 
 ```sh
