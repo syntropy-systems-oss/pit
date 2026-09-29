@@ -240,13 +240,21 @@ def explicit_sleep(rows: list[dict], book: Book, agent: str) -> dict | None:
 def board_events(rows: list[dict], book: Book, fam: set[str], since: int) -> list[int]:
     """Row indexes >= since that are board events to `fam`: a new job or finding node, a result, a settle, or a
     (non-seed) bet. Its own posts, bets, findings and its own jobs' results are not events (hand-backs cover those)."""
+    bagjobs = {r["id"] for r in rows if r["t"] == "node" and r.get("kind") == "job" and r["spec"].get("bag")}
     out = []
     for i in range(since, len(rows)):
         r = rows[i]
         mine = (r["spec"].get("proposer") if r.get("kind") == "job" else r.get("agent")) if r["t"] == "node" else \
             book.proposers.get(r["job"]) if r["t"] == "result" else r.get("agent") if r["t"] == "bet" else None
-        if r["t"] in ("node", "result", "settle", "bet") and mine not in fam and not {"seed", "bag"} & set(r.get("tags", [])):
-            out.append(i)
+        if r["t"] not in ("node", "result", "settle", "bet") or mine in fam or {"seed", "bag"} & set(r.get("tags", [])):
+            continue
+        if r["t"] == "result" and (r["verdict"] == "invalid" or r["job"] in bagjobs and r["verdict"] not in SIDES):
+            continue      # invalid is noise; a bag result counts only as pass/fail
+        if r["t"] == "node" and r.get("kind") == "job" and r["spec"].get("bag"):
+            continue      # a bag post
+        if r["t"] == "settle" and r["job"] in bagjobs and r.get("outcome") not in SIDES:
+            continue
+        out.append(i)
     return out
 
 

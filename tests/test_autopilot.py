@@ -86,6 +86,21 @@ class Autopilot(unittest.TestCase):
     def stub_calls(self):
         return [p.read_text() for p in sorted(self.out.glob("*.txt"))]
 
+    def test_orphaned_claim_is_settled_invalid(self):
+        add(self.lg, job("o", budget_s=60), job("fresh", budget_s=60), job("live", budget_s=60), ts=L.now())
+        old = (datetime.now(timezone.utc) - timedelta(seconds=2 * 60 + 61)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        new = (datetime.now(timezone.utc) - timedelta(seconds=100)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        for j, ts in (("o", old), ("fresh", new), ("live", old)):
+            self.lg.append({"t": "claim", "job": j, "lane": "gpu-small", "cid": f"c-{j}"}, ts)
+        ap = self.ap()
+        ap.runs["live"] = ("gpu-small", None)
+        ap.orphans(self.lg.rows(), datetime.now(timezone.utc))
+        st = L.fold(self.lg.rows())
+        self.assertEqual((st.jobs["o"]["state"], st.jobs["fresh"]["state"], st.jobs["live"]["state"]), ("done", "running", "running"))
+        self.assertEqual(st.jobs["o"]["result"]["verdict"], "invalid")
+        self.assertEqual(st.jobs["o"]["result"]["note"], "orphaned claim (no live run)")
+        self.assertEqual([(r["reason"], r["job"]) for r in self.auto("note")], [("orphan", "o")])
+
     def test_tick_dispatches_every_free_lane_in_parallel_and_hands_back(self):
         self.post(slow("p1"), "a")
         self.post(slow("p2", budget_usd=2), "b")                  # same lane, ranked behind p1: waits

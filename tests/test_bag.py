@@ -2,7 +2,7 @@ import os
 import shutil
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from pit import autopilot as A, bag, lanes, ledger as L, book as B
@@ -135,6 +135,69 @@ class Bag(unittest.TestCase):
             self.lg.append({"t": "result", "job": jid, "verdict": "pass", "cost": {"usd": 0, "lane": "gpu-small", "wall_s": 1}})
         self.assertEqual([o[0] for o in order], ["c", "b", "a"])                           # never run, then oldest
         self.assertIsNone(order[0][1])
+
+    def result(self, jid, verdict, ts):
+        self.lg.append({"t": "result", "job": jid, "verdict": verdict, "cost": {"usd": 0, "lane": "gpu-small", "wall_s": 1}}, ts)
+
+    def test_preflight_failure_refuses_once_per_hour_and_draws_nothing(self):
+        self.spec("a", extra='preflight = "echo images missing; exit 1"\n')
+        for _ in range(3):
+            self.tick()
+        self.assertEqual(self.nodes(), [])
+        refs = [r for r in self.lg.rows() if r["t"] == "auto" and r["type"] == "refuse"]
+        self.assertEqual([r["reason"] for r in refs], ["bag gpu-small preflight: images missing"])
+
+    def test_preflight_success_draws(self):
+        self.spec("a", extra='preflight = "true"\n')
+        self.tick()
+        self.assertEqual(len(self.nodes()), 1)
+
+    def test_invalid_backs_off_with_doubling_fail_does_not(self):
+        self.spec("a", verdict="invalid")
+        c = bag.conf(self.cfg, "gpu-small")
+        self.tick()
+        (j1,) = [n["id"] for n in self.nodes()]
+        r = next(r for r in self.lg.rows() if r["t"] == "result")
+        self.assertEqual(r["verdict"], "invalid")
+        until, k = bag.backoff_until(self.lg.rows(), "gpu-small", c)
+        self.assertEqual(k, 1)
+        self.tick()
+        self.assertEqual(len(self.nodes()), 1)                                              # inside the 30 min: no draw
+        n2 = "bag-a-x2"                                                                      # a second consecutive invalid: doubles
+        self.lg.append({"t": "node", "kind": "job", "id": n2, "spec": {**bag_spec_dict("a"), "id": n2}})
+        self.result(n2, "invalid", None)
+        until, k = bag.backoff_until(self.lg.rows(), "gpu-small", c)
+        last = max(r["ts"] for r in self.lg.rows() if r["t"] == "result")
+        self.assertEqual((k, until - datetime.fromisoformat(last)), (2, timedelta(minutes=60)))
+        n3 = "bag-a-x3"
+        self.lg.append({"t": "node", "kind": "job", "id": n3, "spec": {**bag_spec_dict("a"), "id": n3}})
+        self.result(n3, "fail", None)
+        self.assertIsNone(bag.backoff_until(self.lg.rows(), "gpu-small", c))              # a fail is signal: normal
+
+    def test_bag_invalid_wakes_nobody(self):
+        self.spec("a", verdict="invalid")
+        self.tick()
+        rows = self.lg.rows()
+        book = B.Book(rows)
+        self.assertEqual(B.board_events(rows, book, {"alice"}, 1), [])          # row 0 is the seed settle
+        self.assertFalse([r for r in rows if r["t"] == "auto" and r["type"] in ("handback", "wake")])
+
+    def test_bag_fail_is_an_event_pass_too_but_finding_is_the_signal(self):
+        self.spec("a", verdict="fail")
+        self.tick()
+        rows = self.lg.rows()
+        ev = [rows[i]["t"] for i in B.board_events(rows, B.Book(rows), {"alice"}, 0)]
+        self.assertIn("result", ev)
+        self.assertNotIn("node", ev)                                                        # the bag post is not
+
+    def test_reflect_rows_ignore_junk(self):
+        from pit import reflect
+        self.spec("a", verdict="invalid")
+        self.tick()
+        rows = self.lg.rows()
+        self.assertLess(len(reflect.counted(rows)), len(rows))
+        self.assertEqual([r["t"] for r in reflect.counted(rows)], ["settle"])               # only the seed settle
+        self.assertIn("counted", reflect.why(rows, datetime.now(timezone.utc), {"reflect": {"rows": 5}}))
 
 
 def bag_spec_dict(sid):

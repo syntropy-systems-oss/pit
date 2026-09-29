@@ -321,14 +321,19 @@ def commit(root, ledger: Ledger, msg: str) -> None:
     git(root, "commit", "-q", "-m", msg)
 
 
-def push(root) -> bool:
-    """True when pushed (or there is no remote: local mode)."""
-    if not git(root, "remote").stdout.strip():
+def has_remote(root) -> bool:
+    return bool(git(root, "remote").stdout.strip())
+
+
+def push(root, enabled: bool = False) -> bool:
+    """True when pushed, or when there is nothing to push to: no remote, or `[git] push` is off (the local commit is the lock)."""
+    if not enabled or not has_remote(root):
         return True
     return git(root, "push", "-q").returncode == 0
 
 
-def claim(root, ledger: Ledger, jid: str, lane: str, tries: int = 3, extra: dict | None = None) -> tuple[bool, str]:
+def claim(root, ledger: Ledger, jid: str, lane: str, tries: int = 3, extra: dict | None = None,
+          push_ok: bool = False) -> tuple[bool, str]:
     st = fold(ledger.rows())
     if st.jobs.get(jid, {}).get("state") != "queued":
         return False, f"{jid} is {st.jobs.get(jid, {}).get('state', 'unknown')}"
@@ -336,7 +341,7 @@ def claim(root, ledger: Ledger, jid: str, lane: str, tries: int = 3, extra: dict
     ledger.append({"t": "claim", "job": jid, "lane": lane, "cid": cid, **(extra or {})})
     commit(root, ledger, f"claim {jid} on {lane}")
     for _ in range(tries):
-        if push(root):
+        if push(root, push_ok):
             return True, cid
         git(root, "pull", "-q", "--rebase")
         j = fold(ledger.rows()).jobs[jid]
@@ -345,6 +350,9 @@ def claim(root, ledger: Ledger, jid: str, lane: str, tries: int = 3, extra: dict
             # their claim reached the remote first, whatever the clocks say
             ledger.append({"t": "release", "job": jid, "cid": cid})
             commit(root, ledger, f"release {jid}: lost the claim")
-            push(root) or (git(root, "pull", "-q", "--rebase"), push(root))
+            push(root, push_ok) or (git(root, "pull", "-q", "--rebase"), push(root, push_ok))
             return False, f"lost the claim on {jid} to {rivals[0] if rivals else 'a finished run'}"
-    return False, "push kept failing"
+    # a push that fails for any other reason must not strand the claim (and the lane): release it
+    ledger.append({"t": "release", "job": jid, "cid": cid})
+    commit(root, ledger, f"release {jid}: push kept failing")
+    return False, f"claim push kept failing ({tries} tries): released {jid}; check the remote or set [git] push = false"

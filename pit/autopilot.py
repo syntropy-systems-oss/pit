@@ -153,7 +153,8 @@ class Autopilot:
         self.echo(f"guardrails: hour spend ${hour_spend(rows, now):.2f} / cap ${self.c['max_usd_per_hour']:.2f} · "
                   f"subagents {len(self.subs)}/{self.c['max_concurrent_subagents']} · "
                   f"subagent_runs_hour {subagent_runs(rows, now)} / {self.c['max_subagent_runs_per_hour']} · STOP file absent")
-        self.dispatch(rows, now)
+        self.orphans(rows, now)
+        self.dispatch(self.lg.rows(), now)
         bag.regressions(self.lg, self.echo)
         self.desk()
         self.settled_by_analysis()
@@ -163,6 +164,23 @@ class Autopilot:
         if not self.dry:
             L.commit(self.root, self.lg, "autopilot tick")
         return True
+
+    def orphans(self, rows, now):
+        """A claim with no result, no release and no live child, older than 2x budget + 60s, is dead: settle it `invalid` so the lane frees."""
+        if self.dry:
+            return
+        st = L.fold(rows)
+        for j in st.running():
+            c, s = st.jobs[j]["claim"], st.jobs[j]["spec"]
+            if j in self.runs or (now - B.parse_t(c["ts"])).total_seconds() <= 2 * s["budget_s"] + 60:
+                continue
+            self.echo(f"auto note {j} orphan")
+            lane = c["lane"]
+            self.lg.append({"t": "result", "job": j, "verdict": "invalid", "cost": lanes.cost_line(self.cfg, lane),
+                            "result": {}, "note": "orphaned claim (no live run)"})
+            L.settle(self.lg, s, "invalid")
+            B.settle_due(self.lg, self.cfg)
+            self.auto("note", "orphan", lane, j)
 
     def dispatch(self, rows, now):
         st, book = L.fold(rows), B.Book(rows)
@@ -214,10 +232,22 @@ class Autopilot:
         ok, gate = lanes.gate_open(self.cfg, lane)
         if not ok:
             return self.echo(f"{no}{n}/{c['max_per_day']} today: gate {gate}")
+        bo = bag.backoff_until(rows, lane, c)
+        if bo and now < bo[0]:
+            return self.echo(f"{no}backoff: {bo[1]} consecutive invalid, until {B.iso(bo[0])}")
         drawn = bag.draw(self.root, rows, self.cfg, lane, c, now, self.echo)
         if not drawn:
             return self.echo(f"{no}{n}/{c['max_per_day']} today: empty (no valid spec in {c['specs']})")
         s, last = drawn
+        pf = lambda mins: [r for r in rows if r["t"] == "auto" and r["type"] == "refuse" and r.get("lane") == lane
+                           and r["reason"].startswith(f"bag {lane} preflight") and r["ts"] >= B.iso(now - timedelta(minutes=mins))]
+        if pf(c["backoff_minutes"]):          # a failed preflight backs the lane off like an invalid result
+            return self.echo(f"{no}backoff: preflight refused within {c['backoff_minutes']} min")
+        if why := bag.preflight(self.root, s):
+            reason = f"bag {lane} preflight: {why}"
+            if not pf(60):
+                self.auto("refuse", reason, lane)
+            return self.echo(f"{no}REFUSED: preflight of {s['id']}: {why}")
         spec = bag.post(self.lg, self.cfg, s, lane, c, stamp(now))
         stake = B.Book(self.lg.rows()).totals(spec["id"], "main")["pass"]
         why = f"bag draw {s['id']}, last run {last or 'never'}, house PASS ${stake:.2f}"
@@ -266,7 +296,7 @@ class Autopilot:
         due: dict[str, list] = {}
         for jid, j in st.jobs.items():
             res, who = j["result"], book.proposers.get(jid)
-            if not res or who not in book.agents:
+            if not res or who not in book.agents or j["spec"].get("bag"):     # a bag result goes to nobody: a FAIL's finding is the event
                 continue
             ref = f"result:{jid}:{res['ts']}"
             if ref not in done and (jid in dispatched or res["ts"] >= epoch):

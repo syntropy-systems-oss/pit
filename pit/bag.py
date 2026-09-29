@@ -7,6 +7,8 @@ seed) with a house PASS `bet` tagged `bag` (from the vig pool, capped by it; lef
 finding "REGRESSION: ..." naming the spec's previous pass.
 """
 import glob
+import subprocess
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import book as B, ledger as L, spec as specmod
@@ -16,7 +18,7 @@ DEFAULTS = {"enabled": True, "max_per_day": 6, "house_stake": 0.25, "specs": []}
 
 def conf(cfg: dict, lane: str) -> dict | None:
     c = cfg.get("bag", {}).get(lane)
-    return {**DEFAULTS, **c} if c is not None else None
+    return {**DEFAULTS, "backoff_minutes": cfg["bag"].get("backoff_minutes", 30), **c} if isinstance(c, dict) else None
 
 
 def files(root, c: dict) -> list[Path]:
@@ -111,3 +113,33 @@ def regressions(lg: L.Ledger, echo=print) -> list[str]:
         echo(f"{fid}: {text}")
         out.append(fid)
     return out
+
+
+def backoff_until(rows: list[dict], lane: str, c: dict) -> tuple[datetime, int] | None:
+    """(when the lane may draw again, consecutive invalids) after an `invalid` bag result; a fail or pass (or none) = no backoff.
+    Wait = backoff_minutes x 2^(k-1), capped at 4 h."""
+    ids = {r["id"] for r in bag_jobs(rows, lane)}
+    vs = [r for r in rows if r["t"] == "result" and r["job"] in ids]
+    k = 0
+    for r in reversed(vs):
+        if r["verdict"] != "invalid":
+            break
+        k += 1
+    if not k:
+        return None
+    return datetime.fromisoformat(vs[-1]["ts"]) + timedelta(minutes=min(c["backoff_minutes"] * 2 ** (k - 1), 240)), k
+
+
+def preflight(root, s: dict, timeout: int = 300) -> str | None:
+    """None if the spec declares no preflight or it exits 0; else why not (its last output line)."""
+    cmd = s.get("preflight")
+    if not cmd:
+        return None
+    try:
+        p = subprocess.run(cmd, shell=True, cwd=Path(s.get("cwd") or root).expanduser(), capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return f"timed out after {timeout}s"
+    if p.returncode == 0:
+        return None
+    out = (p.stdout + p.stderr).strip().splitlines()
+    return out[-1] if out else f"exit {p.returncode}"

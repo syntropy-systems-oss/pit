@@ -116,7 +116,10 @@ def run_job(root, ledger: L.Ledger, cfg: dict, jid: str, lane: str | None = None
     extra = {"agent": agent} if agent else {}
     if B.enabled(cfg) and jid in B.order(st, ledger.rows(), cfg)[1]:
         extra["fallback"] = True          # the stall fallback: exploration spend, logged on the claim
-    won, cid = L.claim(root, ledger, jid, lane, extra=extra)
+    push_ok = bool(cfg.get("git", {}).get("push", False))     # opt-in: private state is never pushed by accident
+    if not push_ok or not L.has_remote(root):
+        echo("no remote: local lock" if not L.has_remote(root) else "[git] push off: local lock")
+    won, cid = L.claim(root, ledger, jid, lane, extra=extra, push_ok=push_ok)
     if not won:
         raise SystemExit(cid)
     echo(f"q run {jid} on {lane}: {cmd}")

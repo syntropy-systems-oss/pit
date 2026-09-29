@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2 - claim push is opt-in and always releases on failure; orphaned claims settle invalid; bag preflight and backoff; junk rows are not events
+
+- `[git] push` (default false): `q run` claims are a local commit unless it is true; with no remote it is a local lock. A claim whose push keeps failing is released, never stranded. Autopilot settles a claim with no live run after 2x budget + 60 s as `invalid`.
+- A bag spec may declare `preflight`; if it fails the lane draws nothing and one `auto refuse` is written per lane per hour. After an `invalid` bag result a lane waits `[bag] backoff_minutes` (30), doubling per consecutive invalid, capped at 4 h.
+- `board_events` ignores invalid results and bag posts, bets and non-pass/fail results; bag results never spawn subs. The reflection `rows` predicate counts only non-junk rows; `q reflect --why` shows counted and raw.
+
 ## 0.3.1 - over-budget runs fail with the trace kept; --as everywhere
 
 - A run stopped for exceeding 2x budget is `fail` (note `over budget: ...; partial trace kept`), not `invalid`: `invalid` is for harness errors where nothing ran. Underbidding time to jump the queue now costs the bidder.

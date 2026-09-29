@@ -8,6 +8,9 @@ uncached_per_m = 0.24
 cache_read_per_m = 0.05
 out_per_m = 2.20
 
+[git]
+push = false                   # claims are a local commit; true also pushes them (git is then the cross-host lock)
+
 # When `q status` / the hooks say "reflect due": any predicate that fires (pit/reflect.py PREDICATES); a missing key = off.
 [reflect]
 rows = 64                       # ledger rows since the last reflect
@@ -61,6 +64,9 @@ heartbeat_min_usd = 1.0         # ...if its balance is at least this (the cheape
 # `house` (tag `bag`, a house PASS stake of house_stake usd per variant from the vig pool) and runs it. A failed run
 # becomes a "REGRESSION:" finding naming the spec's last pass. budget_usd / budget_s override the spec's; bag spend counts
 # against the hour cap; one bag job per lane at a time; a spec may carry its own max_per_day. Paths are relative to the state root.
+[bag]
+backoff_minutes = 30           # after an `invalid` bag result the lane draws nothing for this long; x2 per further consecutive invalid, cap 4 h
+
 [bag.gpu-small]
 specs = ["bag/gpu-small-*.toml"]
 max_per_day = 6

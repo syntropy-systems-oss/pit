@@ -6,4 +6,5 @@ if_fail = "a regression: bisect between this run and the spec's last pass"
 lane = "gpu-small"
 budget_s = 30
 budget_usd = 0.1
+preflight = "true"
 run = "echo 'pit: verdict=pass'"

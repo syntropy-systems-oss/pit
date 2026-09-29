@@ -16,9 +16,16 @@ def since_last(rows: list[dict]) -> list[dict]:
 
 
 # A predicate reads (rows since the last reflect, metrics(all rows), now, its config value) and returns (reason if it fired else None, reading).
+def counted(rows: list[dict]) -> list[dict]:
+    """Rows that carry information: not `auto`, not `drip`, not bag-tagged nodes/bets/claims, not `invalid` results."""
+    bag = {r["id"] for r in rows if r["t"] == "node" and r.get("kind") == "job" and r["spec"].get("bag")}
+    return [r for r in rows if r["t"] not in ("auto", "drip") and not (r["t"] in ("node", "bet", "claim", "settle") and (
+            r.get("id") in bag or r.get("job") in bag or "bag" in r.get("tags", []))) and not (r["t"] == "result" and r["verdict"] == "invalid")]
+
+
 def _rows(rows, m, now, n):
-    k = len(rows)
-    return (f"rows {k}" if k >= n else None), f"rows: {k}/{n}"
+    k = len(counted(rows))
+    return (f"rows {k}" if k >= n else None), f"rows: {k}/{n} counted ({len(rows)} raw)"
 
 
 def _hours(rows, m, now, h):   # clock starts at the first row since the last reflect (the reflect row itself is dropped)

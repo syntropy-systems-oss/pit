@@ -8,6 +8,7 @@ import tempfile
 import sys
 import tomllib
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -173,10 +174,10 @@ class Claim(unittest.TestCase):
             subprocess.run(["git", "clone", "-q", str(remote), str(d)], check=True, capture_output=True)
             _ident(d)
             hosts[host] = (d, L.Ledger(d / "ledger", host))
-        won, cid = L.claim(*hosts["host-a"], "j", "gpu-small")
+        won, cid = L.claim(*hosts["host-a"], "j", "gpu-small", push_ok=True)
         self.assertTrue(won, cid)
         # host-b has not pulled: it sees j queued, claims, its push is rejected, it rebases, sees the rival, releases
-        won, why = L.claim(*hosts["host-b"], "j", "gpu-small")
+        won, why = L.claim(*hosts["host-b"], "j", "gpu-small", push_ok=True)
         self.assertFalse(won)
         self.assertIn("lost the claim", why)
         d, lg = hosts["host-a"]
@@ -185,6 +186,40 @@ class Claim(unittest.TestCase):
         self.assertTrue(st.jobs["j"]["claim"]["cid"].startswith("host-a:"))
         self.assertEqual(len(st.jobs["j"]["claims"]), 1)          # the loser's claim is released
         self.assertEqual(st.jobs["j"]["state"], "running")
+
+    def repo(self, remote=None):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        subprocess.run(["git", "init", "-q", str(tmp)], check=True)
+        _ident(tmp)
+        if remote:
+            git_repo(tmp, "remote", "add", "origin", str(tmp / "nowhere.git"))   # rejects every push
+        lg = L.Ledger(tmp / "ledger", "h")
+        add(lg, job("j", run="echo 'pit: verdict=pass'"))
+        L.commit(tmp, lg, "add j")
+        return tmp, lg
+
+    def test_no_remote_runs_and_records(self):
+        tmp, lg = self.repo()
+        lines = []
+        row = runmod.run_job(tmp, lg, CFG, "j", echo=lines.append)
+        self.assertEqual(row["verdict"], "pass")
+        self.assertIn("no remote: local lock", lines)
+
+    def test_push_failure_releases(self):
+        tmp, lg = self.repo(remote=True)
+        with self.assertRaises(SystemExit) as e:
+            runmod.run_job(tmp, lg, {**CFG, "git": {"push": True}}, "j", echo=lambda *_: None)
+        self.assertIn("push kept failing", str(e.exception))
+        rows = lg.rows()
+        self.assertEqual([r["t"] for r in rows if r["t"] in ("claim", "release", "result")], ["claim", "release"])
+        self.assertEqual(L.fold(rows).jobs["j"]["state"], "queued")
+
+    def test_push_disabled_never_pushes(self):
+        tmp, lg = self.repo(remote=True)
+        with mock.patch.object(L, "git", wraps=L.git) as g:
+            runmod.run_job(tmp, lg, CFG, "j", echo=lambda *_: None)
+        self.assertFalse([c for c in g.call_args_list if c.args[1] == "push"])
 
 
 def _ident(d):
@@ -453,7 +488,7 @@ class SilentRun(unittest.TestCase):
 
     def test_version(self):
         r = subprocess.run([sys.executable, "-m", "pit.cli", "--version"], cwd=ROOT, capture_output=True, text=True)
-        self.assertEqual(r.stdout.strip(), "pit 0.3.1")
+        self.assertEqual(r.stdout.strip(), "pit 0.3.2")
 
 
 class Pit(unittest.TestCase):
