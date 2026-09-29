@@ -1,0 +1,16 @@
+id = "sweep-rest"
+question = "Do prompts 4-10 pass once the grader is fixed?"
+expect = "pass"
+if_pass = "ship the prompt set"
+if_fail = "fix the failing prompts first"
+lane = "gpu-large"
+budget_s = 2400
+budget_usd = 70
+depends_on = ["sweep-large"]
+run = "python3 sweep.py --prompts 4-10"
+
+[actual]
+hand_run = false
+wall_s = 2100
+usd = 58.33
+verdict = "pass"

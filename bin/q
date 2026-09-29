@@ -1,0 +1,3 @@
+#!/bin/sh
+# q: the Pit CLI without installing (uv tool install / pip install -e . also gives `q`).
+exec "$(cd "$(dirname "$0")/.." && pwd)/scripts/py.sh" -m pit.cli "$@"

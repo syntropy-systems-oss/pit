@@ -1,0 +1,19 @@
+id = "leak-check"
+question = "Does any held-out item appear in B's training data?"
+expect = "pass"
+if_pass = "B's gain is contamination: refute F:b-beats-a"
+if_fail = "B's gain stands"
+lane = "any"
+budget_s = 600
+budget_usd = 1
+proposer = "skeptic"
+depends_on = ["variant-b"]
+run = "python3 dedup.py --train data/b-mix --against data/heldout"
+produces_if_pass = ["F:leak"]
+refutes_if_pass = ["F:b-beats-a"]
+
+[actual]
+start = "2026-01-15T21:30:00Z"
+end = "2026-01-15T21:40:00Z"
+usd = 0.40
+verdict = "pass"

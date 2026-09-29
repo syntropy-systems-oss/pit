@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pit Terminal</title>
+<meta name="description" content="Pit: the market, lanes, agents and tape, folded from the ledger.">
+<style>
+/* 8 px grid; 1 px rules; one accent; PASS/FAIL are the only other hues. Text colours are >= 4.5:1 on --bg, --pan and --sel. */
+:root{
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  --ui:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --bg:#0c0f14;--pan:#11151c;--hi:#171c25;--sel:#1c2330;--line:#252c38;--line2:#3a4351;
+  --fg:#dde2ea;--fg2:#a3acba;--dim:#8a93a2;
+  --acc:#f0a830;--acc-bg:rgba(240,168,48,.14);
+  --pass:#3ecf7e;--pass-bg:rgba(62,207,126,.20);--fail:#ff6b6b;--fail-bg:rgba(255,107,107,.20);
+  color-scheme:dark}
+:root[data-theme=light]{
+  --bg:#f5f6f8;--pan:#ffffff;--hi:#eef0f4;--sel:#e4e9f1;--line:#d9dde4;--line2:#b9c0cb;
+  --fg:#151a22;--fg2:#3f4855;--dim:#566070;
+  --acc:#8a5000;--acc-bg:rgba(138,80,0,.10);
+  --pass:#08672f;--pass-bg:rgba(8,103,47,.12);--fail:#b01f26;--fail-bg:rgba(176,31,38,.10);
+  color-scheme:light}
+@media (prefers-color-scheme:light){:root:not([data-theme=dark]){
+  --bg:#f5f6f8;--pan:#ffffff;--hi:#eef0f4;--sel:#e4e9f1;--line:#d9dde4;--line2:#b9c0cb;
+  --fg:#151a22;--fg2:#3f4855;--dim:#566070;
+  --acc:#8a5000;--acc-bg:rgba(138,80,0,.10);
+  --pass:#08672f;--pass-bg:rgba(8,103,47,.12);--fail:#b01f26;--fail-bg:rgba(176,31,38,.10);
+  color-scheme:light}}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:13px/16px var(--mono);font-variant-numeric:tabular-nums}
+body{display:grid;grid-template-rows:40px minmax(0,7fr) minmax(0,3fr) 32px;height:100%;overflow:hidden}
+body.tape-closed{grid-template-rows:40px minmax(0,1fr) auto 32px}
+button,input{font:inherit;color:inherit}
+.dim{color:var(--dim)}.fg2{color:var(--fg2)}.acc{color:var(--acc)}.P{color:var(--pass)}.F{color:var(--fail)}
+.num{text-align:right;white-space:nowrap}
+code{font-family:var(--mono);color:var(--fg2)}
+:focus-visible{outline:1px solid var(--acc);outline-offset:-1px}
+
+/* header */
+#hd{display:flex;align-items:stretch;border-bottom:1px solid var(--line);background:var(--pan);min-width:0}
+#brand{display:flex;align-items:center;gap:8px;padding:0 16px;border-right:1px solid var(--line);font:700 15px/1 var(--ui);letter-spacing:.04em;white-space:nowrap}
+#brand i{width:8px;height:8px;background:var(--acc);display:inline-block}
+#brand span{font:500 12px/1 var(--ui);color:var(--dim);letter-spacing:.08em;text-transform:uppercase}
+#kpis{display:flex;flex:1;min-width:0;overflow:hidden}
+.kpi{display:flex;flex-direction:column;justify-content:center;gap:2px;padding:0 16px;border-right:1px solid var(--line);white-space:nowrap;min-width:0}
+.kpi .k{font:500 11px/12px var(--ui);letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+.kpi .v{font-size:13px;line-height:16px}
+.kpi.story{flex:1;overflow:hidden}.kpi.story .v{overflow:hidden;text-overflow:ellipsis}
+#hdr{display:flex;align-items:center;gap:8px;padding:0 8px 0 16px}
+.mode{font:600 11px/16px var(--ui);letter-spacing:.08em;padding:0 8px;border:1px solid currentColor}
+.mode.live{color:var(--pass)}.mode.replay{color:var(--acc)}
+.btn{background:transparent;border:1px solid var(--line2);height:24px;min-width:24px;padding:0 8px;cursor:pointer;color:var(--fg2)}
+.btn:hover{border-color:var(--acc);color:var(--fg)}
+.btn[aria-pressed=true]{border-color:var(--acc);color:var(--acc)}
+
+/* panels */
+#main{display:grid;grid-template-columns:248px minmax(0,1fr) 304px;min-height:0;min-width:0}
+.panel{display:flex;flex-direction:column;min-height:0;min-width:0;border-right:1px solid var(--line)}
+.panel:last-child{border-right:0}
+.ph{flex:none;display:flex;align-items:center;gap:8px;height:24px;padding:0 8px;background:var(--pan);border-bottom:1px solid var(--line);font:600 11px/1 var(--ui);letter-spacing:.1em;text-transform:uppercase;color:var(--fg2);white-space:nowrap}
+.ph .n{color:var(--dim);font:12px/1 var(--mono);letter-spacing:0;text-transform:none}
+.ph .r{margin-left:auto;font:500 11px/1 var(--ui);letter-spacing:.06em;color:var(--dim)}
+.pb{flex:1;overflow:auto;min-height:0}
+.empty{padding:16px 8px;color:var(--dim);line-height:20px}
+
+/* lanes */
+.lane{padding:8px;border-bottom:1px solid var(--line)}
+.lane .top{display:flex;align-items:baseline;gap:8px}
+.lane .name{font-weight:600}
+.lane .top .num{margin-left:auto}
+.lane .st{display:flex;gap:8px;margin-top:8px;align-items:baseline;min-width:0}
+.lane .st .chip{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lane .st .chip~.b.q{margin-left:auto}
+.pr{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;margin-top:4px}
+.prog{height:4px;background:var(--hi);position:relative}
+.prog i{position:absolute;left:0;top:0;bottom:0;background:var(--acc)}
+.prog i.over{background:var(--fail)}
+.qh{display:flex;margin-top:8px;color:var(--dim);font:500 11px/16px var(--ui);letter-spacing:.08em;text-transform:uppercase}
+.qh .num{margin-left:auto}
+.qr{display:grid;grid-template-columns:2ch minmax(0,1fr) auto 5ch;gap:0 8px;padding:0 4px;margin:0 -4px;line-height:20px;cursor:pointer}
+.qr:hover{background:var(--hi)}
+.qr .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* badges */
+.b{display:inline-block;font:600 11px/14px var(--ui);letter-spacing:.06em;padding:0 4px;border:1px solid var(--line2);color:var(--fg2);text-transform:uppercase;white-space:nowrap;vertical-align:1px}
+.b.acc{border-color:var(--acc);color:var(--acc);background:var(--acc-bg)}
+.b.P{border-color:var(--pass);color:var(--pass);background:var(--pass-bg)}
+.b.F{border-color:var(--fail);color:var(--fail);background:var(--fail-bg)}
+.b.q{border-color:var(--line);color:var(--dim)}
+
+/* markets table */
+table{border-collapse:collapse;width:100%;table-layout:fixed}
+th{position:sticky;top:0;z-index:1;background:var(--pan);height:24px;padding:0 8px;border-bottom:1px solid var(--line);font:500 11px/1 var(--ui);letter-spacing:.06em;text-transform:uppercase;color:var(--dim);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;user-select:none}
+th.num{text-align:right}
+col.c-st{width:64px}col.c-lane{width:96px}col.c-book{width:128px}col.c-pass,col.c-fail{width:72px}col.c-m{width:96px}col.c-budget{width:80px}col.c-score{width:72px}col.c-age{width:56px}
+th[data-k]{cursor:pointer}th[data-k]:hover{color:var(--fg)}
+th .ar{display:inline-block;width:1.2em;text-align:center;color:var(--acc)}
+td{height:32px;padding:0 8px;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+tr.row{cursor:pointer}
+tr.row:hover td{background:var(--hi)}
+tr.row.sel td{background:var(--sel)}
+tr.row.sel td:first-child{box-shadow:inset 2px 0 var(--acc)}
+td .sub{color:var(--dim)}
+.book{position:relative;display:flex;height:18px;border:1px solid var(--line2);background:var(--hi);font:600 11px/16px var(--mono);overflow:hidden}
+.book i{display:block;height:100%}
+.book .p{background:var(--pass-bg);box-shadow:inset 0 -2px var(--pass)}
+.book .f{background:var(--fail-bg);box-shadow:inset 0 -2px var(--fail)}
+.book span{position:absolute;top:0;padding:0 4px}
+.book .lp{left:0;color:var(--pass)}.book .rf{right:0;color:var(--fail)}
+.book .mid{left:0;right:0;text-align:center;color:var(--dim);font-weight:400}
+tr.detail td{height:auto;white-space:normal;background:var(--pan);padding:8px 8px 16px 16px;cursor:default}
+.dgrid{display:grid;grid-template-columns:auto 1fr;gap:4px 16px;line-height:20px;max-width:960px}
+.dgrid .k{color:var(--dim);font:500 11px/20px var(--ui);letter-spacing:.06em;text-transform:uppercase}
+.bets{margin-top:8px;display:grid;grid-template-columns:8ch minmax(0,14ch) minmax(0,10ch) 5ch 8ch 1fr;gap:0 8px;line-height:20px;max-width:720px}
+.bets .h{color:var(--dim);font:500 11px/20px var(--ui);letter-spacing:.06em;text-transform:uppercase}
+.chip{cursor:pointer;border-bottom:1px dotted var(--dim)}
+.chip:hover{color:var(--acc);border-color:var(--acc)}
+
+/* thread */
+.tn{padding:8px;border-bottom:1px solid var(--line);line-height:20px}
+.tn.d{padding-left:24px}
+.tn .q{color:var(--fg2)}
+
+/* agents */
+.ag{display:grid;grid-template-columns:minmax(0,1fr) 96px;gap:0 8px;padding:8px;border-bottom:1px solid var(--line);cursor:pointer;line-height:20px}
+.ag:hover{background:var(--hi)}
+.ag.sel{background:var(--sel);box-shadow:inset 2px 0 var(--acc)}
+.ag .l1{display:flex;gap:8px;align-items:baseline;min-width:0}
+.ag .l1 b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ag .l1 .num{margin-left:auto}
+.ag .l2{color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ag svg{grid-column:2;grid-row:1/3;align-self:center}
+.ag.sub{padding-left:24px}
+#cal td,#cal th{height:24px;padding:0 4px}
+#cal td:first-child,#cal th:first-child{padding-left:8px}
+#cal td:last-child,#cal th:last-child{padding-right:8px}
+
+/* tape */
+#tape{border-top:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+#tape.closed #tl{display:none}
+#tape .ph input{flex:1;min-width:0;height:20px;background:var(--bg);border:1px solid var(--line2);padding:0 8px;font:12px var(--mono);text-transform:none;letter-spacing:0;color:var(--fg)}
+#tape .ph input::placeholder{color:var(--dim)}
+#tapet{height:18px;min-width:18px;padding:0;border:0}
+#tl{flex:1;overflow:auto;min-height:0}
+.ev{display:grid;grid-template-columns:8ch 9ch 12ch minmax(0,1fr);gap:0 16px;padding:0 8px;line-height:20px;white-space:nowrap}
+.ev:hover{background:var(--hi)}
+.ev>span{overflow:hidden;text-overflow:ellipsis}
+.ev .b{min-width:9ch;text-align:center}
+.ev[data-task]:not([data-task=""]){cursor:pointer}
+
+/* footer */
+#ft{display:flex;align-items:center;gap:16px;padding:0 8px;border-top:1px solid var(--line);background:var(--pan);color:var(--dim);font-size:12px;white-space:nowrap;min-width:0}
+#ft .dot{width:8px;height:8px;border-radius:50%;background:var(--pass);display:inline-block;margin-right:8px}
+#ft .dot.off{background:var(--fail)}#ft .dot.paused{background:var(--acc)}
+#ft .sep{flex:1}
+#rep{display:flex;align-items:center;gap:8px;min-width:0}
+#rep .btn{height:20px;min-width:24px;padding:0 4px;font-size:12px}
+#rep input[type=range]{width:240px;accent-color:var(--acc);margin:0}
+#pos{min-width:13ch;text-align:right;color:var(--fg2);white-space:pre}
+
+/* help */
+#help{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45);z-index:10}
+#help.on{display:flex}
+#help .box{background:var(--pan);border:1px solid var(--line2);width:min(800px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto}
+#help .body{padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:16px 24px;line-height:20px}
+#help h4{margin:0 0 8px;font:600 11px/16px var(--ui);letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+#help dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:4px 12px}
+#help dt{white-space:nowrap}#help dd{margin:0;color:var(--fg2)}
+kbd{font:12px/16px var(--mono);padding:0 4px;border:1px solid var(--line2);border-bottom-width:2px;color:var(--fg)}
+
+/* narrower desktop */
+@media (min-width:1680px){#main{grid-template-columns:320px minmax(0,1fr) 400px}}
+@media (max-width:1280px){#main{grid-template-columns:232px minmax(0,1fr) 288px}.kpi.story{display:none}}
+/* phone and small tablet: one column, markets first, tape collapsible */
+@media (max-width:900px){
+  html,body{height:auto;overflow:visible}
+  body{display:block}
+  #hd{flex-wrap:wrap;position:sticky;top:0;z-index:5}
+  #brand{height:40px;border-right:0;flex:1}
+  #hdr{height:40px}
+  #kpis{order:3;flex:1 1 100%;border-top:1px solid var(--line);display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
+  .kpi{padding:4px 8px;border-bottom:1px solid var(--line)}
+  .kpi:nth-child(3n){border-right:0}
+  .kpi:nth-child(5){grid-column:span 2;border-right:0}
+  .kpi.story{display:flex;grid-column:1/-1;border-right:0}.kpi.story .v{white-space:normal}
+  #main{display:flex;flex-direction:column}
+  .panel{border-right:0;border-bottom:1px solid var(--line)}
+  #p-mkt{order:1}#p-lanes{order:2}#p-agents{order:3}
+  .pb{overflow:visible}
+  th{position:static}
+  col.c-book{width:104px}col.c-m{width:96px}
+  #tape:not(.closed) #tl{max-height:60vh}
+  .ev{grid-template-columns:8ch 9ch minmax(0,1fr);gap:0 8px}.ev .who{display:none}
+  #ft{position:sticky;bottom:0;flex-wrap:wrap;height:auto;padding:4px 8px;gap:4px 16px}
+  #ft .sep{display:none}
+  #rep{flex:1 1 100%}#rep input[type=range]{flex:1;width:auto;min-width:0}
+  .hide-n{display:none}
+  #help .body{grid-template-columns:1fr}
+}
+</style></head><body>
+<header id="hd">
+  <div id="brand"><i></i>PIT <span>terminal</span></div>
+  <div id="kpis"></div>
+  <div id="hdr"><span id="mode" class="mode live">LIVE</span><button class="btn" id="theme" title="light / dark (t)" aria-label="toggle theme">&#9680;</button><button class="btn" id="helpb" title="keys and legend (?)" aria-label="keys and legend">?</button></div>
+</header>
+<div id="main">
+  <section class="panel" id="p-lanes"><div class="ph">Lanes <span class="n" id="n-lanes"></span><span class="r">queue by matched/$</span></div><div class="pb" id="lanes"></div></section>
+  <section class="panel" id="p-mkt"><div class="ph" id="mkt-h">Markets</div><div class="pb" id="mkt"></div></section>
+  <section class="panel" id="p-agents"><div class="ph">Agents <span class="n" id="n-agents"></span><span class="r">wallet</span></div><div class="pb" id="agents"></div></section>
+</div>
+<section id="tape"><div class="ph"><button class="btn" id="tapet" aria-expanded="true" aria-controls="tl" title="show / hide the tape">&#9662;</button>Tape <span class="n" id="tcount"></span><input id="flt" placeholder="filter: type, agent, job or text  ( / )" aria-label="filter the tape"></div><div id="tl" role="log" aria-live="off"></div></section>
+<footer id="ft">
+  <span><span class="dot" id="dot"></span><span id="conn">connecting</span></span>
+  <span id="upd" class="hide-n"></span>
+  <span id="cnt" class="hide-n"></span>
+  <span class="sep"></span>
+  <span id="rep"><button class="btn" id="back" title="one row back ([)" aria-label="one row back">&#9664;&#xFE0E;</button><button class="btn" id="play" title="play the replay (space)" aria-label="play or pause the replay">&#9654;&#xFE0E;</button><button class="btn" id="fwd" title="one row forward (])" aria-label="one row forward">&#9654;&#xFE0E;&#9654;&#xFE0E;</button><input type="range" id="scrub" min="0" max="0" value="0" aria-label="ledger row"><span id="pos"></span><button class="btn" id="live" title="back to live (End)">LIVE</button></span>
+  <span class="hide-n"><kbd>?</kbd> keys</span>
+</footer>
+<div id="help" role="dialog" aria-modal="true" aria-label="keys and legend"><div class="box"><div class="ph">Keys and legend<span class="r">Esc closes</span></div><div class="body">
+  <div><h4>Keys</h4><dl>
+    <dt><kbd>j</kbd> <kbd>k</kbd></dt><dd>next / previous market</dd>
+    <dt><kbd>Enter</kbd></dt><dd>open the market: question, branches, bets</dd>
+    <dt><kbd>J</kbd> <kbd>K</kbd></dt><dd>next / previous agent's thread</dd>
+    <dt><kbd>Esc</kbd></dt><dd>close the thread, then the market</dd>
+    <dt><kbd>s</kbd></dt><dd>next sort column (or click a header)</dd>
+    <dt><kbd>/</kbd></dt><dd>filter the tape</dd>
+    <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>replay one ledger row back / forward</dd>
+    <dt><kbd>space</kbd></dt><dd>play or pause the replay</dd>
+    <dt><kbd>End</kbd></dt><dd>back to live</dd>
+    <dt><kbd>t</kbd></dt><dd>light / dark</dd>
+  </dl></div>
+  <div><h4>Reading it</h4><dl>
+    <dt>book</dt><dd>PASS stake left, FAIL right; the numbers are the implied odds in percent</dd>
+    <dt>matched</dt><dd>2 &times; min(PASS, FAIL), summed over variants: money that disagrees</dd>
+    <dt>score</dt><dd>matched per dollar of budget; each lane runs its highest first</dd>
+    <dt><span class="b acc">run</span></dt><dd>claimed and running</dd>
+    <dt><span class="b acc">fbk</span></dt><dd>fallback: nothing is matched in its lane, so the cheapest runs</dd>
+    <dt><span class="b">blk</span></dt><dd>blocked: a dependency, a dead branch or a refutation</dd>
+    <dt><span class="b P">pass</span> <span class="b F">fail</span></dt><dd>the side of a bet, the verdict of a result</dd>
+    <dt>spark</dt><dd>the wallet over the ledger; dashed = where it started</dd>
+    <dt><code>#row=N</code></dt><dd>in the URL: open replayed to ledger row N; <code>&amp;open=&lt;job&gt;</code> opens that market</dd>
+  </dl></div>
+</div></div></div>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const usd = x => { const v = +x || 0; return (v < 0 ? "-$" : "$") + Math.abs(v).toFixed(2); };
+const mmss = s => s == null ? "--:--" : String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(Math.floor(s % 60)).padStart(2, "0");
+const age = s => s == null ? "-" : s < 60 ? s + "s" : s < 3600 ? Math.floor(s / 60) + "m" : s < 86400 ? Math.floor(s / 3600) + "h" + String(Math.floor(s % 3600 / 60)).padStart(2, "0") : Math.floor(s / 86400) + "d";
+const hms = ts => (ts || "").slice(11, 19);
+const POLL_MS = 3000;
+const TYPE = {POST: "acc", REFLECT: "acc", WAKE: "acc", FINDING: "P", REFUTE: "F", CANCEL: "F", DRIP: "q", SLEEP: "q", AGENT: "q", EDGE: "q", SETTLE: "q"};
+// market columns: key, label, class, numeric, first-click direction (-1 = high first)
+const COLS = [
+  ["state", "", "c-st", 0, 1], ["task", "Market", "c-task", 0, 1], ["lane", "Lane", "c-lane", 0, 1], ["odds", "Book P / F", "c-book", 1, -1],
+  ["pass", "PASS", "c-pass", 1, -1], ["fail", "FAIL", "c-fail", 1, -1], ["matched", "Matched", "c-m", 1, -1], ["budget", "Budget", "c-budget", 1, -1],
+  ["score", "Score", "c-score", 1, -1], ["age_s", "Age", "c-age", 1, 1]];
+const NARROW = [[matchMedia("(max-width: 900px)"), ["lane", "pass", "fail", "budget", "score", "age_s"]], [matchMedia("(max-width: 1100px)"), ["lane"]]];
+const shown = () => { const off = new Set(NARROW.filter(([q]) => q.matches).flatMap(([, ks]) => ks)); return COLS.map((c, i) => [c, i]).filter(([c]) => !off.has(c[0])); };
+NARROW.forEach(([q]) => q.addEventListener("change", () => { if (S.m) { S.last.mkt = null; renderMarkets(S.m); } }));
+const S = {m: null, sel: null, open: null, agent: null, agentSel: -1, sort: 8, dir: -1, live: true, upto: 0, playing: false, filter: "", last: {}, ok: null, at: null};
+let busy = false;
+
+function setHTML(id, html) { if (S.last[id] !== html) { S.last[id] = html; const el = $(id), st = el.scrollTop; el.innerHTML = html; el.scrollTop = st; } }
+const chip = a => `<span class="chip" data-agent="${esc(a)}">${esc(a)}</span>`;
+const chips = a => (a || []).length ? a.map(chip).join(", ") : '<span class="dim">none</span>';
+const oddsOf = mk => mk.pass + mk.fail > 0 ? mk.pass / (mk.pass + mk.fail) : -1;
+const stateOf = mk => mk.state === "running" ? ["run", "acc"] : !mk.runnable ? ["blk", ""] : mk.fallback ? ["fbk", "acc"] : ["open", "q"];
+const dash = '<span class="dim">-</span>';
+
+function spark(series, w = 96, h = 24) {
+  if (!series || series.length < 2) return `<svg width="${w}" height="${h}" aria-hidden="true"></svg>`;
+  const v = series.map(p => p[1]), lo = Math.min(...v), hi = Math.max(...v), r = hi - lo || 1;
+  const Y = y => (h - 3 - (y - lo) / r * (h - 6)).toFixed(1), X = i => (i * (w - 4) / (v.length - 1) + 2).toFixed(1);
+  const up = v[v.length - 1] >= v[0];
+  return `<svg width="${w}" height="${h}" role="img" aria-label="wallet ${usd(v[0])} to ${usd(v[v.length - 1])}">` +
+    `<line x1="2" x2="${w - 2}" y1="${Y(v[0])}" y2="${Y(v[0])}" stroke="var(--line2)" stroke-dasharray="2 2"/>` +
+    `<polyline points="${v.map((y, i) => X(i) + "," + Y(y)).join(" ")}" fill="none" stroke="var(--fg2)" stroke-width="1.25" stroke-linejoin="round"/>` +
+    `<circle cx="${X(v.length - 1)}" cy="${Y(v[v.length - 1])}" r="2" fill="${up ? "var(--pass)" : "var(--fail)"}"/></svg>`;
+}
+function book(p, f) {
+  const t = p + f;
+  if (!t) return `<span class="book" title="no stakes yet"><span class="mid">no book</span></span>`;
+  const pp = Math.round(100 * p / t);
+  return `<span class="book" title="PASS ${usd(p)} / FAIL ${usd(f)}: ${pp}% implied PASS"><i class="p" style="width:${100 * p / t}%"></i><i class="f" style="width:${100 * f / t}%"></i>` +
+    `<span class="lp">P ${pp}</span><span class="rf">${100 - pp} F</span></span>`;
+}
+
+function renderTop(m) {
+  const t = m.top, s = t.story, tot = Object.values(t.spend_today).reduce((a, b) => a + b, 0);
+  const sp = Object.entries(t.spend_today).map(([l, v]) => `${esc(l)} ${usd(v)}`).join(" · ");
+  const k = (key, val, cls = "") => `<div class="kpi ${cls}"><span class="k">${key}</span><span class="v">${val}</span></div>`;
+  setHTML("kpis", k("Mint", `${usd(t.mint_per_h)}<span class="dim">/h</span>`) + k("House", usd(t.house)) + k("Escrow", usd(t.escrow)) +
+    k("Spend today", `<span title="${sp || "nothing yet"}">${usd(tot)}</span>`) + k("Clock", `${esc(m.now.slice(11, 19))}<span class="dim">Z</span>`) +
+    k("Tonight", `${s.jobs} run · <span class="P">${s.pass} pass</span> · <span class="F">${s.fail} fail</span>${s.other ? " · " + s.other + " other" : ""} · ${s.findings} finding${s.findings === 1 ? "" : "s"} · ${s.refutations} refuted · ${usd(s.usd)} spent`, "story"));
+  const mode = $("mode"); mode.textContent = S.live ? "LIVE" : "REPLAY"; mode.className = "mode " + (S.live ? "live" : "replay");
+}
+
+function renderLanes(m) {
+  $("n-lanes").textContent = m.lanes.length;
+  if (!m.lanes.length) return setHTML("lanes", `<div class="empty">no lanes: name them, with a $/h each, in <code>lanes.toml</code></div>`);
+  setHTML("lanes", m.lanes.map(l => {
+    const r = l.running, pct = r ? Math.min(100, 100 * r.elapsed_s / Math.max(1, r.budget_s)) : 0, q = l.queue.slice(0, 8);
+    return `<div class="lane" title="${esc(l.box || "")}"><div class="top"><span class="name">${esc(l.lane)}</span><span class="dim">${usd(l.price)}/h</span><span class="num fg2" title="spent today">${usd(l.spend_today)}</span></div>` +
+      (r ? `<div class="st"><span class="b acc">run</span><span class="chip" data-task="${esc(r.job)}">${esc(r.job)}</span>${r.fallback ? '<span class="b q">fbk</span>' : ""}</div>` +
+        `<div class="pr"><div class="prog" role="progressbar" aria-label="${esc(r.job)} elapsed of budget" aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100"><i class="${r.elapsed_s > r.budget_s ? "over" : ""}" style="width:${pct}%"></i></div>` +
+        `<span class="num">${mmss(r.elapsed_s)}<span class="dim"> / ${mmss(r.budget_s)}</span></span></div>`
+        : `<div class="st"><span class="b q">idle</span></div>`) +
+      `<div class="qh"><span>Queue ${l.depth}</span><span class="num">score</span></div>` +
+      (q.map((x, i) => `<div class="qr" data-task="${esc(x.task)}"><span class="dim num">${i + 1}</span><span class="t">${esc(x.task)}</span><span>${x.fallback ? '<span class="b q">fbk</span>' : ""}</span><span class="num">${x.score.toFixed(2)}</span></div>`).join("") ||
+        `<div class="dim" style="line-height:20px">empty</div>`) +
+      (l.depth > q.length ? `<div class="dim" style="line-height:20px">+ ${l.depth - q.length} more</div>` : "") + "</div>";
+  }).join(""));
+}
+
+function sortKey(mk, k) { return k === "odds" ? oddsOf(mk) : k === "state" ? ["run", "open", "fbk", "blk"].indexOf(stateOf(mk)[0]) : mk[k]; }
+function marketRows(m) {
+  const k = COLS[S.sort][0], num = COLS[S.sort][3];
+  return [...m.markets].sort((a, b) => {
+    const x = sortKey(a, k), y = sortKey(b, k);
+    return (num ? (x ?? -1e18) - (y ?? -1e18) : String(x).localeCompare(String(y))) * S.dir || a.task.localeCompare(b.task);
+  });
+}
+function detail(mk, span) {
+  const multi = mk.variants.length > 1 || mk.variants[0].variant !== "main";
+  const bp = [...new Set(mk.variants.flatMap(v => v.pass_by))], bf = [...new Set(mk.variants.flatMap(v => v.fail_by))];
+  const bets = mk.bets.length ? `<div class="bets"><span class="h">time</span><span class="h">agent</span><span class="h">variant</span><span class="h">side</span><span class="h num">stake</span><span></span>` +
+    mk.bets.map(b => `<span class="dim">${hms(b.ts)}</span><span>${chip(b.agent)}</span><span>${esc(b.variant)}</span><span class="${b.side === "pass" ? "P" : "F"}">${b.side.toUpperCase()}</span><span class="num">${usd(b.usd)}</span><span>${b.tags.map(t => `<span class="b q">${esc(t)}</span>`).join(" ")}</span>`).join("") + "</div>"
+    : `<div class="dim" style="margin-top:8px">no bets yet: <code>q bet ${esc(mk.task)} PASS|FAIL &lt;usd&gt; --as &lt;agent&gt;</code></div>`;
+  return `<tr class="detail"><td colspan="${span}"><div class="dgrid">` +
+    `<span class="k">question</span><span>${esc(mk.question)}</span>` +
+    `<span class="k">expect</span><span class="${mk.expect === "pass" ? "P" : "F"}">${esc(String(mk.expect).toUpperCase())}</span>` +
+    `<span class="k">if pass</span><span>${esc(mk.if_pass)}</span><span class="k">if fail</span><span>${esc(mk.if_fail)}</span>` +
+    `<span class="k">posted by</span><span>${mk.proposer ? chip(mk.proposer) : '<span class="dim">human</span>'} <span class="dim">on ${esc(mk.lane)}</span></span>` +
+    `<span class="k">backers</span><span><span class="P">PASS</span> ${chips(bp)} &nbsp; <span class="F">FAIL</span> ${chips(bf)}</span>` +
+    (multi ? `<span class="k">variants</span><span>${mk.variants.map(v => `${esc(v.variant)} <span class="P">${usd(v.pass)}</span> / <span class="F">${usd(v.fail)}</span> <span class="dim">matched</span> ${usd(v.matched)}`).join(" &nbsp;·&nbsp; ")}</span>` : "") +
+    `<span class="k">status</span><span class="fg2">${mk.state === "running" ? "running" : mk.runnable ? "runnable" : "blocked: a dependency, a dead branch or a refutation"}${mk.rank != null ? ` · queue position ${mk.rank + 1}` : ""}</span>` +
+    `</div>${bets}</td></tr>`;
+}
+function renderMarkets(m) {
+  if (S.agent) return renderThread(m);
+  const rows = marketRows(m), arrow = i => S.sort === i ? (S.dir > 0 ? "&#9650;" : "&#9660;") : "";
+  if (!rows.some(r => r.task === S.sel)) S.sel = rows[0] ? rows[0].task : null;
+  setHTML("mkt-h", `Markets <span class="n">${rows.length} open</span><span class="r">sort: ${COLS[S.sort][1] || "state"} ${arrow(S.sort)}</span>`);
+  if (!rows.length) return setHTML("mkt", `<div class="empty">no open markets: post one with <code>q post &lt;spec.toml&gt; --as &lt;agent&gt;</code>, then bet on it with <code>q bet</code></div>`);
+  const cols = shown();
+  const head = `<table aria-label="open markets"><colgroup>${cols.map(([c]) => `<col class="${c[2]}">`).join("")}</colgroup><thead><tr>` +
+    cols.map(([[k, n, cls, num], i]) => `<th class="${cls}${num ? " num" : ""}" data-k="${i}" aria-sort="${S.sort === i ? (S.dir > 0 ? "ascending" : "descending") : "none"}" title="sort by ${n || "state"}">` +
+      (num ? `<span class="ar">${arrow(i)}</span>${n}` : `${n}<span class="ar">${arrow(i)}</span>`) + "</th>").join("") + "</tr></thead><tbody>";
+  setHTML("mkt", head + rows.map(mk => {
+    const [st, sc] = stateOf(mk), multi = mk.variants.length > 1 || mk.variants[0].variant !== "main";
+    const td = {
+      state: `<td><span class="b ${sc}">${st}</span></td>`,
+      task: `<td title="${esc(mk.question)}">${esc(mk.task)}${multi ? `<span class="sub"> / ${esc(mk.variants.map(v => v.variant).join(" "))}</span>` : ""}</td>`,
+      lane: `<td class="fg2">${esc(mk.lane)}</td>`, odds: `<td>${book(mk.pass, mk.fail)}</td>`,
+      pass: `<td class="num">${mk.pass ? usd(mk.pass) : dash}</td>`, fail: `<td class="num">${mk.fail ? usd(mk.fail) : dash}</td>`,
+      matched: `<td class="num">${mk.matched ? usd(mk.matched) : dash}</td>`, budget: `<td class="num">${usd(mk.budget)}</td>`,
+      score: `<td class="num${mk.score ? "" : " dim"}">${mk.score.toFixed(2)}</td>`, age_s: `<td class="num fg2">${age(mk.age_s)}</td>`};
+    return `<tr class="row${mk.task === S.sel ? " sel" : ""}" data-task="${esc(mk.task)}" aria-selected="${mk.task === S.sel}">` +
+      cols.map(([c]) => td[c[0]]).join("") + "</tr>" + (mk.task === S.open ? detail(mk, cols.length) : "");
+  }).join("") + "</tbody></table>");
+}
+
+function renderThread(m) {
+  const a = m.agents.find(x => x.id === S.agent), t = m.threads[S.agent] || {nodes: [], open_bets: []};
+  if (!a) { S.agent = null; return renderMarkets(m); }
+  const cal = m.calibration.find(c => c.agent === S.agent);
+  setHTML("mkt-h", `Thread <span class="n">${esc(a.id)}${a.parent ? " · sub of " + esc(a.parent) : ""}</span><span class="r">Esc closes</span>`);
+  setHTML("mkt", `<div class="tn"><b>${esc(a.id)}</b> &nbsp; ${a.kind === "persistent" ? usd(a.balance) : ""} &nbsp; ${a.sleeping ? `<span class="b acc">sleep</span> <span class="fg2">until ${esc(a.sleep.until)}</span>` : '<span class="b q">awake</span>'}` +
+    `<div class="q">${esc(a.brief)}</div>` + (cal ? `<div class="dim">bets ${cal.bets} · wins ${cal.wins} · brier ${cal.brier} · herding ${cal.herding} · self ${cal.self}</div>` : "") + "</div>" +
+    (t.nodes.map(n => `<div class="tn"><span class="b ${n.verdict === "pass" ? "P" : n.verdict === "fail" ? "F" : n.state === "running" ? "acc" : ""}">${esc(n.verdict || n.state)}</span> <b>${esc(n.id)}</b> <span class="fg2">${usd(n.usd)} of ${usd(n.budget)}</span>${n.by && n.by !== S.agent ? ' <span class="dim">by ' + esc(n.by) + "</span>" : ""}<div class="q">${esc(n.question)}</div></div>` +
+      n.findings.map(f => `<div class="tn d"><span class="b ${f.status === "refuted" ? "F" : "P"}">${esc(f.status === "open" ? "finding" : f.status)}</span> ${esc(f.id)} <span class="fg2">${esc(f.text)}</span></div>`).join("")).join("") ||
+      `<div class="empty">no runs yet: <code>q post &lt;spec.toml&gt; --as ${esc(a.id)}</code></div>`) +
+    `<div class="ph">Open bets <span class="n">${t.open_bets.length}</span></div>` +
+    (t.open_bets.map(b => `<div class="tn"><span class="b ${b.side === "pass" ? "P" : "F"}">${b.side}</span> ${usd(b.usd)} on <span class="chip" data-task="${esc(b.job)}">${esc(b.job)}</span><span class="dim">/${esc(b.variant)}</span>${b.self ? ' <span class="b q">self</span>' : ""}</div>`).join("") || '<div class="empty">none</div>'));
+}
+
+function agentList(m) {
+  const kids = id => m.agents.filter(a => a.parent === id), out = [];
+  const walk = (a, d) => { out.push([a, d]); kids(a.id).forEach(k => walk(k, d + 1)); };
+  m.agents.filter(a => !a.parent).sort((a, b) => b.balance - a.balance || a.id.localeCompare(b.id)).forEach(a => walk(a, 0));
+  return out;
+}
+function renderAgents(m) {
+  const list = agentList(m), cal = Object.fromEntries(m.calibration.map(c => [c.agent, c]));
+  $("n-agents").textContent = list.length;
+  const ags = list.map(([a, d]) => {
+    const c = cal[a.wallet], own = a.kind === "persistent";
+    return `<div class="ag${d ? " sub" : ""}${S.agent === a.id ? " sel" : ""}" data-agent="${esc(a.id)}" tabindex="0" role="button" aria-label="open ${esc(a.id)}'s thread">` +
+      `<div class="l1"><b>${esc(a.id)}</b>${a.sleeping ? '<span class="b acc">sleep</span>' : ""}<span class="num">${own ? usd(a.balance) : '<span class="dim">sub</span>'}</span></div>` +
+      `<div class="l2">${a.sleeping ? "wakes " + esc(a.sleep.until) : own && c ? `won ${c.wins}/${c.bets} · brier ${c.brier}` : esc(a.brief)}</div>${own ? spark(a.series) : ""}</div>`;
+  }).join("") || `<div class="empty">no agents: add one with <code>q agent add &lt;id&gt; --brief "..."</code></div>`;
+  const pnl = c => (parseFloat(c.returned) || 0) - (parseFloat(c.staked) || 0);
+  const calt = m.calibration.length ? `<table id="cal" aria-label="calibration"><colgroup><col><col style="width:48px"><col style="width:64px"><col style="width:56px"><col style="width:48px"></colgroup>` +
+    `<thead><tr><th>agent</th><th class="num" title="won / bets">w/n</th><th class="num" title="returned minus staked">p&amp;l</th><th class="num" title="Brier score from the stake share at close">brier</th><th class="num" title="bets with the side already ahead">herd</th></tr></thead><tbody>` +
+    m.calibration.map(c => { const p = pnl(c); return `<tr><td>${esc(c.agent)}</td><td class="num">${esc(c.wins)}/${esc(c.bets)}</td><td class="num ${p > 0 ? "P" : p < 0 ? "F" : "dim"}">${(p > 0 ? "+" : "") + p.toFixed(2)}</td><td class="num">${esc(c.brier)}</td><td class="num">${esc(c.herding)}</td></tr>`; }).join("") + "</tbody></table>"
+    : `<div class="empty">no bets yet</div>`;
+  setHTML("agents", ags + `<div class="ph">Calibration <span class="r">brier: lower is better</span></div>` + calt);
+}
+
+function renderTape(m) {
+  const f = S.filter.toLowerCase(), ev = m.tape.filter(e => !f || (e.type + " " + (e.agent || "") + " " + (e.job || "") + " " + e.text).toLowerCase().includes(f));
+  $("tcount").textContent = f ? `${ev.length} of ${m.tape.length}` : m.tape.length;
+  setHTML("tl", ev.map(e => {
+    const c = e.type === "BET" ? (e.side === "PASS" ? "P" : "F") : e.type === "RESULT" ? (e.verdict === "pass" ? "P" : e.verdict === "fail" ? "F" : "acc") : TYPE[e.type] ?? "";
+    return `<div class="ev" data-task="${esc(e.job || "")}"><span class="dim">${hms(e.ts)}</span><span><span class="b ${c}">${esc(e.type)}</span></span>` +
+      `<span class="who fg2">${e.agent && e.type !== "AGENT" ? esc(e.agent) : ""}</span><span title="${esc(e.text)}">${esc(e.text)}</span></div>`;
+  }).join("") || `<div class="empty">${f ? `no events match "${esc(S.filter)}"` : "no ledger rows yet: <code>q add</code>, <code>q post</code> and <code>q tick</code> write them"}</div>`);
+}
+
+function renderFoot(m) {
+  const total = m.total_rows, at = S.live ? total : Math.min(S.upto, total), w = String(total).length;
+  const sc = $("scrub"); sc.max = total; sc.value = at;
+  $("pos").textContent = `row ${String(at).padStart(w)} / ${total}`;
+  $("live").setAttribute("aria-pressed", S.live);
+  $("cnt").textContent = `${m.markets.length} markets · ${m.agents.length} agents · ${m.tape.length} events`;
+  $("play").innerHTML = S.playing ? "&#10074;&#10074;" : "&#9654;&#xFE0E;";
+}
+function renderConn() {
+  $("dot").className = "dot" + (S.ok === false ? " off" : S.live ? "" : " paused");
+  $("conn").textContent = S.ok === false ? "disconnected, retrying" : S.live ? `connected · polling every ${POLL_MS / 1000} s` : "replay · polling paused";
+  $("upd").textContent = S.at ? "updated " + S.at.toTimeString().slice(0, 8) : "";
+}
+function render(m) { S.m = m; renderTop(m); renderLanes(m); renderMarkets(m); renderAgents(m); renderTape(m); renderFoot(m); renderConn(); }
+async function poll() {
+  if (busy) return; busy = true;
+  try {
+    const r = await fetch("/market.json" + (S.live ? "" : "?upto=" + S.upto), {cache: "no-store"});
+    if (!r.ok) throw new Error(r.status);
+    const m = await r.json(); S.ok = true; S.at = new Date(); render(m);
+  } catch (e) { S.ok = false; renderConn(); }
+  busy = false;
+}
+function seek(n) {
+  const max = S.m ? S.m.total_rows : +$("scrub").max; n = Math.max(0, Math.min(max, n));
+  S.live = n >= max; S.upto = n;
+  try { history.replaceState(null, "", S.live ? location.pathname + location.search : "#row=" + n); } catch (e) {}
+  poll();
+}
+function closeAgent() { S.agent = null; S.agentSel = -1; S.last.mkt = null; }
+function pick(t, fromRow) {
+  if (!S.m || !S.m.markets.some(x => x.task === t)) return;
+  if (S.agent) closeAgent();
+  S.open = fromRow ? (S.sel === t ? (S.open === t ? null : t) : S.open && t) : t;
+  S.sel = t; renderMarkets(S.m); renderAgents(S.m);
+  document.querySelector("tr.sel")?.scrollIntoView({block: "nearest"});
+}
+
+document.addEventListener("click", e => {
+  const ag = e.target.closest("[data-agent]"), th = e.target.closest("th[data-k]"), row = e.target.closest("[data-task]");
+  if (ag && S.m) { S.agent = ag.dataset.agent; S.agentSel = agentList(S.m).findIndex(([a]) => a.id === S.agent); S.last.mkt = null; renderMarkets(S.m); renderAgents(S.m); return; }
+  if (th && S.m) { const i = +th.dataset.k; S.dir = S.sort === i ? -S.dir : COLS[i][4]; S.sort = i; renderMarkets(S.m); return; }
+  if (row && row.dataset.task) pick(row.dataset.task, row.tagName === "TR");
+});
+$("flt").addEventListener("input", e => { S.filter = e.target.value; if (S.m) renderTape(S.m); });
+$("scrub").addEventListener("input", e => { S.playing = false; seek(+e.target.value); });
+$("back").onclick = () => { S.playing = false; seek((S.live ? (S.m ? S.m.total_rows : 0) : S.upto) - 1); };
+$("fwd").onclick = () => { S.playing = false; if (!S.live) seek(S.upto + 1); };
+$("live").onclick = () => { S.playing = false; seek(1e9); };
+$("play").onclick = () => { S.playing = !S.playing; if (S.playing && S.live) seek(0); else if (S.m) renderFoot(S.m); };
+const tapeT = open => { $("tape").classList.toggle("closed", !open); document.body.classList.toggle("tape-closed", !open); $("tapet").setAttribute("aria-expanded", open); $("tapet").innerHTML = open ? "&#9662;" : "&#9656;"; };
+$("tapet").onclick = () => { const open = $("tape").classList.contains("closed"); tapeT(open); savedTape = open ? "1" : "0"; try { localStorage.setItem("pit-tape", open ? "1" : "0"); } catch (e) {} };
+const isLight = () => document.documentElement.dataset.theme === "light" || (!document.documentElement.dataset.theme && matchMedia("(prefers-color-scheme: light)").matches);
+$("theme").onclick = () => { const t = isLight() ? "dark" : "light"; document.documentElement.dataset.theme = t; try { localStorage.setItem("pit-theme", t); } catch (e) {} };
+const help = on => { $("help").classList.toggle("on", on); if (on) $("help").querySelector(".box").focus?.(); };
+$("helpb").onclick = () => help(true);
+$("help").onclick = e => { if (e.target.id === "help") help(false); };
+let savedTape = null;
+try { const t = localStorage.getItem("pit-theme"); if (t) document.documentElement.dataset.theme = t; savedTape = localStorage.getItem("pit-tape"); } catch (e) {}
+tapeT(savedTape ? savedTape === "1" : !NARROW[0][0].matches);
+NARROW[0][0].addEventListener("change", q => { if (!savedTape) tapeT(!q.matches); });
+
+document.addEventListener("keydown", e => {
+  if (e.target.id === "flt") { if (e.key === "Escape") e.target.blur(); return; }
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key;
+  if ($("help").classList.contains("on")) { if (k === "Escape" || k === "?") help(false); return; }
+  if (k === "Enter" && e.target.classList && e.target.classList.contains("ag")) return e.target.click();
+  if (k === "?") return help(true);
+  if (k === "t") return $("theme").click();
+  if (!S.m) return;
+  const rows = marketRows(S.m), ix = rows.findIndex(r => r.task === S.sel), ag = agentList(S.m);
+  if (k === "j" || k === "k") { const n = rows[Math.max(0, Math.min(rows.length - 1, ix + (k === "j" ? 1 : -1)))]; if (n) { if (S.agent) closeAgent(); S.sel = n.task; if (S.open) S.open = n.task; renderMarkets(S.m); renderAgents(S.m); document.querySelector("tr.sel")?.scrollIntoView({block: "nearest"}); } }
+  else if ((k === "J" || k === "K") && ag.length) { S.agentSel = Math.max(0, Math.min(ag.length - 1, S.agentSel + (k === "J" ? 1 : -1))); S.agent = ag[S.agentSel][0].id; S.last.mkt = null; renderMarkets(S.m); renderAgents(S.m); }
+  else if (k === "Enter") { if (!S.agent && S.sel) { S.open = S.open === S.sel ? null : S.sel; renderMarkets(S.m); } }
+  else if (k === "Escape") { if (S.agent) { closeAgent(); renderMarkets(S.m); renderAgents(S.m); } else if (S.open) { S.open = null; renderMarkets(S.m); } }
+  else if (k === "s") { S.sort = (S.sort + 1) % COLS.length; S.dir = COLS[S.sort][4]; renderMarkets(S.m); }
+  else if (k === "/") { e.preventDefault(); tapeT(true); $("flt").focus(); }
+  else if (k === "[" || k === "ArrowLeft") $("back").click();
+  else if (k === "]" || k === "ArrowRight") $("fwd").click();
+  else if (k === " ") { e.preventDefault(); $("play").click(); }
+  else if (k === "End") $("live").click();
+});
+setInterval(() => { if (S.playing && !S.live) seek(S.upto + 1); else if (S.playing) { S.playing = false; if (S.m) renderFoot(S.m); } }, 400);
+setInterval(() => { if (S.live) poll(); }, POLL_MS);
+// #row=N opens replayed to ledger row N; #open=<job> opens that market (both: #row=29&open=variant-b)
+const hp = new URLSearchParams(location.hash.slice(1));
+if (/^\d+$/.test(hp.get("row") || "")) { S.live = false; S.upto = +hp.get("row"); }
+if (hp.get("open")) S.sel = S.open = hp.get("open");
+poll();
+</script></body></html>

@@ -1,0 +1,15 @@
+id = "review"
+question = "Does an independent review find no blocking issue in the candidate?"
+expect = "pass"
+if_pass = "rehearse the release"
+if_fail = "address the review first"
+lane = "any"
+budget_s = 900
+budget_usd = 2
+depends_on = ["ci-build"]
+
+[actual]
+start = "2026-01-15T20:40:00Z"
+end = "2026-01-15T20:52:00Z"
+usd = 0.80
+verdict = "pass"

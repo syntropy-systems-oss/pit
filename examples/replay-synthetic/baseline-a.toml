@@ -1,0 +1,16 @@
+id = "baseline-a"
+question = "Does variant A reach 70% on the held-out set?"
+expect = "pass"
+if_pass = "A is the baseline: run B against it"
+if_fail = "fix the eval harness before comparing variants"
+lane = "gpu-small"
+budget_s = 1500
+budget_usd = 6
+run = "python3 eval.py --variant A --set heldout"
+
+[actual]
+start = "2026-01-15T20:00:00Z"
+end = "2026-01-15T20:20:00Z"
+usd = 4.67
+verdict = "pass"
+result = { acc = 0.72 }

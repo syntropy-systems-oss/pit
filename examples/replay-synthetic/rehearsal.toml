@@ -1,0 +1,16 @@
+id = "rehearsal"
+question = "Does the release rehearsal pass with B as the default?"
+expect = "pass"
+if_pass = "ask a human to approve the release"
+if_fail = "find what broke before cutting"
+lane = "ci"
+budget_s = 1800
+budget_usd = 50
+depends_on = ["review@pass", "variant-b@pass"]
+run = "./release --rehearse"
+
+[actual]
+start = "2026-01-15T22:30:00Z"
+end = "2026-01-15T22:47:00Z"
+usd = 28.33
+verdict = "pass"

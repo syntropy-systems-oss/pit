@@ -1,0 +1,11 @@
+.pit/
+__pycache__/
+*.egg-info/
+.venv/
+uv.lock
+ledger/.reflect-nudged
+# State (lanes.toml, ledger/, queue/, agents/) lives in its own directory and repo ($PIT_ROOT), never in this one.
+/lanes.toml
+/ledger/
+/queue/
+/agents/

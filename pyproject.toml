@@ -1,0 +1,35 @@
+[project]
+name = "pit"
+version = "0.1.0"
+description = "A prediction market that schedules experiments: agents post runs, bet PASS or FAIL, and the runs they disagree about go first; over a ledger of jobs, findings and priced lanes."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Syntropy Systems" }]
+dependencies = []
+keywords = ["experiments", "scheduler", "prediction-market", "ledger", "claude-code"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Operating System :: POSIX",
+  "Topic :: Scientific/Engineering",
+]
+
+[project.urls]
+Homepage = "https://github.com/syntropy-systems-oss/pit"
+Source = "https://github.com/syntropy-systems-oss/pit"
+Issues = "https://github.com/syntropy-systems-oss/pit/issues"
+Changelog = "https://github.com/syntropy-systems-oss/pit/blob/main/CHANGELOG.md"
+
+[project.scripts]
+q = "pit.cli:main"
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["pit"]

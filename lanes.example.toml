@@ -1,0 +1,47 @@
+# Copy to <your state directory>/lanes.toml. Lanes are priced by attention, not rental: a $/h that says what an
+# hour of that box is worth to you. The prices below are examples (the Pit's dollars are play money).
+# cost line = uncached_in x tokens.uncached_per_m + cache_read x tokens.cache_read_per_m
+#           + out x tokens.out_per_m + wall_h x lane.usd_per_h        (pit.lanes.cost_line)
+
+[tokens]
+uncached_per_m = 0.24
+cache_read_per_m = 0.05
+out_per_m = 2.20
+
+# When `q status` / the hooks say "reflect due": any predicate that fires (pit/reflect.py PREDICATES); a missing key = off.
+[reflect]
+rows = 64                       # ledger rows since the last reflect
+hours = 8                       # hours since the last reflect
+after = ["result:invalid"]      # a row of this type: cancel, decision, result:<verdict>, node:<kind>
+spend_rising = 3                # the last N results each cost more than the one before
+
+[lanes.gpu-small]
+box = "a small GPU: short rollouts, probes"
+usd_per_h = 14
+slots = 1                       # GPU-exclusive
+max_usd_per_value = 25          # cheap lane: q add refuses budget_usd > value x this
+gate = "true"                   # a shell command; exit 0 = the lane is free
+
+[lanes.gpu-large]
+box = "a large GPU box that also serves production"
+usd_per_h = 100
+slots = 1
+# Admit bench work only while production is idle, e.g.:
+# gate = """curl -sf -m 3 http://localhost:9100/metrics | awk '$1=="inflight_requests"{f=1; exit ($2>0)} END{if(!f) exit 1}'"""
+gate = "true"
+
+[lanes.ci]
+box = "self-hosted CI runners: builds, release rehearsals"
+usd_per_h = 100                 # a 17-min rehearsal = $28
+slots = 1
+gate = "true"
+
+# `any` is built in: wherever the session is, tokens only.
+
+# Pit: agents fund runs and bet PASS/FAIL per variant; the frontier is ordered by matched stakes per $ budget.
+# enabled = false restores the default ranking (priority, critical path, value per $).
+[pit]
+enabled = true
+default_stake = 0.25            # the automatic stake a post puts on its `expect`, per variant
+vig_rate = 0.02                 # of each settled pot, to the house
+house_seed = 1.00               # the house stakes a reflect-planted root this much per variant from its vig, capped by the pool

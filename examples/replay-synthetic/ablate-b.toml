@@ -1,0 +1,16 @@
+id = "ablate-b"
+question = "Does B's gain survive without the new data mix?"
+expect = "pass"
+if_pass = "the gain is the architecture"
+if_fail = "the gain is the data mix"
+lane = "gpu-small"
+budget_s = 2400
+budget_usd = 10
+depends_on = ["F:b-beats-a"]
+run = "python3 eval.py --variant B-nomix --set heldout"
+
+[actual]
+start = "2026-01-15T21:00:00Z"
+end = "2026-01-15T21:40:00Z"
+usd = 9.33
+verdict = "pass"

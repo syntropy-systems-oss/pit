@@ -1,0 +1,20 @@
+id = "variant-b"
+question = "Does variant B beat A on the held-out set?"
+expect = "pass"
+if_pass = "promote B; queue the ablation"
+if_fail = "keep A as the default"
+lane = "gpu-small"
+budget_s = 1800
+budget_usd = 8
+proposer = "explorer"
+depends_on = ["baseline-a"]
+inputs = { baseline = "{{ jobs.baseline-a.result.acc }}" }
+run = "python3 eval.py --variant B --set heldout --beat {{ inputs.baseline }}"
+produces_if_pass = ["F:b-beats-a"]
+
+[actual]
+start = "2026-01-15T20:25:00Z"
+end = "2026-01-15T20:55:00Z"
+usd = 7.00
+verdict = "pass"
+result = { acc = 0.78 }

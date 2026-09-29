@@ -1,0 +1,54 @@
+# Rows that exist before the night: two agents (an hour of income each), the posters' automatic stakes, bets,
+# and the reflection that closes the night. The two findings and the refutation come from the jobs themselves.
+
+[[agent]]
+id = "explorer"
+brief = "Which variant should be the default?"
+income_min = 60
+
+[[agent]]
+id = "skeptic"
+brief = "Is every gain real? Look for leaks and flukes."
+
+[[bet]]
+job = "variant-b"
+side = "pass"
+usd = 0.25
+agent = "explorer"
+auto = true
+
+[[bet]]
+job = "seed-sweep"
+side = "pass"
+usd = 0.25
+agent = "explorer"
+auto = true
+
+[[bet]]
+job = "leak-check"
+side = "pass"
+usd = 0.25
+agent = "skeptic"
+auto = true
+
+[[bet]]
+job = "variant-b"
+side = "fail"
+usd = 3.00
+agent = "skeptic"
+
+[[bet]]
+job = "leak-check"
+side = "fail"
+usd = 2.00
+agent = "explorer"
+
+[[bet]]
+job = "sweep-large"
+side = "pass"
+usd = 1.00
+agent = "explorer"
+
+[[reflect]]
+note = "run the leak check before any ablation of a new winner; a seed sweep is cheap enough to run first"
+agent = "reflect"

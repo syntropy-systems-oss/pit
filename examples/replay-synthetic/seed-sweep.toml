@@ -1,0 +1,17 @@
+id = "seed-sweep"
+question = "Does A's score hold within 1 point across three seeds?"
+expect = "pass"
+if_pass = "one seed is enough for this set"
+if_fail = "report every comparison over three seeds"
+lane = "gpu-small"
+budget_s = 3000
+budget_usd = 6
+proposer = "explorer"
+depends_on = ["baseline-a"]
+run = "python3 eval.py --variant A --set heldout --seeds 1,2,3"
+
+[actual]
+start = "2026-01-15T21:45:00Z"
+end = "2026-01-15T22:25:00Z"
+usd = 9.33
+verdict = "pass"

@@ -1,0 +1,19 @@
+id = "sweep-large"
+question = "Do all 10 prompts pass on the large model?"
+expect = "pass"
+if_pass = "ship the prompt set"
+if_fail = "fix the failing prompts first"
+lane = "gpu-large"
+budget_s = 3600
+budget_usd = 100
+run = "python3 sweep.py --prompts 1-10"
+
+[actual]
+start = "2026-01-15T20:05:00Z"
+end = "2026-01-15T21:05:00Z"
+usd = 100.00
+verdict = "fail"
+stop_at_s = 900
+stop_rule = "feedback_report"
+usd_at_stop = 25.00
+stop_note = "prompt 3: the grader reported an error; prompts 4-10 ran against a broken grader"
