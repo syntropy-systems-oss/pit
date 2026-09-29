@@ -120,16 +120,22 @@ def market_json(rows: list[dict], cfg: dict, now: datetime | None = None) -> dic
                     for j, v in st.jobs.items() if v["state"] == "running" and v["spec"]["lane"] == name), None)
         q = [j for j in order if st.jobs[j]["spec"]["lane"] == name]
         lane_out.append({"lane": name, "price": l.get("usd_per_h", 0), "box": l.get("box", ""), "running": run,
+                         "idle_s": None if run else autopilot.lane_idle(rows, st, name, now),
                          "depth": len(q), "queue": [{"task": j, "score": mk[j]["score"], "matched": mk[j]["matched"], "budget": mk[j]["budget"],
                                                      "fallback": j in fb, "proposer": mk[j]["proposer"]} for j in q], "spend_today": spend.get(name, 0.0),
                          "bag": (lambda c: c and {"n": bag.today(rows, name, now), "max": c["max_per_day"]})(bag.conf(cfg, name))})
 
     sleepers, fams = B.sleepers(rows), {}
     agents = []
+    subs = [r for r in book.agents.values() if r.get("parent")]           # per-turn identities: presentation folds them into their root
     for a, r in book.agents.items():
+        if r.get("parent"):
+            continue
         z = sleepers.get(a)
         w = book.wallet(a)
-        agents.append({"id": a, "kind": r["kind"], "parent": r.get("parent"), "brief": r["brief"], "wallet": w, "balance": round(book.balance(a), 4),
+        turns = [s["ts"] for s in subs if book.wallet(s["id"]) == a]
+        agents.append({"id": a, "kind": r["kind"], "parent": None, "brief": r["brief"], "wallet": w, "balance": round(book.balance(a), 4),
+                       "turns": len(turns), "last_turn": max(turns, default=None), "last_turn_age_s": _age(max(turns, default=None), now),
                        "series": series.get(w, [])[-80:], "last_acted": autopilot.last_acted(rows, book, a), "sleeping": bool(z and not z["wake"]),
                        "sleep": None if not z else {"until": B.until_text(z["sleep"]["until"]), "note": z["sleep"].get("note", ""), "since": z["sleep"]["ts"],
                                                      "woke": z["wake"]["reason"] if z["wake"] else None}})
@@ -138,7 +144,7 @@ def market_json(rows: list[dict], cfg: dict, now: datetime | None = None) -> dic
         if r["t"] == "claim" and r.get("agent"):
             claimed.setdefault(r["agent"], set()).add(r["job"])
     threads = {}
-    for a in book.agents:
+    for a in (x["id"] for x in agents):
         fam = book.family(a)
         mine = {j for j in st.jobs if book.proposers.get(j) in fam} | {j for f in fam for j in claimed.get(f, ())}
         nodes = []
@@ -158,7 +164,7 @@ def market_json(rows: list[dict], cfg: dict, now: datetime | None = None) -> dic
     escrow = sum(b["usd"] for b in book.bets if (b["job"], b["variant"]) not in book.settled)
     return {"agents": agents, "markets": markets, "tape": events[-TAPE:][::-1], "lanes": lane_out, "calibration": _calibration(rows), "threads": threads,
             "top": {"mint_per_h": sum(l.get("usd_per_h", 0) for l in lanes.values()), "house": round(book.flows.get(B.HOUSE, 0.0), 4), "escrow": round(escrow, 4),
-                    "spend_today": spend, "story": story},
+                    "spend_today": spend, "story": story, "subs": len(subs)},
             "autopilot": autopilot.status(rows, cfg, now), "rows": len(rows), "row_ts": [r["ts"] for r in rows], "now": now.isoformat(timespec="seconds"), "generated_at": L.now()}
 
 

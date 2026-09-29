@@ -1,7 +1,7 @@
 """`q autopilot`: the loop that runs Pit between sessions (a state machine over the ledger).
 
 Each tick: STOP file? -> B.tick (drip + wakes) -> per lane: free? pick B.order()[0] among jobs with a `run`,
-gate, hour cap -> claim+run in a subprocess (`q run`, so lanes run at once; `any` gets a small worker pool) ->
+gate -> claim+run in a subprocess (`q run`, so lanes run at once; `any` gets a small worker pool) ->
 desk jobs (no `run`) become a `wake` for their proposer -> hand-backs: every result of a posted job and every
 wake spawns the proposer as a Claude Code subagent (a sub `<agent>-<ts>`, so it books to the parent) -> reflection
 when reflect.due() fires (Opus, a sub of `reflect`; proposals are printed and the session notified, never added).
@@ -18,7 +18,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import bag, lanes, ledger as L, book as B, reflect
+from . import bag, lanes, ledger as L, book as B, reflect, spec as specmod
 
 REPO = Path(__file__).resolve().parent.parent
 RULES = ("Money is a scheduling signal, not real. Never spend real money, never send messages to people, never touch "
@@ -27,13 +27,25 @@ CLAIM = ("Your brief is a claim to prove or refute; it is your goal. This turn: 
          "strongest evidence for and against it from your thread. (2) Your next experiment: name the cheapest run "
          "that could change your mind and post it (`q post --as <you>` — you pay; if you cannot afford the lane you "
          "want, post it on a cheaper lane or `q sleep --until-balance` naming the run). Posting is the primary action "
-         "every turn unless you are waiting on a run of yours; or record a finding if your evidence already settles something. If a result of yours settles a question by "
-         "analysis and implies a concrete change or run, post that change as your next job before you sleep.")
+         "every turn; or record a finding if your evidence already settles something. If a result of yours settles a question by "
+         "analysis and implies a concrete change or run, post that change as your next job before you sleep. "
+         "An experiment is a runnable bench job: a `run` command, or `scenario = \"<name>\"` on a lane with a runner "
+         "(`q list --scenarios` names them). A desk job with no run is not an experiment and does not count. You are never "
+         "idle: while a run of yours is in flight, bet, research or post a second experiment on a free lane; propose new "
+         "cases the system could plausibly get wrong rather than re-auditing the machine.")
+DESK = ("This desk job is yours and stays on your plate until it has a result. Do it now and record the result with "
+        "`q result <job> --verdict … --as <you>` citing the commit or file you produced; or, if it is too big for one turn, "
+        "post ONE narrower job that gets it started (`q post --as <you>`) and record this one as invalid with a note; or "
+        "cancel it with a reason (`q cancel <job> --reason … --as <you>`). Do not leave it queued.")
 BOARD = ("The board is context. If an open run bears on your claim you may bet on it (that is how you get paid for "
          "understanding what others are finding), and you may bet where you have a reason even if it does not. The market "
          "is not the goal: it buys you time on the machines and pays you for understanding.")
-DEFAULTS = {"max_usd_per_hour": 40.0, "max_concurrent_subagents": 3, "any_workers": 2, "permission_mode": "",
-            "max_subagent_runs_per_hour": 12, "heartbeat_minutes": 20, "heartbeat_min_usd": 1.0}
+REWAKE = ("Agents never sleep: you get a turn about every {gap} s whether or not a run of yours is in flight. While one is, "
+          "use the turn to bet on other open runs, research, or post a second experiment on a free lane. "
+          "Every turn must leave the market changed: a post, a bet, or a finding.")
+DEFAULTS = {"max_usd_per_hour": 0,       # 0 = no spend gate (an open market); hour spend is reported only
+             "any_workers": 2, "permission_mode": "", "allowed_tools": [],
+            "max_subagent_runs_per_hour": 60, "heartbeat_minutes": 20, "heartbeat_min_usd": 1.0, "idle_wake_gap_s": 90}
 
 
 def conf(cfg: dict) -> dict:
@@ -42,7 +54,8 @@ def conf(cfg: dict) -> dict:
 
 def hour_spend(rows: list[dict], now: datetime) -> float:
     cut = B.iso(now - timedelta(hours=1))
-    return round(sum(r["cost"]["usd"] for r in rows if r["t"] == "result" and r["ts"] >= cut), 4)
+    last = {r["job"]: r for r in rows if r["t"] == "result"}      # a correction replaces the row it corrects, it does not add to it
+    return round(sum(r["cost"]["usd"] for r in last.values() if r["ts"] >= cut), 4)
 
 
 def subagent_runs(rows: list[dict], now: datetime) -> int:
@@ -50,6 +63,16 @@ def subagent_runs(rows: list[dict], now: datetime) -> int:
     cut = B.iso(now - timedelta(hours=1))
     return sum(1 for r in rows if r["t"] == "auto" and r["ts"] >= cut and
                (r["type"] in ("handback", "reflect") or (r["type"] == "wake" and r["reason"].startswith(("event:", "heartbeat")))))
+
+
+def lane_idle(rows: list[dict], st, lane: str, now: datetime) -> float | None:
+    """Seconds `lane` has had no run: since its last result or the newest loop start, whichever is later. None while
+    a run holds it (or nothing is known). Idle compute is a bug: this is the clock that shows it."""
+    if any(st.jobs[j]["claim"]["lane"] == lane for j in st.running()):
+        return None
+    since = max((r["ts"] for r in rows if (r["t"] == "result" and r.get("cost", {}).get("lane") == lane)
+                 or (r["t"] == "auto" and r["type"] == "start")), default=None)
+    return max(0.0, (now - B.parse_t(since)).total_seconds()) if since else None
 
 
 def duration(text: str) -> float:
@@ -150,14 +173,18 @@ class Autopilot:
         if drip:
             self.echo(f"drip: {drip['minutes']} min, ${drip['usd']:.2f} to {', '.join(drip['to']) or 'nobody'}")
         rows = self.lg.rows()
-        self.echo(f"guardrails: hour spend ${hour_spend(rows, now):.2f} / cap ${self.c['max_usd_per_hour']:.2f} · "
-                  f"subagents {len(self.subs)}/{self.c['max_concurrent_subagents']} · "
+        cap = self.c["max_usd_per_hour"]
+        self.echo(f"guardrails: hour spend ${hour_spend(rows, now):.2f}{f' / cap ${cap:.2f}' if cap else ' (no cap)'} · "
+                  f"subagents {len(self.subs)}/{self.max_subs()} · "
                   f"subagent_runs_hour {subagent_runs(rows, now)} / {self.c['max_subagent_runs_per_hour']} · STOP file absent")
+        self.over_budget(now)
         self.orphans(rows, now)
         self.dispatch(self.lg.rows(), now)
+        self.idle_lanes(now)
         bag.regressions(self.lg, self.echo)
-        self.desk()
+        self.desk(now)
         self.settled_by_analysis()
+        self.rewake(now)
         self.handback(now)
         self.events(now)
         self.reflection(now)
@@ -172,7 +199,7 @@ class Autopilot:
         st = L.fold(rows)
         for j in st.running():
             c, s = st.jobs[j]["claim"], st.jobs[j]["spec"]
-            if j in self.runs or (now - B.parse_t(c["ts"])).total_seconds() <= 2 * s["budget_s"] + 60:
+            if j in self.runs or (now - B.parse_t(c["ts"])).total_seconds() <= min(2 * s["budget_s"], 3600) + 60:
                 continue
             self.echo(f"auto note {j} orphan")
             lane = c["lane"]
@@ -184,7 +211,7 @@ class Autopilot:
 
     def dispatch(self, rows, now):
         st, book = L.fold(rows), B.Book(rows)
-        runnable = [j for j in st.frontier() if st.jobs[j]["spec"].get("run")]
+        runnable = [j for j in st.frontier() if self.driven(st.jobs[j]["spec"])]
         order, fb = B.order(st, rows, self.cfg, runnable)
         spent, cap = hour_spend(rows, now), self.c["max_usd_per_hour"]
         for lane in [n for n in self.cfg["lanes"] if n != "any"] + ["any"]:
@@ -199,7 +226,7 @@ class Autopilot:
             if not picks:
                 self.fill_from_bag(lane, head, st, rows, now, spent, cap)
                 continue
-            if spent > cap:
+            if cap and spent > cap:
                 self.echo(f"{head} REFUSED {picks[0]}: hour spend ${spent:.2f} > cap ${cap:.2f}")
                 self.auto("refuse", f"hour spend ${spent:.2f} > cap ${cap:.2f}", lane, picks[0])
                 continue
@@ -209,15 +236,44 @@ class Autopilot:
                 self.auto("refuse", f"gate: {gate}", lane, picks[0])
                 continue
             for j in picks[:slots - len(busy)]:
+                pf = specmod.synth(st.jobs[j]["spec"], self.cfg)
+                if pf and pf[1] and (why := bag.preflight(self.root, {"preflight": pf[1]})):
+                    reason = f"preflight of {j}: {why}"        # a scenario job's preflight, like a bag draw's
+                    if not any(r["t"] == "auto" and r["type"] == "refuse" and r.get("job") == j and r["reason"] == reason
+                               and r["ts"] >= B.iso(now - timedelta(minutes=60)) for r in rows):
+                        self.auto("refuse", reason, lane, j)
+                    self.echo(f"{head} REFUSED {j}: {reason}")
+                    break
                 s, m = st.jobs[j]["spec"], book.matched(j, st.jobs[j]["spec"])
                 why = (f"fallback: nothing matched on {lane}, cheapest at ${s['budget_usd']}" if j in fb or m <= 0 else
                        f"matched ${m:.2f} / budget ${s['budget_usd']} = {m / max(s['budget_usd'], 0.01):.3f} per $")
-                self.echo(f"{head} gate {gate} · pick {j} ({why}) · claim + run, stop at {2 * s['budget_s']}s")
+                self.echo(f"{head} gate {gate} · pick {j} ({why}) · claim + run, stop at {min(2 * s['budget_s'], 3600)}s")
                 self.auto("dispatch", why, lane, j, book.proposers.get(j))
                 self.runs[j] = (lane, self.spawn_run(j, now))
 
+    def idle_lanes(self, now, over: float = 0) -> dict[str, float]:
+        """lane -> idle seconds for lanes with no run (ledger or this loop's children) idle more than `over`. The first
+        time a stretch crosses 5 min it writes one `auto idle` row with `seconds` (the tape and reflection see it)."""
+        rows = self.lg.rows()
+        st, out = L.fold(rows), {}
+        for lane in (n for n in self.cfg["lanes"] if n != "any"):
+            s = None if any(l == lane for l, _ in self.runs.values()) else lane_idle(rows, st, lane, now)
+            if s is None:
+                continue
+            if s >= 300 and not any(r["t"] == "auto" and r["type"] == "idle" and r.get("lane") == lane
+                                    and r["ts"] >= B.iso(now - timedelta(seconds=s)) for r in rows):
+                self.echo(f"auto idle {lane}: {s / 60:.0f} min with no run")
+                self.auto("idle", f"lane {lane} idle {s / 60:.0f} min", lane, seconds=round(s))
+            if s > over:
+                out[lane] = s
+        return out
+
+    def driven(self, s: dict) -> bool:
+        """The harness can run it: the spec has a `run`, or a `scenario` its lane's runner turns into one."""
+        return bool(s.get("run") or specmod.synth(s, self.cfg))
+
     def fill_from_bag(self, lane, head, st, rows, now, spent, cap):
-        """Idle lane (B.order had nothing dispatchable): post one bag draw as `house` and run it. Spend counts against the hour cap."""
+        """Idle lane (B.order had nothing dispatchable): post one bag draw as `house` and run it. Spend counts against the hour cap, if one is set."""
         c = bag.conf(self.cfg, lane)
         if not c or not c["enabled"]:
             return self.echo(f"{head} free, nothing runnable with a `run`")
@@ -225,8 +281,8 @@ class Autopilot:
         if bag.active(st, lane):
             return self.echo(f"{no}{n}/{c['max_per_day']} today: one bag job at a time")
         if n >= c["max_per_day"]:
-            return self.echo(f"{no}{n}/{c['max_per_day']} today: cap reached")
-        if spent > cap:
+            return self.echo(f"{no}{n}/{c['max_per_day']} today{bag.capped(n, c, now)}")
+        if cap and spent > cap:
             self.auto("refuse", f"bag: hour spend ${spent:.2f} > cap ${cap:.2f}", lane)
             return self.echo(f"{no}REFUSED: hour spend ${spent:.2f} > cap ${cap:.2f}")
         ok, gate = lanes.gate_open(self.cfg, lane)
@@ -252,25 +308,47 @@ class Autopilot:
         stake = B.Book(self.lg.rows()).totals(spec["id"], "main")["pass"]
         why = f"bag draw {s['id']}, last run {last or 'never'}, house PASS ${stake:.2f}"
         self.echo(f"{head} gate {gate} · BAG {spec['id']} ({why}; ${spec['budget_usd']} / {spec['budget_s']}s; "
-                  f"bag {n + 1}/{c['max_per_day']} today) · post as house + claim + run, stop at {2 * spec['budget_s']}s")
+                  f"bag {n + 1}/{c['max_per_day']} today) · post as house + claim + run, stop at {min(2 * spec['budget_s'], 3600)}s")
         self.auto("dispatch", why, lane, spec["id"], B.HOUSE)
         self.runs[spec["id"]] = (lane, self.spawn_run(spec["id"], now))
 
-    def desk(self):
-        """A frontier job with no `run` is work for its proposer: hand it over as a wake (once)."""
+    def desk(self, now=None):
+        """A frontier job with no `run` is work for its proposer: hand it over as a wake, and again on every heartbeat
+        window until it has a result (or is cancelled). Oldest job first, one re-hand per proposer per tick, under the
+        subagent caps. The 3rd re-hand without a result is flagged `desk-stalled`."""
+        now = now or datetime.now(timezone.utc)
         rows = self.lg.rows()
         st, book = L.fold(rows), B.Book(rows)
-        woken = {r["reason"] for r in rows if r["t"] == "wake"}
-        for j in st.frontier():
-            if st.jobs[j]["spec"].get("run") or f"desk:{j}" in woken:
+        front = set(st.frontier())
+        cut = B.iso(now - timedelta(minutes=self.c["heartbeat_minutes"]))
+        done = {x for r in rows if r["t"] == "auto" and r["type"] == "handback" for x in r.get("refs", [])}
+        stalled = {r["job"] for r in rows if r["t"] == "auto" and r["type"] == "note" and r["reason"] == "desk-stalled"}
+        handed: set[str] = set()
+        for j in (j for j in st.jobs if j in front):
+            if self.driven(st.jobs[j]["spec"]):
                 continue
             who = book.proposers.get(j)
             if not who or who == B.HUMAN or who not in book.agents:
                 self.echo(f"desk {j}: no agent proposer ({who or 'none'}): the session's")
                 continue
-            self.echo(f"desk {j}: wake {book.wallet(who)} (desk:{j})")
-            self.lg.append({"t": "wake", "agent": book.wallet(who), "reason": f"desk:{j}"})
-            self.auto("wake", f"desk:{j}", st.jobs[j]["spec"]["lane"], j, book.wallet(who))
+            w, lane = book.wallet(who), st.jobs[j]["spec"]["lane"]
+            wakes = [r for r in rows if r["t"] == "wake" and r["reason"] == f"desk:{j}"]
+            if not wakes:
+                self.echo(f"desk {j}: wake {w} (desk:{j})")
+                self.lg.append({"t": "wake", "agent": w, "reason": f"desk:{j}"})
+                self.auto("wake", f"desk:{j}", lane, j, w)
+                handed.add(w)
+                continue
+            last = wakes[-1]
+            if (w in handed or w in self.subs or len(self.subs) >= self.max_subs()
+                    or f"wake:{last['agent']}:{last['ts']}" not in done or last["ts"] >= cut):
+                continue
+            self.echo(f"desk {j}: unresolved, re-hand to {w} (desk-retry:{len(wakes)})")
+            self.lg.append({"t": "wake", "agent": w, "reason": f"desk:{j}"})
+            handed.add(w)
+            if len(wakes) == 3 and j not in stalled:      # this is the 3rd re-hand
+                self.echo(f"auto note {j} desk-stalled")
+                self.auto("note", "desk-stalled", lane, j, w)
 
     def settled_by_analysis(self):
         """A desk job whose proposer records its own result with no `run` and no claim: flag it once on the tape."""
@@ -280,7 +358,7 @@ class Autopilot:
         for r in rows:
             j = st.jobs.get(r["job"]) if r["t"] == "result" else None
             who = book.proposers.get(r["job"]) if j else None
-            if (who and r.get("agent") == book.wallet(who) and not j["spec"].get("run") and r["job"] not in noted
+            if (who and r.get("agent") == book.wallet(who) and not self.driven(j["spec"]) and r["job"] not in noted
                     and not any(c["t"] == "claim" and c["job"] == r["job"] for c in rows)):
                 self.echo(f"auto note {r['job']} settled-by-analysis")
                 self.auto("note", "settled-by-analysis", j["spec"]["lane"], r["job"], r["agent"])
@@ -294,6 +372,7 @@ class Autopilot:
         dispatched = {r["job"] for r in rows if r["t"] == "auto" and r["type"] == "dispatch"}
         done = {x for r in rows if r["t"] == "auto" and r["type"] == "handback" for x in r.get("refs", [])}
         due: dict[str, list] = {}
+        retry: dict[str, str] = {}
         for jid, j in st.jobs.items():
             res, who = j["result"], book.proposers.get(jid)
             if not res or who not in book.agents or j["spec"].get("bag"):     # a bag result goes to nobody: a FAIL's finding is the event
@@ -305,8 +384,13 @@ class Autopilot:
             if r["t"] == "wake" and r["ts"] >= epoch and r["agent"] in book.agents and f"wake:{r['agent']}:{r['ts']}" not in done:
                 jid = r["reason"][5:] if r["reason"].startswith("desk:") else None
                 text = (f"Your desk job {jid} is due. It has no run command: do it by hand, then "
-                        f"`q result {jid} --verdict pass|fail --as <you>`. The question: {st.jobs[jid]['spec']['question']}"
-                        if jid in st.jobs else f"You were woken: {r['reason']}.")
+                        f"`q result {jid} --verdict pass|fail --as <you>`. The question: {st.jobs[jid]['spec']['question']}\n"
+                        + DESK if jid in st.jobs else f"You were woken: {r['reason']}." + (
+                            " " + REWAKE.format(gap=f'{self.c["idle_wake_gap_s"]:.0f}') if r["reason"].startswith("rewake") else ""))
+                if jid in st.jobs:      # the k-th hand-back of this job: k-1 is the retry number
+                    k = sum(1 for x in rows if x["t"] == "wake" and x["reason"] == r["reason"] and x["ts"] <= r["ts"])
+                    if k > 1:
+                        retry[f"wake:{r['agent']}:{r['ts']}"] = f"desk-retry:{k - 1}"
                 due.setdefault(book.wallet(r["agent"]), []).append((f"wake:{r['agent']}:{r['ts']}", jid, text))
         if not due:
             self.echo("hand-backs: none due")
@@ -314,18 +398,15 @@ class Autopilot:
             what = "; ".join(ref for ref, _, _ in items)
             if agent in self.subs:
                 self.echo(f"hand-back {agent}: waits, {self.subs[agent][0]} is still running ({what})")
-            elif len(self.subs) >= self.c["max_concurrent_subagents"]:
-                self.echo(f"hand-back {agent}: REFUSED, subagents at cap {self.c['max_concurrent_subagents']} ({what})")
-                self.auto("refuse", f"subagents at cap {self.c['max_concurrent_subagents']}", agent=agent)
-            elif self.capped(now):
-                self.echo(f"hand-back {agent}: REFUSED, subagent cap ({what}); retried next tick")
-                self.auto("refuse", "subagent cap", agent=agent)
+            elif len(self.subs) >= self.max_subs():
+                self.echo(f"hand-back {agent}: REFUSED, subagents at cap {self.max_subs()} ({what})")
+                self.auto("refuse", f"subagents at cap {self.max_subs()}", agent=agent)
             else:
                 sub = self.register(agent, f"autopilot hand-back: {what}", now)
                 self.echo(f"hand-back {agent}: spawn {sub} (sonnet) for {what}")
-                self.auto("handback", what, job=next((j for _, j, _ in items if j), None), agent=sub,
+                self.auto("handback", "; ".join(retry.get(ref, ref) for ref, _, _ in items), job=next((j for _, j, _ in items if j), None), agent=sub,
                           refs=[ref for ref, _, _ in items])
-                self.echo_wake(agent, f"handback:{next((j for _, j, _ in items if j), '?')}")
+                self.echo_wake(agent, f"handback:{next((j for _, j, _ in items if j), items[0][0])}")   # no job: name the wake/result ref
                 self.subs[agent] = (sub, self.claude(sub, "sonnet", self.prompt(sub, agent, items)), None)
                 self.seen[agent] = len(self.lg.rows())
 
@@ -356,12 +437,11 @@ class Autopilot:
                 due.append((len(rows), a, []))
         for _, a, ev in sorted(due):
             why = f"event:{len(ev)} rows" if ev else "heartbeat"
-            if len(self.subs) >= self.c["max_concurrent_subagents"]:
-                self.echo(f"wake {a}: REFUSED, subagents at cap {self.c['max_concurrent_subagents']} ({why})")
-                self.auto("refuse", f"subagents at cap {self.c['max_concurrent_subagents']}", agent=a)
-            elif self.capped(now):
-                self.echo(f"wake {a}: REFUSED, subagent cap ({why}); retried next tick")
-                self.auto("refuse", "subagent cap", agent=a)
+            if a in self.subs:          # re-woken this tick (rewake -> handback)
+                continue
+            if len(self.subs) >= self.max_subs():
+                self.echo(f"wake {a}: REFUSED, subagents at cap {self.max_subs()} ({why})")
+                self.auto("refuse", f"subagents at cap {self.max_subs()}", agent=a)
             else:
                 sub = self.register(a, f"autopilot wake: {why}", now)
                 self.echo(f"wake {a}: spawn {sub} (sonnet) for {why}")
@@ -377,8 +457,57 @@ class Autopilot:
         woke = max((r["ts"] for r in rows if r["t"] == "auto" and r["type"] == "wake" and r["agent"] == a), default="")
         return book.balance(a) >= self.c["heartbeat_min_usd"] and max(last_acted(rows, book, a) or "", woke, self.t0) < cut
 
-    def capped(self, now) -> bool:
-        return subagent_runs(self.lg.rows(), now) >= self.c["max_subagent_runs_per_hour"]
+    def max_subs(self) -> int:
+        """[autopilot] max_concurrent_subagents if set, else one per persistent agent + 1 for the reflection pass."""
+        return self.c.get("max_concurrent_subagents") or 1 + sum(
+            1 for a, r in B.Book(self.lg.rows()).agents.items() if r["kind"] == "persistent" and a != B.REFLECT)
+
+    def over_budget(self, now):
+        """max_subagent_runs_per_hour is a budget, not a gate: over it, one `auto refuse` row per hour, nothing blocked."""
+        rows, cap = self.lg.rows(), self.c["max_subagent_runs_per_hour"]
+        n, cut = subagent_runs(rows, now), B.iso(now - timedelta(hours=1))
+        if n >= cap and not any(r["t"] == "auto" and r["type"] == "refuse" and r["reason"].startswith("subagent budget")
+                                and r["ts"] >= cut for r in rows):
+            self.echo(f"subagent budget: {n} turns in the last hour >= {cap} (soft: nothing is blocked)")
+            self.auto("refuse", f"subagent budget {n}/{cap} per hour (soft, not blocking)")
+
+    def rewake(self, now):
+        """Agents never sleep: every persistent agent with no live sub is re-woken idle_wake_gap_s
+        after its last turn ended (its newest sleep row: every turn leaves one, ensure_sleep), in flight or not. Sleep
+        rows are notes, not gates; a result of its own still hands back at once (handback). Appends a `wake` row that
+        handback spawns this same tick."""
+        rows = self.lg.rows()
+        st, book, gap = L.fold(rows), B.Book(rows), self.c["idle_wake_gap_s"]
+        starts = [r["ts"] for r in rows if r["t"] == "auto" and r["type"] == "start"]
+        epoch = starts[-1] if starts else B.iso(now)
+        done = {x for r in rows if r["t"] == "auto" and r["type"] == "handback" for x in r.get("refs", [])}
+        live = set(awake(rows))
+        for a, ag in book.agents.items():
+            if ag["kind"] != "persistent" or a == B.REFLECT:
+                continue
+            fam = book.family(a)
+            fl = sorted(j for j, x in st.jobs.items() if book.proposers.get(j) in fam
+                        and x["state"] in ("queued", "running") and self.driven(x["spec"]))
+            head = f"agent {a}: " + (f"in flight {', '.join(fl)}" if fl else "idle")
+            if a in self.subs:
+                self.echo(f"{head} · sub {self.subs[a][0]} alive")
+                continue
+            if any(r["t"] == "wake" and r["agent"] == a and r["ts"] >= epoch and f"wake:{a}:{r['ts']}" not in done for r in rows):
+                self.echo(f"{head} · wake pending")
+                continue
+            spawn = max((r["ts"] for r in rows if r["t"] == "auto" and r["type"] == "wake" and r["agent"] == a and "upto" in r), default="")
+            # ponytail: a sub of the previous loop process is assumed alive for 30 min after its spawn, then presumed dead
+            if a in live and spawn >= B.iso(now - timedelta(minutes=30)):
+                self.echo(f"{head} · sub of a previous loop alive (spawned {spawn[11:19]}Z)")
+                continue
+            end = max((r["ts"] for r in rows if r["t"] == "sleep" and r["agent"] in fam), default=None)
+            left = gap - (now - B.parse_t(end)).total_seconds() if end else 0
+            if left > 0:
+                self.echo(f"{head} · re-wake in {left:.0f}s")
+                continue
+            why = f"rewake: {'in flight ' + ', '.join(fl) if fl else 'nothing in flight'}"
+            self.echo(f"{head} -> wake ({why})")
+            self.lg.append({"t": "wake", "agent": a, "reason": why}, B.iso(now))
 
     def reflection(self, now):
         rows = self.lg.rows()
@@ -390,13 +519,9 @@ class Autopilot:
             self.echo(f"reflection: due ({why}); this cycle's pass already ran: the session reviews queue/proposed/ "
                       f"and runs `q reflect --record --as reflect`")
             return
-        if len(self.subs) >= self.c["max_concurrent_subagents"]:
+        if len(self.subs) >= self.max_subs():
             self.echo(f"reflection: due ({why}); REFUSED, subagents at cap")
-            self.auto("refuse", f"subagents at cap {self.c['max_concurrent_subagents']}", agent=B.REFLECT)
-            return
-        if self.capped(now):
-            self.echo(f"reflection: due ({why}); REFUSED, subagent cap; retried next tick")
-            self.auto("refuse", "subagent cap", agent=B.REFLECT)
+            self.auto("refuse", f"subagents at cap {self.max_subs()}", agent=B.REFLECT)
             return
         if B.REFLECT not in B.Book(rows).agents:
             self.echo("reflection: registering `reflect` (persistent)")
@@ -430,16 +555,20 @@ class Autopilot:
         if not digest:      # a hand-back also gets the digest of what else moved since its last look
             ev = B.board_events(rows, B.Book(rows), B.Book(rows).family(agent), self.seen.get(agent, len(rows)))
             digest = "Since you last looked:\n" + B.digest(rows, ev) if ev else ""
+        idle = "\n".join(f"Lane {l} has been idle {s / 60:.0f} min. Idle compute is a bug. Post a runnable experiment on it "
+                         f"this turn (`q list --scenarios`), or say in one line why nothing worth running exists."
+                         for l, s in self.idle_lanes(datetime.now(timezone.utc), 120).items())
         return "\n\n".join(filter(None, [
-            skill("pit"), "Standing rules (verbatim): " + RULES,
+            idle, skill("pit"), "Standing rules (verbatim): " + RULES,
             f"You are {sub}, a sub of {agent}: act `--as {sub}`; your bets and posts book to {agent}. "
             f"The CLI is {REPO}/bin/q (on PATH as q; PIT_ROOT is set).",
             f"q thread {agent}:\n" + B.thread(self.lg.rows(), agent),
             "\n".join(t for _, _, t in items),
             f"Your claim ({agent}'s brief): {B.Book(rows).agents[agent]['brief']}", CLAIM, digest, BOARD,
-            f"You MUST end your turn with exactly one sleep: `q sleep --as {sub} --until-result <your job>` when you have "
-            f"a run in flight, `--until-event` otherwise (`--until-balance N`, `--minutes N` also work), with a one-line "
-            f"note. Passing (posting nothing) is allowed only with a one-line reason. Never just stop."]))
+            f"You MUST end your turn by saying what you are waiting on (`q sleep --as {sub} --until-result <job>`, or "
+            f"`q sleep --as {sub} --until-event --note '<what>'`), then stop; you will be woken again in about "
+            f"{self.c['idle_wake_gap_s']:.0f} s (a result of yours wakes you at once). Every turn must leave the market changed: "
+            f"a post, a bet, or a finding."]))
 
     def env(self) -> dict:
         return {**os.environ, "PIT_ROOT": str(self.root), "PATH": f"{REPO / 'bin'}:{os.environ.get('PATH', '')}",
@@ -481,8 +610,12 @@ class Autopilot:
         p = self.log(f"{sub}.prompt")
         p.write_text(prompt)
         with p.open() as stdin, self.log(f"{sub}.log").open("w") as out:
-            return subprocess.Popen([exe, "-p", "--model", model, "--permission-mode", self.permission_mode(),
-                                     "--output-format", "text"], stdin=stdin, stdout=out, stderr=subprocess.STDOUT,
+            cmd = [exe, "-p", "--model", model, "--permission-mode", self.permission_mode(), "--output-format", "text"]
+            if self.c.get("allowed_tools"):
+                cmd += ["--allowedTools", ",".join(self.c["allowed_tools"])]
+            for d in self.c.get("add_dirs", []):        # repos a desk job may touch; without these a sub is fenced to the ledger dir
+                cmd += ["--add-dir", os.path.expanduser(d)]
+            return subprocess.Popen(cmd, stdin=stdin, stdout=out, stderr=subprocess.STDOUT,
                                     cwd=self.root, env=self.env(), start_new_session=True)
 
     def proposed(self) -> set[str]:
@@ -531,7 +664,7 @@ class Autopilot:
         end = now + timedelta(seconds=self.for_s) if self.for_ else None
         if end:
             self.echo(f"deadline: for {self.for_}, until {B.iso(end)} (the last tick starts before it; runs in flight are never killed)")
-        self.auto("start", f"interval {interval}s, cap ${self.c['max_usd_per_hour']}/h" + (", once" if once else ""),
+        self.auto("start", f"interval {interval}s, " + (f"cap ${self.c['max_usd_per_hour']}/h" if self.c["max_usd_per_hour"] else "no spend cap") + (", once" if once else ""),
                   until=B.iso(end) if end else None)
         try:
             while self.tick():

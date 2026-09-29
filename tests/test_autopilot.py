@@ -6,7 +6,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from pit import autopilot as A, lanes, ledger as L, market, book as B
+from pit import autopilot as A, lanes, ledger as L, market, book as B, reflect
 from tests.test_pit import add, job
 
 LANES = """
@@ -20,6 +20,9 @@ rows = 100000
 usd_per_h = 14
 slots = 1
 gate = "true"
+model = "small"
+runner = "echo RUN {scenario} {model} {budget_s}; echo 'pit: verdict=pass result={{}}'"
+preflight = "test -f ok.flag && echo {model}"
 [lanes.ci]
 usd_per_h = 100
 slots = 1
@@ -28,7 +31,7 @@ gate = "true"
 enabled = true
 default_stake = 0.25
 [autopilot]
-max_usd_per_hour = 40
+idle_wake_gap_s = 1e9      # the re-wake tests set 90; everything else sees no gap re-wakes
 """
 STUB = """#!/bin/sh
 { echo "ARGV: $*"; echo "ROOT: $PIT_ROOT"; cat; } > "$STUB_OUT/$$.txt"
@@ -64,6 +67,7 @@ class Autopilot(unittest.TestCase):
         book = B.Book([])
         for a in ("a", "b"):
             book.agents[a] = self.lg.append(B.agent_row(book, a, f"{a} brief: what {a} is trying to understand"))
+            self.lg.append({"t": "sleep", "agent": a, "until": {"event": True}, "note": "fixture: last turn ended"})
         B.tick(self.lg, self.cfg, since="2026-09-29T00:00:00Z")
 
     def restore(self):
@@ -129,7 +133,7 @@ class Autopilot(unittest.TestCase):
         self.assertIn("a brief: what a is trying to understand", a_call)       # q thread a
         self.assertIn("Your job y1 finished: pass, {\"n\": 7}, cost $", a_call)
         self.assertIn(A.RULES, a_call)
-        self.assertIn("You MUST end your turn with exactly one sleep: `q sleep --as a-", a_call)
+        self.assertIn("You MUST end your turn by saying what you are waiting on (`q sleep --as a-", a_call)
         book = B.Book(self.lg.rows())
         subs = [r["agent"] for r in self.auto("handback")]
         self.assertTrue(all(book.agents[s]["parent"] in ("a", "b") for s in subs))
@@ -139,6 +143,32 @@ class Autopilot(unittest.TestCase):
         ap.tick()                                                                  # nothing is handed back twice
         ap.wait()
         self.assertEqual(len(self.auto("handback")), 3)                           # + p1's result, to a
+
+    def test_scenario_spec_dispatches_with_synthesized_run_after_preflight(self):
+        self.post(job("sc", scenario="heldout_b", budget_s=300), "a")
+        ap = self.ap()
+        ap.tick()                                                  # preflight (test -f ok.flag in the root) fails
+        ap.wait()
+        self.assertFalse([r for r in self.lg.rows() if r["t"] == "claim"])
+        self.assertEqual([r["job"] for r in self.auto("refuse")], ["sc"])
+        self.assertFalse([r for r in self.lg.rows() if r["t"] == "wake" and r["reason"] == "desk:sc"])   # not desk work
+        (self.root / "ok.flag").write_text("")
+        ap.tick()
+        ap.wait()
+        (claim,) = [r for r in self.lg.rows() if r["t"] == "claim"]
+        self.assertEqual(claim["run"], "echo RUN heldout_b small 300; echo 'pit: verdict=pass result={}'")
+        self.assertEqual(L.fold(self.lg.rows()).jobs["sc"]["result"]["verdict"], "pass")
+        self.assertEqual(len(self.auto("refuse")), 1)
+
+    def test_unknown_scenario_is_refused_with_the_list(self):
+        from pit import spec as specmod
+        s = job("bad", scenario="nope")
+        known = ["a_scn", "b_scn"]
+        (e,) = specmod.validate(s, self.cfg["lanes"], known)
+        self.assertEqual(e, "unknown scenario 'nope' (have: a_scn, b_scn)")
+        self.assertEqual(specmod.validate(job("ok", scenario="a_scn"), self.cfg["lanes"], known), [])
+        self.assertEqual(specmod.validate(s, self.cfg["lanes"]), [])       # no registry: accept
+        self.assertTrue(any("runner" in e for e in specmod.validate(job("c", scenario="a_scn", lane="ci"), self.cfg["lanes"])))
 
     def test_desk_job_wakes_its_proposer_instead_of_running(self):
         self.post(job("d1", lane="ci"), "b")
@@ -153,6 +183,68 @@ class Autopilot(unittest.TestCase):
         self.assertIn("Your desk job d1 is due", call)
         ap.tick()
         self.assertEqual(len([r for r in self.lg.rows() if r["t"] == "wake"]), 1)       # once
+
+    def _rehand(self, ap, n):
+        """tick n minutes-past-window later: returns the desk wakes and sub calls so far"""
+        ap.tick(datetime.now(timezone.utc) + timedelta(minutes=21 * n))
+        ap.wait()
+        return [r for r in self.lg.rows() if r["t"] == "wake" and r["reason"] == "desk:d1"]
+
+    def test_unresolved_desk_job_is_rehanded_each_window_then_flagged_stalled(self):
+        self.post(job("d1", lane="ci"), "b")
+        ap = self.ap()
+        ap.auto("start", "test")
+        ap.tick()
+        ap.wait()
+        ap.tick()
+        self.assertEqual(len([r for r in self.lg.rows() if r["t"] == "wake" and r["reason"] == "desk:d1"]), 1)   # inside the window
+        for n in (1, 2, 3):
+            self.assertEqual(len(self._rehand(ap, n)), n + 1)
+        self.assertEqual([r["reason"] for r in self.auto("handback") if "desk-retry" in r["reason"]],
+                         ["desk-retry:1", "desk-retry:2", "desk-retry:3"])
+        self.assertEqual([(r["job"], r["reason"]) for r in self.auto("note")], [("d1", "desk-stalled")])
+        desk = [c for c in self.stub_calls() if "Your desk job d1 is due" in c]      # stub files are named by pid: no order
+        self.assertEqual(len(desk), 4)
+        self.assertTrue(all("Do not leave it queued." in c for c in desk))
+        self.assertIn("desk-stalled d1", reflect.digest(self.lg.rows()))
+        self._rehand(ap, 4)
+        self.assertEqual(len(self.auto("note")), 1)                          # flagged once
+
+    def test_sub_gets_allowed_tools_and_add_dirs(self):
+        self.post(job("d1", lane="ci"), "b")
+        ap = self.ap()
+        ap.c.update(allowed_tools=["Read", "Bash(q *)"], add_dirs=["~/work"])
+        ap.tick()
+        ap.wait()
+        (call,) = self.stub_calls()
+        argv = call.splitlines()[0]
+        self.assertIn("--allowedTools Read,Bash(q *)", argv)
+        self.assertIn(f"--add-dir {Path('~/work').expanduser()}", argv)
+
+    def test_hour_spend_counts_the_last_result_per_job(self):
+        now = datetime.now(timezone.utc)
+        t = (now - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        rows = [{"t": "result", "job": "x", "ts": t, "cost": {"usd": 60}}, {"t": "result", "job": "x", "ts": t, "cost": {"usd": 2}},
+                {"t": "result", "job": "y", "ts": t, "cost": {"usd": 1}}]
+        self.assertEqual(A.hour_spend(rows, now), 3)            # a correction replaces the row it corrects
+
+    def test_resolved_desk_job_is_not_rehanded(self):
+        self.post(job("d1", lane="ci"), "b")
+        ap = self.ap()
+        ap.auto("start", "test")
+        ap.tick()
+        ap.wait()
+        self.lg.append({"t": "result", "job": "d1", "verdict": "pass", "cost": {"usd": 0, "wall_s": 0, "lane": "ci"}, "agent": "b"})
+        self.assertEqual(len(self._rehand(ap, 1)), 1)
+
+    def test_desk_rehand_ignores_the_soft_budget(self):
+        self.post(job("d1", lane="ci"), "b")
+        ap = self.ap(sub_cap=1)
+        ap.auto("start", "test")
+        ap.tick()
+        ap.wait()
+        self.assertEqual(len(self._rehand(ap, 1)), 2)        # over the hour's budget: logged, not blocked
+        self.assertEqual(len(self.auto("handback")), 2)
 
     def test_desk_result_by_proposer_without_run_is_flagged_once(self):
         self.post(job("d1", lane="ci"), "b")
@@ -170,8 +262,12 @@ class Autopilot(unittest.TestCase):
         self.post(job("d1", lane="ci"), "b")
         self.post(job("d2", lane="ci"), "b")
         self.lg.append(B.agent_row(B.Book(self.lg.rows()), "b-1", "sub", "b"))
-        cli.ctx, cli.sync = (lambda: (self.root, self.lg, self.cfg)), (lambda *a: None)
-        cli.cmd_result(N(id="d1", verdict="pass", wall_s=0.0, uncached=0, cached=0, out=0, lane=None, arm=None, agent="b-1"))
+        from unittest import mock
+        for name, fake in (("ctx", lambda: (self.root, self.lg, self.cfg)), ("sync", lambda *a: None)):
+            p = mock.patch.object(cli, name, fake)
+            p.start()
+            self.addCleanup(p.stop)
+        cli.cmd_result(N(id="d1", verdict="pass", wall_s=0.0, uncached=0, cached=0, out=0, lane=None, arm=None, agent="b-1", force=False))
         cli.cmd_finding(N(id="F:x", source="d1", text="t", kind="finding", refutes=None, refines=None, supersedes=None, agent="b-1"))
         cli.cmd_cancel(N(id="d2", reason="r", agent="b-1"))
         cli.cmd_decide(N(id="F:x", changed=True, note="n", agent="b-1"))
@@ -181,45 +277,33 @@ class Autopilot(unittest.TestCase):
         with self.assertRaises(SystemExit):
             cli.cmd_cancel(N(id="d2", reason="r", agent="nobody"))
 
-    def test_hour_cap_stops_dispatch(self):
+    def test_hour_spend_is_reported_not_enforced(self):
         self.post(slow("p1"), "a")
         self.lg.append({"t": "result", "job": "old", "verdict": "pass", "cost": {"usd": 41, "wall_s": 1, "lane": "ci"}})
         ap = self.ap()
         ap.tick()
-        ap.tick()
-        self.assertEqual(self.auto("dispatch"), [])
-        (r,) = self.auto("refuse")                                  # once on the tape, not per tick
-        self.assertEqual((r["lane"], r["job"]), ("gpu-small", "p1"))
-        self.assertIn("> cap $40.00", r["reason"])
-        ap = self.ap(cap=100)                                      # --max-usd-per-hour overrides
-        ap.tick()
         ap.wait()
-        self.assertEqual([r["job"] for r in self.auto("dispatch")], ["p1"])
+        self.assertEqual([r["job"] for r in self.auto("dispatch")], ["p1"])     # no cap: an open market
+        self.assertFalse([r for r in self.auto("refuse") if "hour spend" in r["reason"]])
+        m = A.status(self.lg.rows(), self.cfg, datetime.now(timezone.utc))
+        self.assertGreaterEqual(m["hour_spend"], 41)
+        self.assertEqual(m["cap"], 0)
 
-    def test_subagent_cap_refuses_then_runs_after_the_window(self):
+    def test_subagent_budget_is_soft_and_logged_once_per_hour(self):
         self.post(job("d1"), "a")
         self.post(job("d2"), "b")
-        ap = self.ap(sub_cap=2)
-        ap.auto("start", "test")                               # epoch: what landed since is due
+        ap = self.ap(sub_cap=1)
+        ap.auto("start", "test")
         ap.tick()
         ap.wait()
-        self.assertEqual(len(self.auto("handback")), 2)
-        self.post(job("d3"), "a")                              # the third quick hand-back
+        self.post(job("d3"), "a")
         ap.tick()
         ap.wait()
-        self.assertEqual(len(self.auto("handback")), 2)
-        self.assertEqual({r["reason"] for r in self.auto("refuse")}, {"subagent cap"})
-        self.assertEqual(len(self.stub_calls()), 2)
+        self.assertEqual(len(self.auto("handback")), 3)          # nothing refused by the budget
+        budget = [r for r in self.auto("refuse") if r["reason"].startswith("subagent budget")]
+        self.assertEqual(len(budget), 1)                          # one row per hour
         m = A.status(self.lg.rows(), {"autopilot": {"max_subagent_runs_per_hour": 2}}, datetime.now(timezone.utc))
-        self.assertEqual((m["subagent_runs_hour"], m["subagent_cap"]), (2, 2))
-        n = len(self.auto("refuse"))
-        ap.tick()                                              # same window: still refused, not repeated on the tape
-        ap.wait()
-        self.assertEqual((len(self.auto("handback")), len(self.auto("refuse"))), (2, n))
-        ap.tick(datetime.now(timezone.utc) + timedelta(hours=2))
-        ap.wait()
-        self.assertEqual(len(self.auto("handback")), 3)
-        self.assertEqual(len(self.stub_calls()), 4)             # + b's refused event wake (d3), retried once the window opened
+        self.assertGreater(m["subagent_runs_hour"], m["subagent_cap"])     # reported
 
     # ---- event-driven wakes -------------------------------------------------------------------------
     def wakes(self, prefix="event:"):
@@ -237,8 +321,9 @@ class Autopilot(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         for c in calls:
             self.assertIn("Since you last looked:\nnew market n1/main PASS $0.00 / FAIL $0.00", c)
-            self.assertIn("You MUST end your turn with exactly one sleep", c)
-        self.assertEqual({r["note"] for r in self.lg.rows() if r["t"] == "sleep"}, {"auto: sub ended without sleeping"})
+            self.assertIn("You MUST end your turn by saying what you are waiting on", c)
+        self.assertEqual({r["note"] for r in self.lg.rows() if r["t"] == "sleep" and not r["note"].startswith("fixture")},
+                         {"auto: sub ended without sleeping"})
 
     def test_wake_prompt_carries_the_claim_block(self):
         ap = self.ap()
@@ -253,13 +338,15 @@ class Autopilot(unittest.TestCase):
             self.assertLess(c.index("Your claim ("), c.index("Since you last looked:"))   # claim, experiment, then the board
             self.assertLess(c.index("Your next experiment"), c.index("The board is context"))
             self.assertIn("Your brief is a claim to prove or refute; it is your goal. This turn: (1) state the claim", c)
-            self.assertIn("--until-result <your job>", c)
+            self.assertIn("--until-result <job>", c)
+            self.assertIn("Every turn must leave the market changed", c)
 
     def test_heartbeat_wakes_an_idle_funded_agent_once_per_window(self):
         ap = self.ap()
         t0 = datetime.now(timezone.utc)
         ap.tick(t0)
-        self.lg.append({"t": "sleep", "agent": "b", "until": {"balance": 999}, "note": ""})   # b: explicit sleep
+        far = B.Book(self.lg.rows()).balance("b") + 1000       # the fixture drips from 00:00Z: a fixed 999 is crossed by ~17:30Z
+        self.lg.append({"t": "sleep", "agent": "b", "until": {"balance": far}, "note": ""})   # b: explicit sleep
         self.lg.append({"t": "node", "kind": "finding", "id": "F1", "text": "x", "agent": "a"})   # a acted just now
         ap.tick(t0 + timedelta(minutes=10))
         ap.wait()
@@ -272,14 +359,6 @@ class Autopilot(unittest.TestCase):
         self.assertFalse(ap.idle(rows, B.Book(rows), "a", datetime.now(timezone.utc)))
         c = self.stub_calls()[-1]
         self.assertIn(A.CLAIM, c)
-
-    def test_heartbeat_counts_against_the_cap(self):
-        ap = self.ap(sub_cap=0)
-        t0 = datetime.now(timezone.utc)
-        ap.tick(t0)
-        ap.tick(t0 + timedelta(minutes=25))
-        self.assertEqual(self.wakes(""), [])
-        self.assertTrue(self.auto("refuse"))
 
     def test_pass_sleeps_until_event_and_is_not_rewoken_without_one(self):
         ap = self.ap()
@@ -328,19 +407,70 @@ class Autopilot(unittest.TestCase):
         ap.wait()
         self.assertEqual(self.wakes("minutes"), [("a", "minutes")])
 
-    def test_event_wake_cap_refuses_and_retries_oldest_first(self):
-        ap = self.ap(sub_cap=1)
+    def test_concurrency_cap_refuses_and_retries(self):
+        ap = self.ap()
+        ap.c["max_concurrent_subagents"] = 1
         ap.tick()
         add(self.lg, {**job("n1"), "proposer": "human"}, ts=L.now())
         ap.tick()
-        ap.wait()
-        self.assertEqual(len(self.wakes()), 1)                 # one spawn allowed this hour
+        self.assertEqual(len(self.wakes()), 1)
         self.assertEqual([r["agent"] for r in self.auto("refuse")], ["b" if self.wakes()[0][0] == "a" else "a"])
+        ap.wait()
         ap.tick()
-        self.assertEqual(len(self.wakes()), 1)                 # still capped, not repeated
-        ap.tick(datetime.now(timezone.utc) + timedelta(hours=2))
         ap.wait()
         self.assertEqual(sorted(a for a, _ in self.wakes()), ["a", "b"])
+
+    # ---- agents never sleep: the gap re-wake, idle lanes ---------------------------------------------
+    def rewakes(self):
+        return [(r["agent"], r["reason"]) for r in self.lg.rows() if r["t"] == "wake" and r["reason"].startswith("rewake")]
+
+    def test_concurrency_default_is_roots_plus_one(self):
+        self.assertEqual(self.ap().max_subs(), 3)                # a, b + reflection
+        self.lg.append(B.agent_row(B.Book(self.lg.rows()), "c", "c brief"))
+        self.lg.append(B.agent_row(B.Book(self.lg.rows()), "a-1", "sub", "a"))   # subs do not count
+        self.assertEqual(self.ap().max_subs(), 4)
+
+    def test_root_with_a_queued_scenario_job_is_rewoken_after_the_gap(self):
+        self.post(job("sc", scenario="heldout_b"), "a")   # preflight fails: stays queued
+        ap = self.ap()
+        ap.c["idle_wake_gap_s"] = 90
+        t0 = datetime.now(timezone.utc)
+        ap.tick(t0 + timedelta(seconds=30))
+        ap.wait()
+        self.assertEqual(self.rewakes(), [])                    # inside the gap (fixture turn ended at t0)
+        ap.tick(t0 + timedelta(seconds=100))
+        ap.wait()
+        self.assertEqual(sorted(self.rewakes()), [("a", "rewake: in flight sc"), ("b", "rewake: nothing in flight")])
+        c = next(c for c in self.stub_calls() if "You are a-" in c)
+        self.assertIn("You were woken: rewake: in flight sc. Agents never sleep", c)
+        ap.tick(datetime.now(timezone.utc) + timedelta(seconds=30))   # 30 s after their turns ended: not again yet
+        self.assertEqual(len(self.rewakes()), 2)
+
+    def test_own_result_wakes_before_the_gap(self):
+        self.post(slow("p1", s=0), "a")
+        ap = self.ap()
+        ap.c["idle_wake_gap_s"] = 90
+        ap.auto("start", "test")
+        ap.tick()
+        ap.wait()                                               # p1 ran and ended
+        ap.tick()
+        ap.wait()
+        self.assertEqual([r["refs"][0].split(":")[1] for r in self.auto("handback")], ["p1"])
+        self.assertEqual(self.rewakes(), [])
+
+    def test_idle_lane_writes_one_idle_row_and_market_json_idle_s(self):
+        t = (datetime.now(timezone.utc) - timedelta(minutes=6)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.lg.append({"t": "auto", "type": "start", "lane": None, "job": None, "agent": None, "reason": "test"}, t)
+        ap = self.ap()
+        ap.tick()
+        ap.tick()
+        ap.wait()
+        rows = [r for r in self.auto("idle") if r["lane"] == "gpu-small"]
+        self.assertEqual(len(rows), 1)
+        self.assertGreaterEqual(rows[0]["seconds"], 360)
+        (lane,) = [l for l in market.market_json(self.lg.rows(), self.cfg)["lanes"] if l["lane"] == "gpu-small"]
+        self.assertGreaterEqual(lane["idle_s"], 360)
+        self.assertIn("Lane gpu-small has been idle 6 min. Idle compute is a bug.", ap.prompt("a-x", "a", []))
 
     def test_for_ends_the_loop_with_a_stop_row(self):
         self.post(slow("p1"), "a")
@@ -364,10 +494,11 @@ class Autopilot(unittest.TestCase):
         self.assertEqual(self.auto("dispatch"), [])
         self.assertEqual([r["reason"] for r in self.auto("stop")], ["STOP file"])
         m = market.market_json(self.lg.rows(), self.cfg)["autopilot"]
-        self.assertEqual((m["running"], m["stopped"], m["cap"]), (False, True, 40))
+        self.assertEqual((m["running"], m["stopped"], m["cap"]), (False, True, 0))
 
     def test_reflect_due_spawns_opus_sub_and_adds_nothing(self):
         self.cfg["reflect"] = {"rows": 1}
+        self.lg.append({"t": "node", "kind": "finding", "id": "F0", "text": "one work row to reflect on"})   # agent/drip rows do not count
         os.environ["STUB_PROPOSE"] = "1"
         jobs = len(L.fold(self.lg.rows()).jobs)
         ap = self.ap()

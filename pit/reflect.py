@@ -16,10 +16,13 @@ def since_last(rows: list[dict]) -> list[dict]:
 
 
 # A predicate reads (rows since the last reflect, metrics(all rows), now, its config value) and returns (reason if it fired else None, reading).
+WORK = ("node", "result", "cancel", "decision", "claim", "bet", "edge")
+
+
 def counted(rows: list[dict]) -> list[dict]:
-    """Rows that carry information: not `auto`, not `drip`, not bag-tagged nodes/bets/claims, not `invalid` results."""
+    """Work rows only (not drip, auto, sleep, agent, settle), minus bag-tagged nodes/bets/claims and `invalid` results."""
     bag = {r["id"] for r in rows if r["t"] == "node" and r.get("kind") == "job" and r["spec"].get("bag")}
-    return [r for r in rows if r["t"] not in ("auto", "drip") and not (r["t"] in ("node", "bet", "claim", "settle") and (
+    return [r for r in rows if r["t"] in WORK and not (r["t"] in ("node", "bet", "claim") and (
             r.get("id") in bag or r.get("job") in bag or "bag" in r.get("tags", []))) and not (r["t"] == "result" and r["verdict"] == "invalid")]
 
 
@@ -112,6 +115,9 @@ def digest(rows: list[dict], n: int | None = None) -> str:
     out.append("metrics:\n" + table(metrics(rows), touched))
     out.append("spend by lane: " + (", ".join(f"{k} ${v:.2f}" for k, v in sorted(sp.items())) or "$0"))
     front = st.frontier()
+    for r in rows:
+        if r["t"] == "auto" and r["type"] == "note" and r["reason"] == "desk-stalled" and st.jobs.get(r["job"], {}).get("state") == "queued":
+            out.append(f"desk-stalled {r['job']}: re-handed 3 times to its proposer with no result")
     out.append("frontier: " + (", ".join(front) or "empty"))
     for jid, j in st.jobs.items():
         if j["state"] == "queued" and jid not in front:

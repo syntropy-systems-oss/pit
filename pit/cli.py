@@ -7,7 +7,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import NAME, __version__, lanes, ledger as L, book as B, spec as specmod
+from . import NAME, __version__, bag, lanes, ledger as L, book as B, spec as specmod
 
 
 REPO = Path(__file__).resolve().parent.parent
@@ -46,9 +46,9 @@ def cmd_add(a):
 
 def add_specs(root, lg, cfg, loaded):
     st = L.fold(lg.rows())
-    specs, bad = [], []
+    specs, bad, known = [], [], specmod.scenarios(root, cfg)
     for path, s in loaded:        # validate all first: a batch goes in whole or not at all
-        errs = specmod.validate(s, cfg["lanes"])
+        errs = specmod.validate(s, cfg["lanes"], known)
         if s.get("id") in st.jobs or s.get("id") in [x["id"] for _, x in specs]:
             errs.append(f"{s['id']} is already in the ledger (cancel or supersede it)")
         (bad.append(f"refused {path}:\n  " + "\n  ".join(errs)) if errs else specs.append((path, s)))
@@ -68,7 +68,7 @@ def cmd_post(a):
     root, lg, cfg = ctx()
     book, s = B.Book(lg.rows()), specmod.load(a.spec)
     mode = B.funding(book, s, a.agent, a.seed)
-    err = B.check_post(book, cfg, s, a.agent) if mode == "agent" else None
+    err = B.check_post(book, cfg, s, a.agent, lg.rows()) if mode == "agent" else None
     if err:
         sys.exit(f"refused {a.spec}: {err}")
     add_specs(root, lg, cfg, [(a.spec, {**s, "proposer": a.agent, **({"seed": True} if mode == "seed" else {})})])
@@ -159,11 +159,17 @@ def row_line(st, jid, cfg):
 
 def cmd_list(a):
     root, lg, cfg = ctx()
+    if a.scenarios:
+        names = specmod.scenarios(root, cfg)
+        if names is None:
+            sys.exit(f"no scenario directory: set [bench] scenario_dir in lanes.toml (default: scenarios/ in {root})")
+        print("\n".join(names))
+        return
     st = L.fold(lg.rows())
     ids, fallback = B.order(st, lg.rows(), cfg) if a.frontier else (list(st.jobs), set())
     ids = [i for i in ids if not a.lane or st.jobs[i]["spec"]["lane"] in (a.lane, "any")]
     if a.frontier:
-        print(f"frontier ({len(ids)}), " + ("by matched stakes per $ budget (Pit):" if B.enabled(cfg) else
+        print(f"frontier ({len(ids)}), " + (f"by {'matched stakes per $ budget' if B.conf(cfg)['rank'] == 'matched_per_usd' else 'matched stakes, ties cheapest'} (Pit, rank = {B.conf(cfg)['rank']}):" if B.enabled(cfg) else
                                              "in the default order (priority, critical path, value per $):"))
     for jid in ids:
         print(row_line(st, jid, cfg) + (" [fallback]" if jid in fallback else ""))
@@ -182,6 +188,16 @@ def cmd_why(a):
         ok, why = lanes.gate_open(cfg, lane)
         if not ok:
             reasons.append(f"lane {lane}: {why}")
+        c = bag.conf(cfg, lane)
+        if c and c["enabled"]:
+            now = datetime.now(timezone.utc)
+            note = bag.capped(bag.today(lg.rows(), lane, now), c, now)
+            if note:
+                reasons.append(f"lane {lane}: {note.removeprefix(' · ')}")
+    if not reasons and a.id in st.jobs:
+        s = st.jobs[a.id]["spec"]
+        if not (s.get("run") or specmod.synth(s, cfg)):
+            reasons.append(f"undriven: no run or scenario; a desk job for its proposer ({s.get('proposer') or 'human'}), no lane picks it")
     print(f"{a.id}: " + ("runnable" if not reasons else "\n  ".join(["blocked", *reasons])))
 
 
@@ -260,6 +276,10 @@ def cmd_finding(a):
 
 def cmd_edge(a):
     root, lg, cfg = ctx()
+    st = L.fold(lg.rows())
+    missing = [n for n in (a.src, a.dst) if n not in st.jobs and n not in st.findings]
+    if missing:
+        sys.exit(f"refused edge: no such node {', '.join(missing)}")
     lg.append({"t": "edge", "type": a.type, "from": a.src, "to": a.dst})
     B.settle_due(lg, cfg)
     sync(root, lg, f"edge {a.src} {a.type} {a.dst}")
@@ -277,8 +297,18 @@ def cmd_result(a):
     from .run import record
     root, lg, cfg = ctx()
     st = L.fold(lg.rows())
+    if a.id not in st.jobs:
+        sys.exit(f"no job {a.id}")
     s = st.jobs[a.id]["spec"]
+    dead = [r for d in s.get("depends_on", []) if "dead branch" in (r := st.dep_reason(d) or "")]
+    if dead and not a.force:
+        sys.exit(f"refused: {a.id} is on a dead branch ({dead[0]}); cancel it, or --force")
     rep = {"verdict": a.verdict, "uncached": a.uncached, "cached": a.cached, "out": a.out, "wall_s": a.wall_s}
+    prev = st.jobs[a.id]["result"]
+    if prev and not (a.uncached or a.cached or a.out or a.wall_s):     # a verdict-only correction keeps the cost already booked
+        c = prev["cost"]
+        rep.update(uncached=c.get("uncached_in", 0), cached=c.get("cache_read", 0), out=c.get("out", 0), wall_s=c.get("wall_s", 0.0))
+        a.lane = a.lane or c.get("lane")
     if a.arm:     # per-variant verdicts settle each arm's market
         rep["result"] = {"verdicts": dict(x.split("=", 1) for x in a.arm)}
     row = record(lg, cfg, s, a.lane or s["lane"], {"report": rep, "wall_s": a.wall_s, "rc": 0}, agent=actor(a, lg).get("agent"))
@@ -378,7 +408,8 @@ def main(argv=None):
     ap.add_argument("--root", help="the state directory (default: $PIT_ROOT, else the nearest one above the cwd, else this checkout)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("add", help="validate specs and add them"); p.add_argument("spec", nargs="+"); p.set_defaults(f=cmd_add)
-    p = sub.add_parser("list"); p.add_argument("--lane"); p.add_argument("--frontier", action="store_true"); p.set_defaults(f=cmd_list)
+    p = sub.add_parser("list"); p.add_argument("--lane"); p.add_argument("--frontier", action="store_true")
+    p.add_argument("--scenarios", action="store_true", help="the scenario names a job may run, one per line"); p.set_defaults(f=cmd_list)
     for name in ("why-blocked", "why"):
         p = sub.add_parser(name); p.add_argument("id"); p.set_defaults(f=cmd_why)
     p = sub.add_parser("show", help="a node and its lineage"); p.add_argument("id"); p.set_defaults(f=cmd_show)
@@ -398,6 +429,7 @@ def main(argv=None):
     p.add_argument("--verdict", required=True, choices=specmod.VERDICTS); p.add_argument("--wall-s", type=float, default=0.0)
     p.add_argument("--uncached", type=int, default=0); p.add_argument("--cached", type=int, default=0)
     p.add_argument("--out", type=int, default=0); p.add_argument("--lane"); p.add_argument("--as", dest="agent", help="the agent recording it")
+    p.add_argument("--force", action="store_true", help="record even on a dead @pass/@fail branch")
     p.add_argument("--arm", action="append", help="VARIANT=pass|fail|invalid, per arm"); p.set_defaults(f=cmd_result)
     p = sub.add_parser("run", help="run a job's command: claim, 2x budget, stop rules, result")
     p.add_argument("id"); p.add_argument("--lane"); p.add_argument("--force-gate", action="store_true")
@@ -436,8 +468,8 @@ def main(argv=None):
     p.set_defaults(f=cmd_metrics)
     p = sub.add_parser("autopilot", help="run the loop: dispatch per free lane, hand results back to agents, reflect")
     p.add_argument("--once", action="store_true"); p.add_argument("--interval", type=float, default=60)
-    p.add_argument("--max-usd-per-hour", type=float, help="default: [autopilot] max_usd_per_hour (40)")
-    p.add_argument("--max-subagent-runs-per-hour", type=int, help="default: [autopilot] max_subagent_runs_per_hour (12)")
+    p.add_argument("--max-usd-per-hour", type=float, help="spend gate; default: [autopilot] max_usd_per_hour (unset/0 = no gate)")
+    p.add_argument("--max-subagent-runs-per-hour", type=int, help="turn budget, reported not enforced; default: [autopilot] max_subagent_runs_per_hour (60)")
     p.add_argument("--for", dest="for_", help="stop the loop after this wall time: 1h, 45m, 2h30m, or seconds")
     p.add_argument("--dry-run", action="store_true", help="print the plan; write, claim, run and spawn nothing")
     p.set_defaults(f=cmd_autopilot)

@@ -292,6 +292,7 @@ function renderTop(m) {
   const k = (key, val, cls = "") => `<div class="kpi ${cls}"><span class="k">${key}</span><span class="v">${val}</span></div>`;
   setHTML("kpis", k("Mint", `${usd(t.mint_per_h)}<span class="dim">/h</span>`) + k("House", usd(t.house)) + k("Escrow", usd(t.escrow)) +
     k("Spend today", `<span title="${sp || "nothing yet"}">${usd(tot)}</span>`) + k("Clock", `${esc(m.now.slice(11, 19))}<span class="dim">Z</span>`) +
+    m.lanes.filter(l => l.idle_s > 120).map(l => k("Idle", `<span class="F">${esc(l.lane)} ${Math.floor(l.idle_s / 60)}m</span>`)).join("") +
     k("Tonight", `${s.jobs} run · <span class="P">${s.pass} pass</span> · <span class="F">${s.fail} fail</span>${s.other ? " · " + s.other + " other" : ""} · ${s.findings} finding${s.findings === 1 ? "" : "s"} · ${s.refutations} refuted · ${usd(s.usd)} spent`, "story"));
   const mode = $("mode"); mode.textContent = S.live ? "LIVE" : "REPLAY"; mode.className = "mode " + (S.live ? "live" : "replay");
 }
@@ -306,7 +307,7 @@ function renderLanes(m) {
       (r ? `<div class="st"><span class="b acc">run</span><span class="chip" data-task="${esc(r.job)}">${esc(r.job)}</span>${r.fallback ? '<span class="b q">fbk</span>' : ""}</div>` +
         `<div class="pr"><div class="prog" role="progressbar" aria-label="${esc(r.job)} elapsed of budget" aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100"><i class="${r.elapsed_s > r.budget_s ? "over" : ""}" style="width:${pct}%"></i></div>` +
         `<span class="num">${mmss(r.elapsed_s)}<span class="dim"> / ${mmss(r.budget_s)}</span></span></div>`
-        : `<div class="st"><span class="b q">idle</span></div>`) +
+        : `<div class="st"><span class="b ${l.idle_s > 120 ? "F" : "q"}">idle${l.idle_s != null ? " " + Math.floor(l.idle_s / 60) + "m" : ""}</span></div>`) +
       `<div class="qh"><span>Queue ${l.depth}</span><span class="num">score</span></div>` +
       (q.map((x, i) => `<div class="qr" data-task="${esc(x.task)}"><span class="dim num">${i + 1}</span><span class="t">${esc(x.task)}</span><span>${x.fallback ? '<span class="b q">fbk</span>' : ""}</span><span class="num">${x.score.toFixed(2)}</span></div>`).join("") ||
         `<div class="dim" style="line-height:20px">empty</div>`) +
@@ -376,6 +377,7 @@ function renderThread(m) {
     (t.open_bets.map(b => `<div class="tn"><span class="b ${b.side === "pass" ? "P" : "F"}">${b.side}</span> ${usd(b.usd)} on <span class="chip" data-task="${esc(b.job)}">${esc(b.job)}</span><span class="dim">/${esc(b.variant)}</span>${b.self ? ' <span class="b q">self</span>' : ""}</div>`).join("") || '<div class="empty">none</div>'));
 }
 
+const ago = s => s < 3600 ? Math.round(s / 60) + "m" : s < 86400 ? (s / 3600).toFixed(1) + "h" : Math.round(s / 86400) + "d";
 function agentList(m) {
   const kids = id => m.agents.filter(a => a.parent === id), out = [];
   const walk = (a, d) => { out.push([a, d]); kids(a.id).forEach(k => walk(k, d + 1)); };
@@ -384,12 +386,12 @@ function agentList(m) {
 }
 function renderAgents(m) {
   const list = agentList(m), cal = Object.fromEntries(m.calibration.map(c => [c.agent, c]));
-  $("n-agents").textContent = list.length;
+  $("n-agents").textContent = `${list.length} agents · ${m.top.subs || 0} turns`;
   const ags = list.map(([a, d]) => {
     const c = cal[a.wallet], own = a.kind === "persistent";
     return `<div class="ag${d ? " sub" : ""}${S.agent === a.id ? " sel" : ""}" data-agent="${esc(a.id)}" tabindex="0" role="button" aria-label="open ${esc(a.id)}'s thread">` +
       `<div class="l1"><b>${esc(a.id)}</b>${a.sleeping ? '<span class="b acc">sleep</span>' : ""}<span class="num">${own ? usd(a.balance) : '<span class="dim">sub</span>'}</span></div>` +
-      `<div class="l2">${a.sleeping ? "wakes " + esc(a.sleep.until) : own && c ? `won ${c.wins}/${c.bets} · brier ${c.brier}` : esc(a.brief)}${own ? ` · acted ${a.last_acted ? hms(a.last_acted) : "never"}` : ""}</div>${own ? spark(a.series) : ""}</div>`;
+      `<div class="l2">${a.sleeping ? "wakes " + esc(a.sleep.until) : own && c ? `won ${c.wins}/${c.bets} · brier ${c.brier}` : esc(a.brief)}${own ? ` · acted ${a.last_acted ? hms(a.last_acted) : "never"} · ${a.turns || 0} turns${a.last_turn ? ", last " + ago(a.last_turn_age_s) + " ago" : ""}` : ""}</div>${own ? spark(a.series) : ""}</div>`;
   }).join("") || `<div class="empty">no agents: add one with <code>q agent add &lt;id&gt; --brief "..."</code></div>`;
   const pnl = c => (parseFloat(c.returned) || 0) - (parseFloat(c.staked) || 0);
   const calt = m.calibration.length ? `<table id="cal" aria-label="calibration"><colgroup><col><col style="width:48px"><col style="width:64px"><col style="width:56px"><col style="width:48px"></colgroup>` +

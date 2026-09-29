@@ -68,7 +68,7 @@ class Bag(unittest.TestCase):
         self.tick()
         (n,) = self.nodes()
         s = n["spec"]
-        self.assertEqual((s["proposer"], s["bag"], s["bag_spec"], s["budget_usd"], s["budget_s"]), ("house", True, "a", 2, 300))
+        self.assertEqual((s["proposer"], s["bag"], s["bag_spec"], s["budget_usd"], s["budget_s"]), ("house", True, "a", 9, 5))      # the spec's own budget beats the lane's fallback
         (b,) = [r for r in self.lg.rows() if r["t"] == "bet"]
         self.assertEqual((b["agent"], b["book"], b["side"], b["usd"], b["tags"], b["job"]), ("house", "house", "pass", 0.25, ["bag"], n["id"]))
         st = L.fold(self.lg.rows())
@@ -95,6 +95,22 @@ class Bag(unittest.TestCase):
             self.tick()
         self.assertEqual(len(self.nodes()), 2)                                             # max_per_day = 2
         self.assertEqual(bag.today(self.lg.rows(), "gpu-small", datetime.now(timezone.utc)), 2)
+
+    def test_why_blocked_names_the_cap(self):
+        import contextlib, io, types
+        from unittest import mock
+        from pit import cli
+        for s in ("a", "b"):
+            self.spec(s)
+        for _ in range(3):
+            self.tick()
+        node = dict(self.nodes()[0], id="queued-desk")
+        node["spec"] = dict(node["spec"], id="queued-desk", bag=False)
+        self.lg.append(node)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), mock.patch.object(cli, "ctx", lambda: (self.root, self.lg, self.cfg)):
+            cli.cmd_why(types.SimpleNamespace(id="queued-desk"))
+        self.assertIn("daily cap reached, resets", out.getvalue())
 
     def test_spec_own_cap_and_one_at_a_time(self):
         self.spec("only", extra="max_per_day = 1\n")
@@ -174,6 +190,42 @@ class Bag(unittest.TestCase):
         self.result(n3, "fail", None)
         self.assertIsNone(bag.backoff_until(self.lg.rows(), "gpu-small", c))              # a fail is signal: normal
 
+    def test_invalid_draw_does_not_count_toward_the_day(self):
+        self.spec("a", verdict="invalid")
+        self.tick()
+        self.assertEqual(len(self.nodes()), 1)
+        self.assertEqual(bag.today(self.lg.rows(), "gpu-small", datetime.now(timezone.utc)), 0)
+
+    def test_bag_reset_note_clears_the_backoff(self):
+        self.spec("a", verdict="invalid")
+        self.tick()
+        c = bag.conf(self.cfg, "gpu-small")
+        self.assertIsNotNone(bag.backoff_until(self.lg.rows(), "gpu-small", c))
+        self.lg.append({"t": "auto", "type": "note", "reason": "bag-reset gpu-small"})
+        self.assertIsNone(bag.backoff_until(self.lg.rows(), "gpu-small", c))
+
+    def test_min_interval_between_draws_of_a_spec(self):
+        self.spec("a")
+        self.tick()
+        self.tick()
+        self.assertEqual(len(self.nodes()), 1)                  # ran minutes ago: not drawn again (default 120 min)
+        self.cfg["bag"]["min_interval_minutes"] = 0             # a [bag] scalar reaches every lane
+        self.tick()
+        self.assertEqual(len(self.nodes()), 2)
+
+    def test_bag_scalars_apply_and_lane_keys_win(self):
+        cfg = {"bag": {"quarantine_after": 5, "min_interval_minutes": 10, "l": {"quarantine_after": 2}}}
+        c = bag.conf(cfg, "l")
+        self.assertEqual((c["quarantine_after"], c["min_interval_minutes"], c["backoff_minutes"]), (2, 10, 30))
+
+    def test_quarantined_spec_is_not_drawn(self):
+        self.spec("a", verdict="fail")
+        self.cfg["bag"].update(min_interval_minutes=0, quarantine_after=1)
+        self.cfg["bag"]["gpu-small"]["max_per_day"] = 9
+        self.tick()
+        self.tick()
+        self.assertEqual(len(self.nodes()), 1)
+
     def test_bag_invalid_wakes_nobody(self):
         self.spec("a", verdict="invalid")
         self.tick()
@@ -196,7 +248,7 @@ class Bag(unittest.TestCase):
         self.tick()
         rows = self.lg.rows()
         self.assertLess(len(reflect.counted(rows)), len(rows))
-        self.assertEqual([r["t"] for r in reflect.counted(rows)], ["settle"])               # only the seed settle
+        self.assertEqual([r["t"] for r in reflect.counted(rows)], [])                        # settle is not work
         self.assertIn("counted", reflect.why(rows, datetime.now(timezone.utc), {"reflect": {"rows": 5}}))
 
 
@@ -216,3 +268,23 @@ class Examples(unittest.TestCase):
             for p in fs:
                 s = specmod.load(p)
                 self.assertEqual(specmod.validate({**s, "lane": lane}, cfg["lanes"]), [])
+
+
+
+class Quarantine(unittest.TestCase):
+    def test_three_consecutive_fails_leave_the_rotation(self):
+        from pit import bag
+        rows = [{"t": "node", "kind": "job", "id": f"bag-x-{i}", "ts": f"2026-01-01T0{i}:00:00Z", "spec": {"bag_spec": "x"}} for i in range(4)]
+        rows += [{"t": "result", "job": f"bag-x-{i}", "verdict": v, "ts": f"2026-01-01T0{i}:30:00Z"} for i, v in enumerate(["pass", "fail", "fail", "fail"])]
+        self.assertEqual(bag.consecutive_fails(rows, "x"), 3)
+        rows.append({"t": "auto", "type": "note", "reason": "bag-readmit x", "ts": "2026-01-01T04:00:00Z"})
+        self.assertEqual(bag.consecutive_fails(rows, "x"), 0)
+
+    def test_invalids_quarantine_and_same_scenario_counts_as_last_run(self):
+        rows = [{"t": "node", "kind": "job", "id": f"bag-x-{i}", "ts": f"2026-01-01T0{i}:00:00Z", "spec": {"bag": True, "lane": "l", "bag_spec": "x"}} for i in range(3)]
+        rows += [{"t": "result", "job": f"bag-x-{i}", "verdict": "invalid", "ts": f"2026-01-01T0{i}:30:00Z"} for i in range(3)]
+        self.assertEqual(bag.consecutive_fails(rows, "x"), 3)
+        rows += [{"t": "node", "kind": "job", "id": "adhoc", "ts": "2026-01-02T00:00:00Z", "spec": {"scenario": "s", "lane": "l"}},   # not a bag job: any id counts
+                 {"t": "result", "job": "adhoc", "verdict": "pass", "ts": "2026-01-02T00:30:00Z"}]
+        self.assertEqual(bag.last_run(rows, "x", "s", "l"), "2026-01-02T00:30:00Z")
+        self.assertEqual(bag.last_run(rows, "x", "s", "other"), "2026-01-01T02:30:00Z")

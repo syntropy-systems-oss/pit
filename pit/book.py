@@ -22,7 +22,7 @@ SIDES = ("pass", "fail")
 
 
 def conf(cfg: dict) -> dict:
-    return {"enabled": False, "default_stake": 0.25, "vig_rate": 0.02, "house_seed": 1.0, **cfg.get("pit", {})}
+    return {"enabled": False, "default_stake": 0.25, "vig_rate": 0.02, "house_seed": 1.0, "rank": "matched", **cfg.get("pit", {})}
 
 
 def enabled(cfg: dict) -> bool:
@@ -186,13 +186,21 @@ def stakes(rows: list[dict], cfg: dict, spec: dict, agent: str, mode: str, stake
     return out
 
 
-def check_post(book: Book, cfg: dict, spec: dict, agent: str) -> str | None:
+def check_post(book: Book, cfg: dict, spec: dict, agent: str, rows: list[dict] | None = None) -> str | None:
     if agent not in book.agents:
         return f"no agent {agent} (q agent add)"
     need = spec.get("budget_usd", 0) + conf(cfg)["default_stake"] * len(variants(spec))
     if book.balance(agent) < need:
         return f"{book.wallet(agent)} has ${book.balance(agent):.2f}; posting {spec.get('id')} needs ${need:.2f} " \
                f"(budget ${spec.get('budget_usd', 0)} + the default stake)"
+    cap = conf(cfg).get("max_posts_per_hour", 4)
+    w = book.wallet(agent)
+    if w != "house" and cap:
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        n = sum(1 for r in (rows or []) if r.get("t") == "node" and r.get("kind") == "job"
+                and book.wallet(r.get("spec", {}).get("proposer") or "") == w and r.get("ts", "") >= cutoff)
+        if n >= cap:
+            return f"{w} has posted {n} jobs in the last hour (cap {cap}): record a finding or sleep instead of posting"
     return None
 
 
@@ -313,13 +321,15 @@ def wake(ledger: L.Ledger, now: datetime | None = None) -> list[dict]:
 
 # ---- scoring ----------------------------------------------------------------------------------------
 
-def rank(st: L.State, book: Book, ids: list[str] | None = None) -> tuple[list[str], set[str]]:
-    """matched/budget_usd desc, ties cheapest first. In a lane where no runnable task has matched > 0 the
-    cheapest one is the stall fallback (returned in the set, and marked on its claim row)."""
+def rank(st: L.State, book: Book, ids: list[str] | None = None, mode: str = "matched") -> tuple[list[str], set[str]]:
+    """[pit] rank: "matched" (default) = the most uncertain runs, matched stakes desc, ties cheapest first, then oldest;
+    "matched_per_usd" = matched / budget_usd desc, then cheapest, then oldest. In a lane where no runnable task has
+    matched > 0 the cheapest one is the stall fallback (returned in the set, and marked on its claim row)."""
     ids = st.frontier() if ids is None else ids
     budget = {j: st.jobs[j]["spec"]["budget_usd"] for j in ids}
     matched = {j: book.matched(j, st.jobs[j]["spec"]) for j in ids}
-    order = sorted(ids, key=lambda j: (-matched[j] / max(budget[j], 0.01), budget[j]))
+    score = (lambda j: matched[j] / max(budget[j], 0.01)) if mode == "matched_per_usd" else (lambda j: matched[j])
+    order = sorted(ids, key=lambda j: (-score(j), budget[j], st.jobs[j]["added"]))
     fallback = set()
     for lane in {st.jobs[j]["spec"]["lane"] for j in ids}:
         mine = [j for j in order if st.jobs[j]["spec"]["lane"] == lane]
@@ -330,7 +340,7 @@ def rank(st: L.State, book: Book, ids: list[str] | None = None) -> tuple[list[st
 
 def order(st: L.State, rows: list[dict], cfg: dict, ids: list[str] | None = None) -> tuple[list[str], set[str]]:
     """The ranking every caller uses: Pit's when [pit] enabled, else the old default."""
-    return rank(st, Book(rows), ids) if enabled(cfg) else (L.rank(st, cfg, ids), set())
+    return rank(st, Book(rows), ids, conf(cfg)["rank"]) if enabled(cfg) else (L.rank(st, cfg, ids), set())
 
 
 # ---- settlement -------------------------------------------------------------------------------------
@@ -351,9 +361,15 @@ def settle_due(ledger: L.Ledger, cfg: dict) -> list[dict]:
             verdict = j["state"]
         else:
             continue
-        bets = [b for b in book.bets if (b["job"], b["variant"]) == key]
+        allbets = [b for b in book.bets if (b["job"], b["variant"]) == key]
+        res, spec = j["result"], j["spec"]
+        # a desk job its proposer settles itself for $0: the proposer's own bets are refunded, not paid
+        selfvoid = bool(res and verdict in SIDES and not spec.get("run") and not spec.get("scenario")
+                        and res.get("agent") and res["agent"] == book.wallet(book.proposers.get(key[0], ""))
+                        and not res["cost"]["usd"])
+        bets = [b for b in allbets if not (selfvoid and "self" in b["tags"])]
         pot = round(sum(b["usd"] for b in bets), 4)
-        pay: dict[str, float] = {}
+        pay: dict[str, float] = {b["book"]: b["usd"] for b in allbets if b not in bets}
         if verdict in SIDES:
             vig = round(conf(cfg)["vig_rate"] * pot, 4)
             won = sum(b["usd"] for b in bets if b["side"] == verdict)
@@ -366,8 +382,8 @@ def settle_due(ledger: L.Ledger, cfg: dict) -> list[dict]:
             for b in bets:
                 pay[b["book"]] = pay.get(b["book"], 0) + b["usd"]
         out.append(ledger.append({"t": "settle", "job": key[0], "variant": key[1], "verdict": verdict,
-                                  "outcome": verdict if verdict in SIDES else "void", "totals": book.totals(*key),
-                                  "pot": pot, "vig": vig, "payouts": {w: round(u, 4) for w, u in pay.items()}},
+                                  "outcome": verdict if verdict in SIDES else "void", "totals": {s: round(sum(b["usd"] for b in bets if b["side"] == s), 4) for s in SIDES},
+                                  "pot": pot, "vig": vig, **({"void_self": True} if selfvoid else {}), "payouts": {w: round(u, 4) for w, u in pay.items()}},
                                  j["result"]["ts"] if j["result"] else None))
     return out
 
@@ -375,7 +391,7 @@ def settle_due(ledger: L.Ledger, cfg: dict) -> list[dict]:
 # ---- reading ----------------------------------------------------------------------------------------
 
 def returned(bet: dict, s: dict) -> float:
-    if s["outcome"] == "void":
+    if s["outcome"] == "void" or (s.get("void_self") and "self" in bet["tags"]):
         return bet["usd"]
     if bet["side"] != s["outcome"]:
         return 0.0

@@ -51,8 +51,27 @@ def refs(value):
             yield from refs(v)
 
 
-def validate(spec: dict, lanes: dict) -> list[str]:
-    """Reasons to refuse the spec; empty list = accepted. `lanes` is lanes.load()['lanes']."""
+def scenarios(root, cfg: dict) -> list[str] | None:
+    """The scenario names a job may run: the entries of `[bench] scenario_dir` (relative to the state root, default
+    `scenarios/`), one file or directory per scenario, named by its stem. None = no such directory: accept anything."""
+    d = Path(root) / Path(cfg.get("bench", {}).get("scenario_dir", "scenarios")).expanduser()
+    if not d.is_dir():
+        return None
+    return sorted({p.stem for p in d.iterdir() if not p.name.startswith(".")})
+
+
+def synth(spec: dict, cfg: dict) -> tuple[str, str | None] | None:
+    """(run, preflight) the harness supplies for a spec with `scenario` and no `run`, from its lane's `runner` /
+    `preflight` / `model` in lanes.toml; None if the spec has its own run (or no scenario, or its lane has no runner)."""
+    l = cfg["lanes"].get(spec.get("lane"), {})
+    if spec.get("run") or not spec.get("scenario") or "runner" not in l:
+        return None
+    f = dict(scenario=shlex.quote(spec["scenario"]), model=shlex.quote(l.get("model", "")), budget_s=int(spec["budget_s"]))
+    return l["runner"].format(**f), (l["preflight"].format(**f) if l.get("preflight") else None)
+
+
+def validate(spec: dict, lanes: dict, known: list[str] | None = None) -> list[str]:
+    """Reasons to refuse the spec; empty list = accepted. `lanes` is lanes.load()['lanes']; `known` = scenarios() (None: any)."""
     errs = []
     for k in ("id", "question", "expect", "if_pass", "if_fail"):
         if not str(spec.get(k, "")).strip():
@@ -69,6 +88,8 @@ def validate(spec: dict, lanes: dict) -> list[str]:
     budget_s, budget_usd, value = spec.get("budget_s"), spec.get("budget_usd"), spec.get("value", 1)
     if not isinstance(budget_s, (int, float)) or budget_s <= 0:
         errs.append("budget_s must be a positive number")
+    elif budget_s > 3600:
+        errs.append("budget_s over an hour: nothing runs longer than 3600 s (split it)")
     if not isinstance(budget_usd, (int, float)) or budget_usd < 0:
         errs.append("budget_usd must be a number >= 0")
     if not isinstance(value, (int, float)) or value <= 0:
@@ -81,6 +102,13 @@ def validate(spec: dict, lanes: dict) -> list[str]:
             errs.append(f"budget_usd {budget_usd} > value {value} x ${min(caps)}/value on a cheap lane")
     if not isinstance(spec.get("run", ""), str):
         errs.append("run must be a shell command string")
+    if spec.get("scenario") and not spec.get("run"):
+        if "runner" not in lanes.get(lane, {}):
+            errs.append(f"scenario needs a lane with a runner (lanes.toml), not {lane!r}: give `run` for desk work or a custom driver")
+        if spec.get("arms"):
+            errs.append("scenario runs one variant: drop `arms` (or post one job per arm)")
+        if known is not None and spec["scenario"] not in known:
+            errs.append(f"unknown scenario {spec['scenario']!r} (have: {', '.join(known)})")
     deps = {dep_id(d)[0] for d in spec.get("depends_on", [])}
     for d in spec.get("depends_on", []):
         if dep_id(d)[1] not in (None, "pass", "fail"):

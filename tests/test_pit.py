@@ -36,6 +36,10 @@ class Validator(unittest.TestCase):
     def errs(self, **kw):
         return specmod.validate(job("a", **kw), CFG["lanes"])
 
+    def test_budget_s_is_capped_at_an_hour(self):
+        self.assertEqual(self.errs(budget_s=3600), [])
+        self.assertTrue(any("over an hour" in e for e in self.errs(budget_s=3601)))
+
     def test_ok(self):
         self.assertEqual(self.errs(), [])
 
@@ -282,7 +286,7 @@ class Hooks(unittest.TestCase):
         lines = out.strip().splitlines()
         self.assertLessEqual(len(lines), 20)
         self.assertTrue(lines[0].startswith("Pit: 1 runnable"))
-        self.assertIn("ready next-rung", out)
+        self.assertIn("desk  next-rung", out)      # no run/scenario: a desk job, not runnable
         self.assertIn("STALE ablate-b: F:b-beats-a refuted by leak-check", out)
         self.assertIn("spend today:", out)
 
@@ -344,7 +348,7 @@ class Reflect(unittest.TestCase):
         self.assertTrue(reflect.nudge(self.root, "rows 65", 65))
         self.assertTrue(reflect.nudge(self.root, "after cancel", 65))
         for i in range(60):
-            self.lg.append({"t": "review", "id": "a", "note": str(i)})
+            self.lg.append({"t": "decision", "id": "a", "note": str(i)})
         self.assertIn("reflect due (rows 65): /pit:reflect", hooks.status_block(self.root))
 
     def test_predicates(self):
@@ -643,6 +647,48 @@ class Pit(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.bet("x", "fail", 1, "b", "V1")                                   # betting closed at claim
 
+    def cli(self, fn, **kw):
+        from argparse import Namespace as N
+        from pit import cli
+        with mock.patch.object(cli, "ctx", lambda: (ROOT, self.lg, self.PCFG)), mock.patch.object(cli, "sync", lambda *a: None):
+            return getattr(cli, fn)(N(**kw))
+
+    def test_edge_refuses_missing_node(self):
+        self.post(job("x"), "a")
+        with self.assertRaises(SystemExit):
+            self.cli("cmd_edge", src="x", type="supersedes", dst="ghost")
+        self.assertEqual([r for r in self.lg.rows() if r["t"] == "edge"], [])
+
+    def test_proposer_desk_zero_result_voids_its_own_bet(self):
+        self.post(job("x"), "a")                                                 # a stakes PASS 0.25
+        self.bet("x", "fail", 1, "b")
+        before = self.book().balance("a")
+        self.lg.append({"t": "result", "job": "x", "verdict": "pass", "agent": "a",
+                        "cost": {"usd": 0, "wall_s": 0, "lane": "gpu-small"}}, "2026-09-29T05:00:00Z")
+        B.settle_due(self.lg, self.PCFG)
+        self.assertAlmostEqual(self.book().balance("a"), before + 0.25)          # refunded, not paid the pot
+        (s,) = [r for r in self.lg.rows() if r["t"] == "settle"]
+        self.assertTrue(s["void_self"])
+
+    def test_result_refuses_dead_branch_without_force(self):
+        self.post(job("r"), "a")
+        self.post(job("cut", depends_on=["r@pass"]), "a")
+        self.lg.append({"t": "result", "job": "r", "verdict": "fail", "cost": {"usd": 0, "wall_s": 0, "lane": "gpu-small"}})
+        kw = dict(id="cut", verdict="pass", wall_s=0.0, uncached=0, cached=0, out=0, lane=None, arm=None, agent=None)
+        with self.assertRaises(SystemExit):
+            self.cli("cmd_result", force=False, **kw)
+        self.cli("cmd_result", force=True, **kw)
+        self.assertIsNotNone(L.fold(self.lg.rows()).jobs["cut"]["result"])
+
+    def test_verdict_only_correction_inherits_cost(self):
+        self.post(job("c"), "a")
+        kw = dict(id="c", uncached=0, cached=0, out=0, lane=None, arm=None, agent=None, force=False)
+        self.cli("cmd_result", verdict="pass", wall_s=1800.0, **kw)
+        first = L.fold(self.lg.rows()).jobs["c"]["result"]["cost"]["usd"]
+        self.assertGreater(first, 0)
+        self.cli("cmd_result", verdict="fail", wall_s=0.0, **kw)
+        self.assertEqual(L.fold(self.lg.rows()).jobs["c"]["result"]["cost"]["usd"], first)
+
     def test_matched_ranking_and_stall_fallback(self):
         self.post(job("cheap", budget_usd=1), "a")
         self.post(job("big", budget_usd=20), "a")
@@ -654,6 +700,35 @@ class Pit(unittest.TestCase):
         self.assertEqual((order, fb), (["big", "cheap"], set()))
         self.assertAlmostEqual(self.book().matched("big", st.jobs["big"]["spec"]), 0.5)
         self.assertEqual(B.order(st, self.lg.rows(), CFG | {"pit": {"enabled": False}})[1], set())   # old ranking when off
+
+    def test_post_cap_per_wallet_per_hour(self):
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        rows = [{"t": "node", "kind": "job", "id": f"p{i}", "ts": now, "spec": {"proposer": "a.sub"}} for i in range(4)]
+        cfg = {**self.PCFG, "pit": {**self.PCFG["pit"], "max_posts_per_hour": 4}}
+        err = B.check_post(self.book(), cfg, job("x"), "a", rows)
+        self.assertIn("posted 4 jobs in the last hour (cap 4)", err)            # subs book to their wallet
+        self.assertIsNone(B.check_post(self.book(), cfg, job("x"), "b", rows))
+        self.assertIsNone(B.check_post(self.book(), {**cfg, "pit": {**cfg["pit"], "max_posts_per_hour": 0}}, job("x"), "a", rows))
+
+    def test_why_blocked_names_an_undriven_desk_job(self):
+        import contextlib, io
+        self.post(job("d"), "a")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.cli("cmd_why", id="d")
+        self.assertIn("undriven: no run or scenario", out.getvalue())
+
+    def test_rank_modes_most_uncertain_then_cheapest(self):
+        self.post(job("cheap", budget_usd=1), "a")
+        self.post(job("big", budget_usd=20), "a")
+        self.bet("cheap", "fail", 0.25, "b")                                      # matched 0.5 on $1
+        self.bet("big", "fail", 5, "b")                                           # matched 0.5 on $20
+        st = L.fold(self.lg.rows())
+        self.assertEqual(B.rank(st, self.book())[0], ["cheap", "big"])          # tie on matched: cheapest
+        self.bet("big", "pass", 2, "a.sub"); self.bet("big", "fail", 5, "b")      # big: 2.25 vs 5 -> matched 4.5
+        st = L.fold(self.lg.rows())
+        self.assertEqual(B.rank(st, self.book())[0][0], "big")                  # most uncertain wins despite cost
+        self.assertEqual(B.rank(st, self.book(), mode="matched_per_usd")[0][0], "cheap")
 
     def test_settlement(self):
         self.post(job("x"), "a")                                                  # a: PASS 0.25
@@ -709,3 +784,25 @@ class Pit(unittest.TestCase):
         order, fb = B.order(L.fold(lg.rows()), lg.rows(), self.PCFG)
         self.assertLess(order.index("read"), order.index("control"))
         self.assertEqual(fb, {"read"})
+
+
+class ListScenarios(unittest.TestCase):
+    def test_list_scenarios_prints_one_per_line(self):
+        import contextlib, io
+        from argparse import Namespace as N
+        from pit import cli
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root)
+        shutil.copy(ROOT / "lanes.example.toml", root / "lanes.toml")
+        (root / "ledger").mkdir()
+        (root / "scenarios" / "b_scn").mkdir(parents=True)          # a scenario is a file or a directory, named by its stem
+        (root / "scenarios" / "a_scn.toml").write_text("")
+        (root / "scenarios" / ".hidden").write_text("")
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"PIT_ROOT": str(root)}), contextlib.redirect_stdout(out):
+            cli.cmd_list(N(scenarios=True, frontier=False, lane=None))
+        self.assertEqual(out.getvalue(), "a_scn\nb_scn\n")
+        self.assertIsNone(specmod.scenarios(root, {"bench": {"scenario_dir": "elsewhere"}}))     # no directory: accept any
+        (root / "elsewhere").mkdir()
+        (root / "elsewhere" / "c_scn.sh").write_text("")
+        self.assertEqual(specmod.scenarios(root, {"bench": {"scenario_dir": "elsewhere"}}), ["c_scn"])

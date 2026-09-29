@@ -63,6 +63,15 @@ class Terminal(unittest.TestCase):
         self.assertIn("winners", settle["text"])
         json.dumps(m)
 
+    def test_subs_are_turns(self):
+        lg, book = L.MemLedger(), B.Book([])
+        for aid, parent, ts in (("a", None, "04:00"), ("b", None, "04:00"), ("a-1", "a", "04:10"), ("a-2", "a", "04:20"), ("b-1", "b", "04:15")):
+            book.agents[aid] = lg.append(B.agent_row(book, aid, "x", parent), f"2026-09-29T{ts}:00Z")
+        m = market.market_json(lg.rows(), PCFG, self.now)
+        ag = {a["id"]: (a["turns"], a["last_turn"]) for a in m["agents"]}
+        self.assertEqual(ag, {"a": (2, "2026-09-29T04:20:00Z"), "b": (1, "2026-09-29T04:15:00Z")})
+        self.assertEqual(m["top"]["subs"], 3)
+
     def test_running_and_server(self):
         rows = self.rows[:next(i for i, r in enumerate(self.rows) if r["t"] == "result")]      # up to the claim
         m = market.market_json(rows, PCFG, self.now)

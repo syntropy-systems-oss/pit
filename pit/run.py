@@ -110,10 +110,13 @@ def run_job(root, ledger: L.Ledger, cfg: dict, jid: str, lane: str | None = None
     ok, why = lanes.gate_open(cfg, lane)
     if not ok and not force_gate:
         raise SystemExit(f"lane {lane}: {why}")
-    if not s.get("run"):
+    synth = specmod.synth(s, cfg)
+    if not s.get("run") and not synth:
         raise SystemExit(f"{jid} has no run command: do it by hand, then `q result {jid} --verdict ...`")
-    inputs, cmd = specmod.render(s, st.render_ctx())
+    inputs, cmd = specmod.render({**s, "run": s.get("run") or synth[0]}, st.render_ctx())
     extra = {"agent": agent} if agent else {}
+    if synth:
+        extra["run"] = cmd                # the harness-supplied driver, on the claim row (and so the tape)
     if B.enabled(cfg) and jid in B.order(st, ledger.rows(), cfg)[1]:
         extra["fallback"] = True          # the stall fallback: exploration spend, logged on the claim
     push_ok = bool(cfg.get("git", {}).get("push", False))     # opt-in: private state is never pushed by accident
@@ -123,7 +126,7 @@ def run_job(root, ledger: L.Ledger, cfg: dict, jid: str, lane: str | None = None
     if not won:
         raise SystemExit(cid)
     echo(f"q run {jid} on {lane}: {cmd}")
-    r = execute(cmd, 2 * s["budget_s"], s["fail_on"], cwd=s.get("cwd") and os.path.expanduser(s["cwd"]), echo=echo)
+    r = execute(cmd, min(2 * s["budget_s"], 3600), s["fail_on"], cwd=os.path.expanduser(s["cwd"]) if s.get("cwd") else (root if synth else None), echo=echo)
     return record(ledger, cfg, s, lane, r)
 
 

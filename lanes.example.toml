@@ -24,6 +24,11 @@ usd_per_h = 14
 slots = 1                       # GPU-exclusive
 max_usd_per_value = 25          # cheap lane: q add refuses budget_usd > value x this
 gate = "true"                   # a shell command; exit 0 = the lane is free
+# A spec with `scenario = "<name>"` and no `run` gets its driver from the lane: {scenario} {model} {budget_s} are filled in,
+# and `preflight` (optional) must exit 0 before the job is dispatched. Without a runner a lane takes only `run` jobs.
+# runner = "python3 bench.py --scenario {scenario} --model {model} --timeout {budget_s}"
+# preflight = "python3 bench.py --check --model {model}"
+# model = "small"
 
 [lanes.gpu-large]
 box = "a large GPU box that also serves production"
@@ -41,31 +46,46 @@ gate = "true"
 
 # `any` is built in: wherever the session is, tokens only.
 
-# Pit: agents fund runs and bet PASS/FAIL per variant; the frontier is ordered by matched stakes per $ budget.
-# enabled = false restores the default ranking (priority, critical path, value per $).
+# The scenario registry: `q list --scenarios` prints the entries of this directory (relative to the state root; one file
+# or directory per scenario, named by its stem), and `q add` refuses a scenario not in it. No directory = any name.
+[bench]
+scenario_dir = "scenarios"
+
+# Pit: agents fund runs and bet PASS/FAIL per variant; the frontier is ordered by matched stakes (the most uncertain
+# runs first, ties cheapest). enabled = false restores the default ranking (priority, critical path, value per $).
 [pit]
 enabled = true
+rank = "matched"                # "matched" | "matched_per_usd" (matched stakes divided by budget_usd)
+max_posts_per_hour = 4          # per wallet (the house is exempt); 0 = no limit
 default_stake = 0.25            # the automatic stake a post puts on its `expect`, per variant
 vig_rate = 0.02                 # of each settled pot, to the house
 house_seed = 1.00               # the house stakes a reflect-planted root this much per variant from its vig, capped by the pool
 
 # q autopilot (pit/autopilot.py): dispatch per free lane, hand results back to the proposer, reflect when due.
 [autopilot]
-max_usd_per_hour = 40           # stop dispatching while the ledger's result spend over the last hour exceeds this (--max-usd-per-hour overrides)
-max_concurrent_subagents = 3    # hand-back agents + the reflection pass alive at once
-max_subagent_runs_per_hour = 12  # real-token guard: hand-backs, wakes and reflections started in the last hour; over it they are refused (reason `subagent cap`) and retried next tick
+# max_usd_per_hour = 40         # unset or 0 (the default) = no spend gate: hour spend is reported, never enforced
+# max_concurrent_subagents = 3  # unset = one per persistent agent + 1 for the reflection pass
+max_subagent_runs_per_hour = 60  # a budget, not a gate: over it the loop writes one `auto refuse` row per hour and keeps going
+idle_wake_gap_s = 90            # agents never sleep: each persistent agent is re-woken this long after its last turn ends
 any_workers = 2                 # lane `any` runs this many jobs at once
 permission_mode = ""            # claude -p --permission-mode; "" = the repo's, then the user's Claude Code defaultMode
+allowed_tools = []              # e.g. ["Bash(q *)", "Read", "Grep", "Edit"] -> --allowedTools; pair with permission_mode = "acceptEdits"
+add_dirs = []                   # directories a desk job may touch (each -> --add-dir), e.g. ["~/src/my-project"]
 heartbeat_minutes = 20          # an idle, funded agent asleep until-event is woken after this long without acting (reason `heartbeat`)
 heartbeat_min_usd = 1.0         # ...if its balance is at least this (the cheapest lane's minimum post)
 # kill file: autopilot/STOP (checked every tick). Standing rules injected into every prompt: pit.autopilot.RULES
 
 # The bag (pit/bag.py): a lane with nothing runnable draws one known-good spec (least recently run first), posts it as
 # `house` (tag `bag`, a house PASS stake of house_stake usd per variant from the vig pool) and runs it. A failed run
-# becomes a "REGRESSION:" finding naming the spec's last pass. budget_usd / budget_s override the spec's; bag spend counts
-# against the hour cap; one bag job per lane at a time; a spec may carry its own max_per_day. Paths are relative to the state root.
+# becomes a "REGRESSION:" finding naming the spec's last pass. budget_usd / budget_s are fallbacks for a spec without its own;
+# bag spend counts against the hour cap if one is set; one bag job per lane at a time; a spec may carry its own max_per_day;
+# an `invalid` draw does not count toward the day. Paths are relative to the state root. Scalars here apply to every lane
+# unless its [bag.<lane>] sets its own.
 [bag]
 backoff_minutes = 30           # after an `invalid` bag result the lane draws nothing for this long; x2 per further consecutive invalid, cap 4 h
+min_interval_minutes = 120     # a spec (or any job on the same scenario and lane) is drawn at most this often
+quarantine_after = 3           # this many fail/invalid results in a row take a spec out of the rotation (auto note `bag-readmit <spec>` restores it;
+                               # `bag-reset <lane>` clears a lane's invalid backoff)
 
 [bag.gpu-small]
 specs = ["bag/gpu-small-*.toml"]
