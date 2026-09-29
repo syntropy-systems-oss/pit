@@ -145,6 +145,11 @@ def cmd_thread(a):
     print(B.thread(ctx()[1].rows(), a.agent))
 
 
+def cmd_board(a):
+    root, lg, cfg = ctx()
+    print(B.board(lg.rows(), cfg))
+
+
 def cmd_pit(a):
     print(B.calibration(ctx()[1].rows()))
 
@@ -258,7 +263,8 @@ def cmd_decide(a):
 def cmd_finding(a):
     root, lg, cfg = ctx()
     st = L.fold(lg.rows())
-    fid = a.id or f"F:{a.source}-{sum(1 for f in st.findings.values() if f['from'] == a.source) + 1}"
+    who = a.source or actor(a, lg).get("agent") or "session"      # no --from: name the author, never "F:None-N"
+    fid = a.id or f"F:{who}-{sum(1 for f in st.findings if f.startswith(f'F:{who}-')) + 1}"      # fold keeps no author: count by id
     lg.append({"t": "node", "kind": a.kind, "id": fid, "from": a.source, "text": a.text, **actor(a, lg)})
     if a.source:
         lg.append({"t": "edge", "type": "produces", "from": a.source, "to": fid})
@@ -455,6 +461,8 @@ def main(argv=None):
     p = sub.add_parser("balance"); p.add_argument("--as", dest="agent"); p.set_defaults(f=cmd_balance)
     p = sub.add_parser("thread", help="an agent's line: brief, balance, nodes, open bets, open markets")
     p.add_argument("agent"); p.set_defaults(f=cmd_thread)
+    p = sub.add_parser("board", help="every open market with its price, unopposed first (the board agents see)")
+    p.set_defaults(f=cmd_board)
     p = sub.add_parser("pit", help="q pit calibration"); p.add_argument("what", choices=("calibration",)); p.set_defaults(f=cmd_pit)
     p = sub.add_parser("graph"); p.set_defaults(f=cmd_graph)
     p = sub.add_parser("cost"); p.add_argument("--by", choices=("lane", "job"), default="lane"); p.set_defaults(f=cmd_cost)

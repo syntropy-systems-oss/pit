@@ -183,13 +183,14 @@ Every dispatch, hand-back, wake, refusal, start and stop is an `auto` row (`type
 | `q add <spec.toml>...` | validate specs and append them |
 | `q run <id> [--lane L] [--as A]` | claim, run with stop rules, record the result and cost |
 | `q result <id> --verdict V [--force]` | record a hand-run result (refused on a dead branch without `--force`; a verdict-only correction keeps the booked cost) |
-| `q finding --from <job> --text ... [--as A]` | record a finding or hypothesis (as agent A); `--refutes`, `--refines`, `--supersedes` |
+| `q finding [--from <job>] --text ... [--as A]` | record a finding or hypothesis (as agent A; without `--from` its id names the author); `--refutes`, `--refines`, `--supersedes` |
 | `q decide <finding> --changed\|--unchanged --note ...` | record whether a finding changed a decision |
 | `q cancel <id> --reason ...` / `q review <id> --note ...` | close a dead end / re-admit a stale job |
 | `q edge <src> <type> <dst>` | add an edge by hand (both ends must exist) |
 | `q post <spec> --as A [--seed] [--stake USD]` | post a run as an agent, as `reflect`, or as `human` |
 | `q bet <job> [<variant>] PASS\|FAIL <usd> --as A` | bet on a variant |
 | `q balance [--as A]` / `q thread <A>` | wallets / an agent's thread |
+| `q board` | every open market with its price: unopposed first, PASS/FAIL pools, what $1 on the thinner side pays, and the proposer's record |
 | `q agent add <id> --brief ... [--parent P]` | make an agent or a sub-agent |
 | `q tick` | pay income since the last tick; print wakes |
 | `q sleep --as A --until-event\|--until-balance N\|--until-result J\|--until-market J\|--minutes N [--note ...]` | sleep until the next board event, a balance, a result, a market or a time |

@@ -39,7 +39,9 @@ DESK = ("This desk job is yours and stays on your plate until it has a result. D
         "cancel it with a reason (`q cancel <job> --reason … --as <you>`). Do not leave it queued.")
 BOARD = ("The board is context. If an open run bears on your claim you may bet on it (that is how you get paid for "
          "understanding what others are finding), and you may bet where you have a reason even if it does not. The market "
-         "is not the goal: it buys you time on the machines and pays you for understanding.")
+         "is not the goal: it buys you time on the machines and pays you for understanding. You are paid for understanding "
+         "only when you take the other side of someone's stake; a post alone only spends. Unopposed markets are listed "
+         "first: if you believe the proposer is wrong, $1 there is the cheapest bet on the board.")
 REWAKE = ("Agents never sleep: you get a turn about every {gap} s whether or not a run of yours is in flight. While one is, "
           "use the turn to bet on other open runs, research, or post a second experiment on a free lane. "
           "Every turn must leave the market changed: a post, a bet, or a finding.")
@@ -537,7 +539,8 @@ class Autopilot:
                             f"You are the ONE Opus subagent of step 2, acting as {sub} (a sub of reflect: `--as {sub}`). "
                             f"The CLI is {REPO}/bin/q (PIT_ROOT is set). Do step 2's brief: write proposals to "
                             f"{self.root}/queue/proposed/<id>.toml. Never run q add, q post or q reflect --record: "
-                            f"steps 3 and 4 are the session's.",
+                            f"steps 3 and 4 are the session's. Bet as `reflect` against every open run whose proposer you think is "
+                            f"overconfident; say why in one line each.",
                             "Digest (q reflect --since-last):\n" + reflect.digest(rows)])
         self.subs[B.REFLECT] = (sub, self.claude(sub, "opus", text), self.proposed())
 
@@ -564,7 +567,7 @@ class Autopilot:
             f"The CLI is {REPO}/bin/q (on PATH as q; PIT_ROOT is set).",
             f"q thread {agent}:\n" + B.thread(self.lg.rows(), agent),
             "\n".join(t for _, _, t in items),
-            f"Your claim ({agent}'s brief): {B.Book(rows).agents[agent]['brief']}", CLAIM, digest, BOARD,
+            f"Your claim ({agent}'s brief): {B.Book(rows).agents[agent]['brief']}", CLAIM, digest, BOARD, "q board:\n" + B.board(rows, self.cfg),
             f"You MUST end your turn by saying what you are waiting on (`q sleep --as {sub} --until-result <job>`, or "
             f"`q sleep --as {sub} --until-event --note '<what>'`), then stop; you will be woken again in about "
             f"{self.c['idle_wake_gap_s']:.0f} s (a result of yours wakes you at once). Every turn must leave the market changed: "

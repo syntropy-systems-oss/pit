@@ -510,14 +510,14 @@ class Pit(unittest.TestCase):
     def book(self):
         return B.Book(self.lg.rows())
 
-    def post(self, spec, agent, seed=False, stake=0.0, cfg=None):
+    def post(self, spec, agent, seed=False, stake=0.0, cfg=None, ts="2026-09-29T04:31:00Z"):
         """What `q post` does, in memory. Returns the funding mode."""
         mode = B.funding(self.book(), spec, agent, seed)
         if mode == "agent":
             self.assertIsNone(B.check_post(self.book(), cfg or self.PCFG, spec, agent))
-        add(self.lg, {**spec, "proposer": agent, **({"seed": True} if mode == "seed" else {})}, ts="2026-09-29T04:31:00Z")
+        add(self.lg, {**spec, "proposer": agent, **({"seed": True} if mode == "seed" else {})}, ts=ts)
         for row in B.stakes(self.lg.rows(), cfg or self.PCFG, spec, agent, mode, stake):
-            self.lg.append(row, "2026-09-29T04:31:00Z")
+            self.lg.append(row, ts)
         return mode
 
     def settle(self, jid, verdict, ts="2026-09-29T05:00:00Z"):
@@ -718,6 +718,13 @@ class Pit(unittest.TestCase):
             self.cli("cmd_why", id="d")
         self.assertIn("undriven: no run or scenario", out.getvalue())
 
+    def test_finding_without_from_names_its_author(self):
+        kw = dict(id=None, source=None, kind="finding", refutes=None, refines=None, supersedes=None)
+        self.cli("cmd_finding", text="t1", agent="a", **kw)
+        self.cli("cmd_finding", text="t2", agent="a", **kw)
+        self.cli("cmd_finding", text="t3", agent=None, **kw)
+        self.assertEqual(sorted(L.fold(self.lg.rows()).findings), ["F:a-1", "F:a-2", "F:session-1"])
+
     def test_rank_modes_most_uncertain_then_cheapest(self):
         self.post(job("cheap", budget_usd=1), "a")
         self.post(job("big", budget_usd=20), "a")
@@ -769,6 +776,32 @@ class Pit(unittest.TestCase):
         self.assertEqual(cal["b"][5], f"{(1 / 1.25 - 1) ** 2:.3f}")              # implied 80% FAIL at close
         self.assertEqual(cal["b"][6], "0%")                                       # bet against the (auto) PASS side
         self.assertEqual((cal["a"][1], cal["a"][-1]), ("0", "1"))                 # a's auto stake is a self bet
+
+    def test_board_prices_and_order(self):
+        self.post(job("old", budget_usd=2), "a")                                 # PASS 0.25 / FAIL 0: unopposed
+        self.post(job("both"), "b")
+        self.bet("both", "fail", 1, "a")                                          # opposed, matched 0.50
+        self.post(job("new", budget_usd=3, expect="fail"), "b", ts="2026-09-29T04:33:00Z")   # newest unopposed
+        lines = B.board(self.lg.rows(), self.PCFG).splitlines()
+        self.assertEqual([l.split()[0] for l in lines], ["new", "old", "both"])
+        # $1 on the empty FAIL side: (0.25 + 1) * 0.98 / 1 = 1.225
+        self.assertEqual(lines[1], "old [gpu-small, $2] PASS $0.25 / FAIL $0.00 · FAIL pays 1.2:1 · proposer a "
+                                   "(0-0 on posts, 0-0 on bets)")
+        self.assertIn("PASS pays 1.2:1", lines[0])
+        self.assertEqual(B.pays(self.book(), "both", "main", "pass", self.PCFG), ("pass", (1.25 + 1) * 0.98 / 1.25))
+
+    def test_record(self):
+        self.post(job("x"), "a")                                                  # a posts PASS (self)
+        self.bet("x", "pass", 1, "a.sub")                                         # self: not on a's bet record
+        self.bet("x", "fail", 1, "b")
+        self.settle("x", "fail")
+        self.post(job("y"), "b")
+        self.bet("y", "pass", 1, "a")
+        self.settle("y", "pass", "2026-09-29T05:10:00Z")
+        recs = B.records(self.book())
+        self.assertEqual(B.record(recs, "a"), "0-1 on posts, 1-0 on bets")
+        self.assertEqual(B.record(recs, "b"), "1-0 on posts, 1-0 on bets")
+        self.assertIn("a (0-1 on posts, 1-0 on bets; persistent)", B.thread(self.lg.rows(), "a"))
 
     def test_replay_with_pit(self):
         jobs, nodes = replay.load(EXAMPLE)

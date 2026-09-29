@@ -49,6 +49,7 @@ class Book:
         self.bets: list[dict] = []                       # in ledger order
         self.settled: dict[tuple, dict] = {}             # (job, variant) -> settle row
         self.proposers: dict[str, str] = {}              # job -> agent
+        self.expects: dict[str, str] = {}                # job -> the proposer's side
         self.flows: dict[str, float] = {}                # wallet -> usd
         self.last_drip: dict | None = None
         closed: set[str] = set()                         # betting closes at claim
@@ -62,6 +63,7 @@ class Book:
                     self._add(a, usd)
             elif t == "node" and r.get("kind") == "job" and r["spec"].get("proposer"):
                 self.proposers[r["id"]] = r["spec"]["proposer"]
+                self.expects[r["id"]] = r["spec"].get("expect")
                 if not r["spec"].get("seed") and not r["spec"].get("bag") and r["spec"]["proposer"] != HUMAN:   # seeds, bag draws and human posts debit no wallet
                     self._add(self.wallet(r["spec"]["proposer"]), -r["spec"].get("budget_usd", 0))
             elif t == "claim":
@@ -435,6 +437,53 @@ def calibration(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def records(book: Book) -> dict[str, list[int]]:
+    """wallet -> [post wins, post losses, bet wins, bet losses] over settled pass/fail markets. A post wins when the
+    outcome is its spec's expect; a bet counts once per market and side, `self` bets excluded."""
+    out: dict[str, list[int]] = {}
+    for (job, v), s in book.settled.items():
+        if s["outcome"] in SIDES and book.expects.get(job) in SIDES:
+            out.setdefault(book.wallet(book.proposers[job]), [0, 0, 0, 0])[0 if book.expects[job] == s["outcome"] else 1] += 1
+    for b in {(b["book"], b["side"], b["job"], b["variant"]) for b in book.bets
+              if not {"self", "seed", "bag"} & set(b.get("tags", []))}:
+        s = book.settled.get((b[2], b[3]))
+        if s and s["outcome"] in SIDES:
+            out.setdefault(b[0], [0, 0, 0, 0])[2 if b[1] == s["outcome"] else 3] += 1
+    return out
+
+
+def record(recs: dict, wallet: str) -> str:
+    pw, pl, bw, bl = recs.get(wallet, [0, 0, 0, 0])
+    return f"{pw}-{pl} on posts, {bw}-{bl} on bets"
+
+
+def pays(book: Book, job: str, variant: str, other: str, cfg: dict) -> tuple[str, float]:
+    """The thinner side (ties: the side against `other`, the proposer's) and what $1 placed there now returns per $1."""
+    t = book.totals(job, variant)
+    thin = min(SIDES, key=lambda s: (t[s], s == other))
+    return thin, (t["pass"] + t["fail"] + 1) * (1 - conf(cfg)["vig_rate"]) / (t[thin] + 1)
+
+
+def board(rows: list[dict], cfg: dict, n: int = 20) -> str:
+    """Every open market (queued job x variant), one line each: unopposed first, then smallest matched stake, then newest."""
+    book, st = Book(rows), L.fold(rows)
+    recs, lines = records(book), []
+    for jid, j in sorted(st.jobs.items(), key=lambda kv: kv[1]["added"], reverse=True):      # newest first; sort below is stable
+        if j["state"] != "queued":
+            continue
+        s = j["spec"]
+        prop = book.wallet(book.proposers.get(jid) or s.get("proposer") or HUMAN)
+        for v in variants(s):
+            t = book.totals(jid, v)
+            side, x = pays(book, jid, v, s.get("expect", "pass"), cfg)
+            name = jid if v == "main" else f"{jid}/{v}"
+            lines.append(((min(t.values()) > 0, 2 * min(t.values())),
+                          f"{name} [{s['lane']}, ${s.get('budget_usd', 0):g}] PASS ${t['pass']:.2f} / FAIL ${t['fail']:.2f} · "
+                          f"{side.upper()} pays {x:.1f}:1 · proposer {prop} ({record(recs, prop)})"))
+    lines = [l for _, l in sorted(lines, key=lambda k: k[0])]
+    return "\n".join(lines[:n] + ([f"… {len(lines) - n} more: q list --frontier"] if len(lines) > n else []))
+
+
 def _cap(lines: list[str], n: int, what: str) -> list[str]:
     return lines if len(lines) <= n else lines[:n] + [f"  ... {len(lines) - n} more {what}"]
 
@@ -447,7 +496,7 @@ def thread(rows: list[dict], agent: str) -> str:
         raise SystemExit(f"no agent {agent}")
     a, fam = book.agents[agent], book.family(agent)
     claimed = {r["job"] for r in rows if r["t"] == "claim" and r.get("agent") in fam}
-    out = [f"{agent} ({a['kind']}{', under ' + a['parent'] if a.get('parent') else ''}) · balance "
+    out = [f"{agent} ({record(records(book), book.wallet(agent))}; {a['kind']}{', under ' + a['parent'] if a.get('parent') else ''}) · balance "
            f"${book.balance(agent):.2f}" + (f" (wallet {book.wallet(agent)})" if book.wallet(agent) != agent else ""),
            f"brief: {a['brief']}"]
     z = sleepers(rows).get(agent)

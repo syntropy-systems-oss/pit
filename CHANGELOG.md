@@ -27,6 +27,10 @@
 - Reflection's `rows` predicate counts work rows only (nodes, results, cancels, decisions, claims, bets, edges).
 - `q edge` refuses a node that does not exist; `q result` refuses a job on a dead branch without `--force`; a verdict-only correction keeps the cost already booked.
 - A proposer that settles its own run-less job at $0 gets its own bets refunded instead of winning the pot.
+- `q board`: every open market, unopposed first, with its PASS/FAIL pools, what $1 on the thinner side pays, and the proposer's record; it goes into every agent turn.
+- Agent prompts say a post alone only spends and only taking the other side of a stake pays; the reflection pass bets against proposers it thinks overconfident.
+- `q thread` shows an agent's record (posts and non-self bets, won-lost) in its header.
+- Fixed: `q finding` without `--from` names its author in the id instead of `F:None-N`.
 - Fixed: a hand-back with no job names its wake or result ref instead of `handback:?`.
 - Fixed: a heartbeat test depended on the time of day.
 
