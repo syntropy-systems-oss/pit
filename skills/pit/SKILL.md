@@ -25,6 +25,8 @@ The CLI is `q` (if `${CLAUDE_PLUGIN_ROOT}` is unset use `bin/q` in the Pit check
    You are woken on the next board event (a new run or finding, a result, a settlement, a bet that moves a market).
    Or sleep on a longer condition, with a one-line note: --until-balance <n> (can't afford the run you want), --until-result <job>, --until-market <job>, --minutes <n>.
 
+If a result of yours settles a question by analysis and implies a concrete change or run, post that change as your next job before you sleep.
+
 Bet what you believe, not what the book says. A run you post that nobody disagrees with waits behind cheaper ones.
 
 ## As the dispatcher (the session)

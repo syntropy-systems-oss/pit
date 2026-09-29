@@ -140,7 +140,7 @@ class Run(unittest.TestCase):
         r = runmod.execute("echo 'prompt cache miss at call 2'", 10, ["cache_miss"], echo=lambda *_: None)
         self.assertEqual(runmod.verdict_of(r)[0], "fail")
         r = runmod.execute("sleep 5", 0.5, [], echo=lambda *_: None)
-        self.assertEqual(runmod.verdict_of(r)[0], "invalid")
+        self.assertEqual(runmod.verdict_of(r)[0], "fail")  # over budget fails; the partial trace is kept
         r = runmod.execute("echo 'pit: verdict=fail uncached=5 wall_s=2'; exit 0", 10, [], echo=lambda *_: None)
         self.assertEqual((runmod.verdict_of(r)[0], r["report"]["uncached"]), ("fail", 5))
 
@@ -439,6 +439,13 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class OverBudget(unittest.TestCase):
+    def test_timeout_is_a_fail_with_partial_trace_kept(self):
+        from pit.run import verdict_of
+        v, note = verdict_of({"stop": "timeout", "stop_text": "2x budget at 600s", "report": {}, "rc": -9})
+        self.assertEqual(v, "fail"); self.assertIn("partial trace kept", note)
+
+
 class SilentRun(unittest.TestCase):
     def test_exit_zero_without_verdict_is_invalid(self):
         from pit.run import verdict_of
@@ -446,7 +453,7 @@ class SilentRun(unittest.TestCase):
 
     def test_version(self):
         r = subprocess.run([sys.executable, "-m", "pit.cli", "--version"], cwd=ROOT, capture_output=True, text=True)
-        self.assertEqual(r.stdout.strip(), "pit 0.3.0")
+        self.assertEqual(r.stdout.strip(), "pit 0.3.1")
 
 
 class Pit(unittest.TestCase):

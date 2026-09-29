@@ -139,6 +139,33 @@ class Autopilot(unittest.TestCase):
         ap.tick()
         self.assertEqual(len([r for r in self.lg.rows() if r["t"] == "wake"]), 1)       # once
 
+    def test_desk_result_by_proposer_without_run_is_flagged_once(self):
+        self.post(job("d1", lane="ci"), "b")
+        ap = self.ap()
+        ap.tick()
+        ap.wait()
+        self.lg.append({"t": "result", "job": "d1", "verdict": "pass", "cost": {"usd": 0, "wall_s": 0, "lane": "ci"}, "agent": "b"})
+        ap.tick()
+        ap.tick()
+        self.assertEqual([(r["job"], r["reason"]) for r in self.auto("note")], [("d1", "settled-by-analysis")])
+
+    def test_cli_as_on_result_finding_cancel_decide(self):
+        from argparse import Namespace as N
+        from pit import cli
+        self.post(job("d1", lane="ci"), "b")
+        self.post(job("d2", lane="ci"), "b")
+        self.lg.append(B.agent_row(B.Book(self.lg.rows()), "b-1", "sub", "b"))
+        cli.ctx, cli.sync = (lambda: (self.root, self.lg, self.cfg)), (lambda *a: None)
+        cli.cmd_result(N(id="d1", verdict="pass", wall_s=0.0, uncached=0, cached=0, out=0, lane=None, arm=None, agent="b-1"))
+        cli.cmd_finding(N(id="F:x", source="d1", text="t", kind="finding", refutes=None, refines=None, supersedes=None, agent="b-1"))
+        cli.cmd_cancel(N(id="d2", reason="r", agent="b-1"))
+        cli.cmd_decide(N(id="F:x", changed=True, note="n", agent="b-1"))
+        rows = self.lg.rows()
+        got = [r["agent"] for r in rows if r.get("agent") == "b" and (r["t"] in ("result", "cancel", "decision") or r.get("id") == "F:x")]
+        self.assertEqual(len(got), 4)
+        with self.assertRaises(SystemExit):
+            cli.cmd_cancel(N(id="d2", reason="r", agent="nobody"))
+
     def test_hour_cap_stops_dispatch(self):
         self.post(slow("p1"), "a")
         self.lg.append({"t": "result", "job": "old", "verdict": "pass", "cost": {"usd": 41, "wall_s": 1, "lane": "ci"}})

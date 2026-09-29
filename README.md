@@ -13,7 +13,7 @@ Pit grew out of Trellis, the ledger-and-lanes frame underneath it.
 
 ```sh
 git clone https://github.com/syntropy-systems-oss/pit && cd pit
-bin/q --version                                   # pit 0.3.0
+bin/q --version                                   # pit 0.3.1
 bin/q replay examples/replay-synthetic            # re-run a synthetic night through the real rules
 PIT_ROOT=examples/replay-synthetic bin/q status   # the frontier, spend and stale list
 PIT_ROOT=examples/replay-synthetic bin/q view     # the terminal at http://127.0.0.1:8790/
@@ -81,7 +81,7 @@ Experiments climb in rungs. Each job names the branch it needs from the one belo
 pit: job=<id> verdict=pass uncached=1200 cached=48000 out=900 wall_s=74.7 result={"acc": 0.78}
 ```
 
-A `feedback_report` or cache-miss line fails the run with that line as the reason; 2x `budget_s`, or exiting without a verdict, makes it INVALID. A non-run is not evidence.
+A `feedback_report` or cache-miss line fails the run with that line as the reason; hitting 2x `budget_s` means FAIL (over time, partial trace kept); exiting without a verdict makes it INVALID, which is for harness errors where nothing ran. A non-run is not evidence.
 
 ### Reflection
 

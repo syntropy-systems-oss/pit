@@ -13,7 +13,7 @@ expect = "pass"                      # pass | fail: your prediction
 if_pass = "promote B; queue the ablation"
 if_fail = "keep A; look at B's training mix"   # must differ from if_pass
 lane = "gpu-small"                   # a lane from lanes.toml, or any
-budget_s = 300                       # hard stop at 2x -> INVALID
+budget_s = 300                       # hard stop at 2x -> FAIL, partial trace kept
 budget_usd = 9                       # cheap lanes refuse budget_usd > value x max_usd_per_value
 value = 1                            # questions it settles
 depends_on = ["baseline-a", "F:a-baseline"]   # jobs or findings; "job@pass" = only on that branch

@@ -206,7 +206,7 @@ def describe(st, n):
     if n in st.jobs:
         j = st.jobs[n]
         res = j["result"]
-        tail = f" -> {res['verdict']} ${res['cost']['usd']:.2f} {res['cost']['wall_s']:.0f}s {res.get('note', '')}" if res else ""
+        tail = f" -> {res['verdict']} ${res['cost']['usd']:.2f} {res['cost']['wall_s']:.0f}s {res.get('note', '')}{' (by ' + res['agent'] + ')' if res.get('agent') else ''}" if res else ""
         return f"job {n} [{j['state']}{' STALE' if n in st.stale else ''}] {j['spec']['question']}{tail}"
     if n in st.findings:
         f = st.findings[n]
@@ -214,9 +214,19 @@ def describe(st, n):
     return f"{n} (not in the ledger)"
 
 
+def actor(a, lg) -> dict:
+    """`--as <agent>` resolved to its wallet (subs book to the parent), as a row fragment; {} when absent."""
+    if not a.agent:
+        return {}
+    book = B.Book(lg.rows())
+    if a.agent not in book.agents:
+        sys.exit(f"no agent {a.agent} (q agent add)")
+    return {"agent": book.wallet(a.agent)}
+
+
 def cmd_cancel(a):
     root, lg, cfg = ctx()
-    lg.append({"t": "cancel", "id": a.id, "reason": a.reason})
+    lg.append({"t": "cancel", "id": a.id, "reason": a.reason, **actor(a, lg)})
     B.settle_due(lg, cfg)
     sync(root, lg, f"cancel {a.id}")
     print(f"cancelled {a.id}: {a.reason}")
@@ -224,7 +234,7 @@ def cmd_cancel(a):
 
 def cmd_decide(a):
     root, lg, cfg = ctx()
-    lg.append({"t": "decision", "finding": a.id, "changed": a.changed, "note": a.note})
+    lg.append({"t": "decision", "finding": a.id, "changed": a.changed, "note": a.note, **actor(a, lg)})
     sync(root, lg, f"decide {a.id}")
     print(f"{a.id}: decision {'changed' if a.changed else 'unchanged'} — {a.note}")
 
@@ -233,7 +243,7 @@ def cmd_finding(a):
     root, lg, cfg = ctx()
     st = L.fold(lg.rows())
     fid = a.id or f"F:{a.source}-{sum(1 for f in st.findings.values() if f['from'] == a.source) + 1}"
-    lg.append({"t": "node", "kind": a.kind, "id": fid, "from": a.source, "text": a.text, **({"agent": a.agent} if a.agent else {})})
+    lg.append({"t": "node", "kind": a.kind, "id": fid, "from": a.source, "text": a.text, **actor(a, lg)})
     if a.source:
         lg.append({"t": "edge", "type": "produces", "from": a.source, "to": fid})
     for kind in ("refutes", "refines", "supersedes"):
@@ -271,9 +281,9 @@ def cmd_result(a):
     rep = {"verdict": a.verdict, "uncached": a.uncached, "cached": a.cached, "out": a.out, "wall_s": a.wall_s}
     if a.arm:     # per-variant verdicts settle each arm's market
         rep["result"] = {"verdicts": dict(x.split("=", 1) for x in a.arm)}
-    row = record(lg, cfg, s, a.lane or s["lane"], {"report": rep, "wall_s": a.wall_s, "rc": 0})
+    row = record(lg, cfg, s, a.lane or s["lane"], {"report": rep, "wall_s": a.wall_s, "rc": 0}, agent=actor(a, lg).get("agent"))
     sync(root, lg, f"result {a.id} {a.verdict}")
-    print(f"{a.id}: {a.verdict} ${row['cost']['usd']:.2f}")
+    print(f"{a.id}: {a.verdict} ${row['cost']['usd']:.2f}" + (f" (by {row['agent']})" if row.get("agent") else ""))
 
 
 def cmd_run(a):
@@ -372,11 +382,11 @@ def main(argv=None):
     for name in ("why-blocked", "why"):
         p = sub.add_parser(name); p.add_argument("id"); p.set_defaults(f=cmd_why)
     p = sub.add_parser("show", help="a node and its lineage"); p.add_argument("id"); p.set_defaults(f=cmd_show)
-    p = sub.add_parser("cancel"); p.add_argument("id"); p.add_argument("--reason", required=True); p.set_defaults(f=cmd_cancel)
+    p = sub.add_parser("cancel"); p.add_argument("id"); p.add_argument("--reason", required=True); p.add_argument("--as", dest="agent"); p.set_defaults(f=cmd_cancel)
     p = sub.add_parser("decide"); p.add_argument("id")
     g = p.add_mutually_exclusive_group(required=True)
     g.add_argument("--changed", action="store_true"); g.add_argument("--unchanged", dest="changed", action="store_false")
-    p.add_argument("--note", required=True); p.set_defaults(f=cmd_decide)
+    p.add_argument("--note", required=True); p.add_argument("--as", dest="agent"); p.set_defaults(f=cmd_decide)
     p = sub.add_parser("finding"); p.add_argument("--from", dest="source"); p.add_argument("--text", required=True)
     p.add_argument("--id"); p.add_argument("--kind", default="finding", choices=("finding", "hypothesis"))
     p.add_argument("--refutes", action="append"); p.add_argument("--refines", action="append")
@@ -387,7 +397,7 @@ def main(argv=None):
     p = sub.add_parser("result", help="record a hand-run result"); p.add_argument("id")
     p.add_argument("--verdict", required=True, choices=specmod.VERDICTS); p.add_argument("--wall-s", type=float, default=0.0)
     p.add_argument("--uncached", type=int, default=0); p.add_argument("--cached", type=int, default=0)
-    p.add_argument("--out", type=int, default=0); p.add_argument("--lane")
+    p.add_argument("--out", type=int, default=0); p.add_argument("--lane"); p.add_argument("--as", dest="agent", help="the agent recording it")
     p.add_argument("--arm", action="append", help="VARIANT=pass|fail|invalid, per arm"); p.set_defaults(f=cmd_result)
     p = sub.add_parser("run", help="run a job's command: claim, 2x budget, stop rules, result")
     p.add_argument("id"); p.add_argument("--lane"); p.add_argument("--force-gate", action="store_true")

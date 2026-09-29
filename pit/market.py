@@ -54,7 +54,7 @@ def _walk(rows, book, cfg):
                            + ("  [self]" if "self" in tags else "") + ("  [seed]" if "seed" in tags else "") + ("" if live else "  [late, ignored]"))
         elif t == "result":
             c = r.get("cost", {})
-            ev.update(type="RESULT", verdict=r["verdict"], usd=c.get("usd", 0), text=f"{r['job']}  {r['verdict'].upper()}  ${c.get('usd', 0):.2f}  {c.get('wall_s', 0):.0f}s {c.get('lane', '')}")
+            ev.update(type="RESULT", verdict=r["verdict"], usd=c.get("usd", 0), text=f"{r['job']}  {r['verdict'].upper()}  ${c.get('usd', 0):.2f}  {c.get('wall_s', 0):.0f}s {c.get('lane', '')}" + (f"  by {r['agent']}" if r.get("agent") else ""))
         elif t == "settle":
             if (r["job"], r["variant"]) not in done:       # settle rows count once, like Book
                 done.add((r["job"], r["variant"]))

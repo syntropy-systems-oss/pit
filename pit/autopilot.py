@@ -27,7 +27,8 @@ CLAIM = ("Your brief is a claim to prove or refute; it is your goal. This turn: 
          "strongest evidence for and against it from your thread. (2) Your next experiment: name the cheapest run "
          "that could change your mind and post it (`q post --as <you>` — you pay; if you cannot afford the lane you "
          "want, post it on a cheaper lane or `q sleep --until-balance` naming the run). Posting is the primary action "
-         "every turn unless you are waiting on a run of yours; or record a finding if your evidence already settles something.")
+         "every turn unless you are waiting on a run of yours; or record a finding if your evidence already settles something. If a result of yours settles a question by "
+         "analysis and implies a concrete change or run, post that change as your next job before you sleep.")
 BOARD = ("The board is context. If an open run bears on your claim you may bet on it (that is how you get paid for "
          "understanding what others are finding), and you may bet where you have a reason even if it does not. The market "
          "is not the goal: it buys you time on the machines and pays you for understanding.")
@@ -155,6 +156,7 @@ class Autopilot:
         self.dispatch(rows, now)
         bag.regressions(self.lg, self.echo)
         self.desk()
+        self.settled_by_analysis()
         self.handback(now)
         self.events(now)
         self.reflection(now)
@@ -240,6 +242,20 @@ class Autopilot:
             self.lg.append({"t": "wake", "agent": book.wallet(who), "reason": f"desk:{j}"})
             self.auto("wake", f"desk:{j}", st.jobs[j]["spec"]["lane"], j, book.wallet(who))
 
+    def settled_by_analysis(self):
+        """A desk job whose proposer records its own result with no `run` and no claim: flag it once on the tape."""
+        rows = self.lg.rows()
+        st, book = L.fold(rows), B.Book(rows)
+        noted = {r["job"] for r in rows if r["t"] == "auto" and r["type"] == "note" and r["reason"] == "settled-by-analysis"}
+        for r in rows:
+            j = st.jobs.get(r["job"]) if r["t"] == "result" else None
+            who = book.proposers.get(r["job"]) if j else None
+            if (who and r.get("agent") == book.wallet(who) and not j["spec"].get("run") and r["job"] not in noted
+                    and not any(c["t"] == "claim" and c["job"] == r["job"] for c in rows)):
+                self.echo(f"auto note {r['job']} settled-by-analysis")
+                self.auto("note", "settled-by-analysis", j["spec"]["lane"], r["job"], r["agent"])
+                noted.add(r["job"])
+
     def handback(self, now):
         rows = self.lg.rows()
         st, book = L.fold(rows), B.Book(rows)
@@ -259,7 +275,7 @@ class Autopilot:
             if r["t"] == "wake" and r["ts"] >= epoch and r["agent"] in book.agents and f"wake:{r['agent']}:{r['ts']}" not in done:
                 jid = r["reason"][5:] if r["reason"].startswith("desk:") else None
                 text = (f"Your desk job {jid} is due. It has no run command: do it by hand, then "
-                        f"`q result {jid} --verdict pass|fail`. The question: {st.jobs[jid]['spec']['question']}"
+                        f"`q result {jid} --verdict pass|fail --as <you>`. The question: {st.jobs[jid]['spec']['question']}"
                         if jid in st.jobs else f"You were woken: {r['reason']}.")
                 due.setdefault(book.wallet(r["agent"]), []).append((f"wake:{r['agent']}:{r['ts']}", jid, text))
         if not due:

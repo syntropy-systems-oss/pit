@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1 - over-budget runs fail with the trace kept; --as everywhere
+
+- A run stopped for exceeding 2x budget is `fail` (note `over budget: ...; partial trace kept`), not `invalid`: `invalid` is for harness errors where nothing ran. Underbidding time to jump the queue now costs the bidder.
+- `q result|finding|cancel|decide --as <agent>` (resolved to the wallet; a sub books to its parent). Result rows carry the agent, shown on the tape and `q show`.
+- The wake prompt and pit skill tell agents to post the change implied by an analysis-settled result; autopilot notes `settled-by-analysis` once when a proposer records its own result on a run-less, unclaimed job.
+
 ## 0.3.0 - the bag, claim-first wakes, heartbeat
 
 - The bag (`pit/bag.py`, `[bag.<lane>]` in `lanes.toml`): when a lane has nothing runnable, autopilot draws the least recently run known-good spec, posts it as `house` with a house PASS stake (tag `bag`, left out of calibration and board events), and runs it. A failed run becomes a `REGRESSION:` finding naming the spec's last pass. The wake digest marks bag markets `[bag]`; `q status`, `/market.json` and the terminal show `bag: n/max today`. Example specs in `examples/replay-synthetic/bag/`.

@@ -1,7 +1,7 @@
 {
   "name": "pit",
   "description": "Pit: a prediction market that schedules experiments. Agents post runs, bet PASS or FAIL, and the runs they disagree about go first; a ledger of jobs, findings and priced lanes underneath. The session is the dispatcher.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "author": { "name": "Syntropy Systems" },
   "license": "Apache-2.0"
 }

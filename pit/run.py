@@ -85,7 +85,9 @@ def verdict_of(run: dict) -> tuple[str, str]:
     """(verdict, note) from the stop rules first, then the reported verdict, then the exit code."""
     stop = run.get("stop")
     if stop == "timeout":
-        return "invalid", run["stop_text"]
+        # over budget is a FAIL, not a void: the partial trace is kept for the proposer, PASS stakes lose,
+        # so underbidding time to jump the queue costs the bidder
+        return "fail", f"over budget: {run['stop_text']}; partial trace kept"
     if stop:
         return "fail", f"{stop}: {run['stop_text']}"
     v = run["report"].get("verdict")
@@ -122,13 +124,13 @@ def run_job(root, ledger: L.Ledger, cfg: dict, jid: str, lane: str | None = None
     return record(ledger, cfg, s, lane, r)
 
 
-def record(ledger: L.Ledger, cfg: dict, s: dict, lane: str, r: dict, ts: str | None = None) -> dict:
+def record(ledger: L.Ledger, cfg: dict, s: dict, lane: str, r: dict, ts: str | None = None, agent: str | None = None) -> dict:
     verdict, note = verdict_of(r)
     rep = r["report"]
     cost = lanes.cost_line(cfg, rep.get("lane", lane), rep.get("uncached", 0), rep.get("cached", 0),
                            rep.get("out", 0), rep.get("wall_s", r["wall_s"]))
     row = ledger.append({"t": "result", "job": s["id"], "verdict": verdict, "cost": cost,
-                         "result": rep.get("result", {}), "note": note}, ts)
+                         "result": rep.get("result", {}), "note": note, **({"agent": agent} if agent else {})}, ts)
     L.settle(ledger, s, verdict, ts)
     B.settle_due(ledger, cfg)
     return row
