@@ -562,7 +562,7 @@ class Pit(unittest.TestCase):
         self.addCleanup(shutil.rmtree, root)
         with mock.patch.object(cli, "ctx", lambda: (root, self.lg, self.PCFG)), mock.patch.object(cli, "sync", lambda *a: None):
             cli.cmd_agent(N(verb="add", id="c", brief="a capability several agents lacked, tested without its instructions",
-                            parent=None, reason=None, by="reflect"))
+                            parent=None, reason=None, by="reflect", runtime=None, model=None))
         self.assertEqual((self.book().agents["c"]["kind"], self.book().agents["c"]["by"]), ("persistent", "reflect"))
         self.assertIn("a capability several agents lacked", (root / "agents" / "c.toml").read_text())
         self.assertEqual(self.post(job("c-root"), "reflect"), "seed")                # its first experiment: a root reflect posts

@@ -3,8 +3,8 @@
 Each tick: STOP file? -> B.tick (drip + wakes) -> per lane: free? pick B.order()[0] among jobs with a `run`,
 gate -> claim+run in a subprocess (`q run`, so lanes run at once; `any` gets a small worker pool) ->
 desk jobs (no `run`) become a `wake` for their proposer -> hand-backs: every result of a posted job and every
-wake spawns the proposer as a Claude Code subagent (a sub `<agent>-<ts>`, so it books to the parent) -> reflection
-when reflect.due() fires (Opus, a sub of `reflect`; proposals are printed and the session notified, never added).
+wake spawns the proposer as a subagent on its runtime (claude or codex; a sub `<agent>-<ts>`, so it books to the parent) ->
+reflection when reflect.due() fires (Opus by default, a sub of `reflect`; proposals are printed and the session notified, never added).
 Every decision is an `auto` row {type, lane, job, agent, reason}; fold() and Book ignore them.
 All state is the ledger plus the child processes of this loop, so a restart resumes where it left off.
 """
@@ -61,8 +61,12 @@ STRUCTURE = ("You are the one agent with a standing, structural brief: the shape
              "book and gets no more wakes or income. When you see a brief narrowing into step-by-step instructions to the runtime, "
              "plant an agent whose goal is that the capability holds without those instructions (held-out variants with the "
              "instructions removed). Write these as proposals in queue/proposed/ with the exact commands; the session runs them.")
+# codex exec: no git-repo check (the state root may be any dir), commands sandboxed to the root + add_dirs with no
+# network (the model call itself is outside the sandbox), never ask for approval (nobody is there to answer)
+CODEX_ARGS = ["--skip-git-repo-check", "--sandbox", "workspace-write", "-c", 'approval_policy="never"']
 DEFAULTS = {"max_usd_per_hour": 0,       # 0 = no spend gate (an open market); hour spend is reported only
              "any_workers": 2, "permission_mode": "", "allowed_tools": [],
+            "runtimes": {}, "reflect": {},
             "max_subagent_runs_per_hour": 60, "heartbeat_minutes": 20, "heartbeat_min_usd": 1.0, "idle_wake_gap_s": 90}
 
 
@@ -431,11 +435,11 @@ class Autopilot:
                 self.auto("refuse", f"subagents at cap {self.max_subs()}", agent=agent)
             else:
                 sub = self.register(agent, f"autopilot hand-back: {what}", now)
-                self.echo(f"hand-back {agent}: spawn {sub} (sonnet) for {what}")
+                self.echo(f"hand-back {agent}: spawn {sub} ({self.label(book.agents[agent])}) for {what}")
                 self.auto("handback", "; ".join(retry.get(ref, ref) for ref, _, _ in items), job=next((j for _, j, _ in items if j), None), agent=sub,
                           refs=[ref for ref, _, _ in items])
                 self.echo_wake(agent, f"handback:{next((j for _, j, _ in items if j), items[0][0])}")   # no job: name the wake/result ref
-                self.subs[agent] = (sub, self.claude(sub, "sonnet", self.prompt(sub, agent, items)), None)
+                self.subs[agent] = (sub, self.spawn(sub, book.agents[agent], self.prompt(sub, agent, items)), None)
                 self.seen[agent] = len(self.lg.rows())
 
     def echo_wake(self, agent: str, reason: str, **kw):
@@ -472,11 +476,11 @@ class Autopilot:
                 self.auto("refuse", f"subagents at cap {self.max_subs()}", agent=a)
             else:
                 sub = self.register(a, f"autopilot wake: {why}", now)
-                self.echo(f"wake {a}: spawn {sub} (sonnet) for {why}")
+                self.echo(f"wake {a}: spawn {sub} ({self.label(book.agents[a])}) for {why}")
                 self.echo_wake(a, why)
                 text = "Since you last looked:\n" + B.digest(self.lg.rows(), ev) if ev else \
                     f"Nothing on the board has moved for you in {self.c['heartbeat_minutes']} minutes."
-                self.subs[a] = (sub, self.claude(sub, "sonnet", self.prompt(sub, a, [], text)), None)
+                self.subs[a] = (sub, self.spawn(sub, book.agents[a], self.prompt(sub, a, [], text)), None)
                 self.seen[a] = len(self.lg.rows())
 
     def idle(self, rows, book, a, now) -> bool:
@@ -559,7 +563,9 @@ class Autopilot:
                     'id = "reflect"\nkind = "persistent"\nbrief = "reflection passes: patterns across jobs and findings"\n')
         sub = self.register(B.REFLECT, f"autopilot reflection pass ({why})", now)
         book = B.Book(self.lg.rows())
-        self.echo(f"reflection: due ({why}); spawn {sub} (opus); proposals go to queue/proposed/, never added")
+        rc = self.c["reflect"]
+        who = {"runtime": rc.get("runtime", "claude"), "model": rc.get("model") or ("opus" if rc.get("runtime", "claude") == "claude" else None)}
+        self.echo(f"reflection: due ({why}); spawn {sub} ({self.label(who)}); proposals go to queue/proposed/, never added")
         self.auto("reflect", why, agent=sub)
         text = "\n\n".join([skill("reflect"), "Standing rules (verbatim): " + RULES,
                             f"You are the ONE Opus subagent of step 2, acting as {sub} (a sub of reflect: `--as {sub}`). "
@@ -572,7 +578,7 @@ class Autopilot:
                             BOOTSTRAP_LOOP, "agents/BOOTSTRAP.md now:\n" + bootstrap(self.root),
                             "Newcomer (most recently registered agent) bootstrap cost: " + json.dumps(B.newcomer_cost(rows)),
                             "Digest (q reflect --since-last):\n" + reflect.digest(rows)])
-        self.subs[B.REFLECT] = (sub, self.claude(sub, "opus", text), self.proposed())
+        self.subs[B.REFLECT] = (sub, self.spawn(sub, who, text), self.proposed())
 
     # ---- children -----------------------------------------------------------------------------------
     def register(self, agent: str, brief: str, now: datetime) -> str:
@@ -634,21 +640,43 @@ class Autopilot:
                 return mode
         return "auto"
 
-    def claude(self, sub: str, model: str, prompt: str):
-        exe = shutil.which("claude")
+    def model(self, row: dict) -> tuple[str, str | None]:
+        """(runtime, model) of an agent row: its own, else [autopilot] runtimes.<runtime>.model, else sonnet for
+        claude and the codex CLI's own configured default for codex (None: no -m)."""
+        rt = row.get("runtime") or "claude"
+        return rt, row.get("model") or self.c["runtimes"].get(rt, {}).get("model") or ("sonnet" if rt == "claude" else None)
+
+    def label(self, row: dict) -> str:
+        rt, model = self.model(row)
+        return f"{rt}/{model or 'default'}"
+
+    def argv(self, exe: str, rt: str, model: str | None) -> list[str]:
+        """The command a turn runs; the prompt goes on stdin for both runtimes. Extra args: runtimes.<rt>.args."""
+        dirs = [x for d in self.c.get("add_dirs", []) for x in ("--add-dir", os.path.expanduser(d))]   # repos a desk job may touch
+        if rt == "codex":      # its workspace-write sandbox keeps .git read-only: q commits the ledger, so .git dirs are added
+            gits = [x for d in (self.root, *map(os.path.expanduser, self.c.get("add_dirs", [])))
+                    if (Path(d) / ".git").is_dir() for x in ("--add-dir", str(Path(d) / ".git"))]
+            args = self.c["runtimes"].get("codex", {}).get("args", CODEX_ARGS)
+            return [exe, "exec", *(["-m", model] if model else []), *args, *dirs, *gits, "-C", str(self.root), "-"]
+        cmd = [exe, "-p", "--model", model, "--permission-mode", self.permission_mode(), "--output-format", "text"]
+        if self.c.get("allowed_tools"):
+            cmd += ["--allowedTools", ",".join(self.c["allowed_tools"])]
+        return cmd + dirs + self.c["runtimes"].get("claude", {}).get("args", [])
+
+    def spawn(self, sub: str, row: dict, prompt: str):
+        """Spawn one turn of `sub` on its agent row's runtime; output to autopilot/logs/<sub>.log."""
+        rt, model = self.model(row)
+        if rt not in B.RUNTIMES:
+            raise SystemExit(f"unknown runtime {rt}")
+        exe = shutil.which(rt)
         if self.dry or not exe:
-            self.echo(f"--- prompt for {sub} (claude -p --model {model}){'' if exe else ': claude is not on PATH'} ---\n"
+            self.echo(f"--- prompt for {sub} ({rt}/{model or 'default'}){'' if exe else f': {rt} is not on PATH'} ---\n"
                       f"{prompt}\n--- end of prompt for {sub} ---")
             return None
         p = self.log(f"{sub}.prompt")
         p.write_text(prompt)
         with p.open() as stdin, self.log(f"{sub}.log").open("w") as out:
-            cmd = [exe, "-p", "--model", model, "--permission-mode", self.permission_mode(), "--output-format", "text"]
-            if self.c.get("allowed_tools"):
-                cmd += ["--allowedTools", ",".join(self.c["allowed_tools"])]
-            for d in self.c.get("add_dirs", []):        # repos a desk job may touch; without these a sub is fenced to the ledger dir
-                cmd += ["--add-dir", os.path.expanduser(d)]
-            return subprocess.Popen(cmd, stdin=stdin, stdout=out, stderr=subprocess.STDOUT,
+            return subprocess.Popen(self.argv(exe, rt, model), stdin=stdin, stdout=out, stderr=subprocess.STDOUT,
                                     cwd=self.root, env=self.env(), start_new_session=True)
 
     def proposed(self) -> set[str]:

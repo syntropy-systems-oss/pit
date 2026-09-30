@@ -98,6 +98,13 @@ allowed_tools = []              # e.g. ["Bash(q *)", "Read", "Grep", "Edit"] -> 
 add_dirs = []                   # directories a desk job may touch (each -> --add-dir), e.g. ["~/src/my-project"]
 heartbeat_minutes = 20          # an idle, funded agent asleep until-event is woken after this long without acting (reason `heartbeat`)
 heartbeat_min_usd = 1.0         # ...if its balance is at least this (the cheapest lane's minimum post)
+# Agent runtimes: an agent row may carry runtime = "claude" | "codex" and a model (`q agent add/set --runtime --model`).
+runtimes.claude.model = "sonnet"        # an agent with no model of its own, on claude
+# runtimes.claude.args = []             # extra claude -p args
+# runtimes.codex.model = "<codex-model>"  # unset = the codex CLI's own configured default
+# runtimes.codex.args = ["--skip-git-repo-check", "--sandbox", "workspace-write", "-c", 'approval_policy="never"']   # the default
+# reflect.runtime = "claude"            # the reflection pass: claude (default) or codex
+# reflect.model = "opus"                # default opus on claude, runtimes.codex.model on codex
 # Runs and agent turns get <this repo>/bin first on PATH: `q`, and `python3` = scripts/py.sh (a Python >= 3.11 with pit
 # importable). Put your own tools on PATH before starting autopilot.
 # kill file: autopilot/STOP (checked every tick). Standing rules injected into every prompt: pit.autopilot.RULES

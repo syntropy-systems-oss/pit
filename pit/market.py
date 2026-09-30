@@ -142,7 +142,8 @@ def market_json(rows: list[dict], cfg: dict, now: datetime | None = None) -> dic
         z = sleepers.get(a)
         w = book.wallet(a)
         turns = [s["ts"] for s in subs if book.wallet(s["id"]) == a]
-        agents.append({"id": a, "kind": r["kind"], "parent": None, "brief": r["brief"], "wallet": w, "balance": round(book.balance(a), 4),
+        agents.append({"id": a, "kind": r["kind"], "parent": None, "brief": r["brief"], "wallet": w,
+                       "runtime": r.get("runtime", "claude") + (f"/{r['model']}" if r.get("model") else ""), "balance": round(book.balance(a), 4),
                        "turns": len(turns), "last_turn": max(turns, default=None), "last_turn_age_s": _age(max(turns, default=None), now),
                        "series": series.get(w, [])[-80:], "bootstrap_cost": B.bootstrap_cost(rows, a), "last_acted": autopilot.last_acted(rows, book, a), "sleeping": bool(z and not z["wake"]),
                        "retired": (lambda x: x and {"reason": x["reason"], "ts": x["ts"], "by": x.get("by")})(book.retired.get(a)),

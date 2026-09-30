@@ -641,3 +641,53 @@ class FreshLedgerIncome(unittest.TestCase):
         self.assertEqual(drip["minutes"], 3)
         self.assertGreater(drip["to"]["a"], 0)
 
+
+
+class Runtimes(unittest.TestCase):
+    """Agents are model-agnostic: spawn() builds the argv of the agent row's runtime."""
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root)
+        (self.root / "lanes.toml").write_text(LANES + '''add_dirs = ["/x/repo"]
+runtimes.claude.model = "big"
+runtimes.codex.model = "gpt-x"
+''')
+        self.cfg = lanes.load(self.root)
+        self.ap = A.Autopilot(self.root, L.Ledger(self.root / "ledger", "t"), self.cfg, echo=lambda *_: None)
+
+    def argv(self, row):
+        from unittest import mock
+        with mock.patch.object(A.shutil, "which", lambda n: f"/bin/{n}"), mock.patch.object(A.subprocess, "Popen") as P:
+            self.ap.spawn("s-1", row, "the prompt")
+        (cmd,), kw = P.call_args
+        self.assertEqual(kw["cwd"], self.root)
+        self.assertEqual(kw["env"]["PIT_ROOT"], str(self.root))
+        self.assertTrue(kw["env"]["PATH"].startswith(str(A.REPO / "bin")))
+        self.assertEqual((self.root / "autopilot" / "logs" / "s-1.prompt").read_text(), "the prompt")
+        return cmd
+
+    def test_claude_default(self):
+        cmd = self.argv({"id": "a", "brief": "b"})
+        self.assertEqual(cmd[:4], ["/bin/claude", "-p", "--model", "big"])
+        self.assertIn("--permission-mode", cmd)
+        self.assertEqual(cmd[-2:], ["--add-dir", "/x/repo"])
+
+    def test_codex_row(self):
+        cmd = self.argv({"id": "a", "brief": "b", "runtime": "codex", "model": "gpt-y"})
+        self.assertEqual(cmd, ["/bin/codex", "exec", "-m", "gpt-y", *A.CODEX_ARGS, "--add-dir", "/x/repo", "-C", str(self.root), "-"])
+        self.assertEqual(self.argv({"id": "a", "brief": "b", "runtime": "codex"})[2:4], ["-m", "gpt-x"])   # runtimes.codex.model
+        (self.root / ".git").mkdir()
+        self.assertEqual(self.argv({"id": "a", "runtime": "codex"})[-5:-3], ["--add-dir", str(self.root / ".git")])   # q commits
+
+    def test_agent_add_set_and_unknown_runtime(self):
+        book = B.Book([])
+        with self.assertRaises(SystemExit):
+            B.agent_row(book, "a", "b", runtime="gpt")
+        lg = L.MemLedger()
+        lg.append(B.agent_row(book, "a", "brief a"))
+        lg.append(B.agent_set_row(B.Book(lg.rows()), "a", "codex", "gpt-y"), "2099-01-01T00:00:00Z")
+        r = B.Book(lg.rows()).agents["a"]
+        self.assertEqual((r["runtime"], r["model"], r["brief"], r["kind"]), ("codex", "gpt-y", "brief a", "persistent"))
+        self.assertNotIn("model", B.agent_set_row(B.Book(lg.rows()), "a", "claude"))      # a runtime switch drops the model
+        with self.assertRaises(SystemExit):
+            B.agent_set_row(B.Book(lg.rows()), "a", "gpt")

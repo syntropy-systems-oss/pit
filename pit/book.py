@@ -4,7 +4,7 @@ Agents get a steady income, pay for the runs they post, and bet PASS/FAIL per va
 stored: balance = drips + settlements - stakes - budgets + funding, folded from rows by Book. The market pot is
 stakes only; funding is a separate pool: a post escrows its budget_usd, and its result row's `funding` {wallet, usd}
 books the unspent part back (+) or the overage past it (-, as far as the wallet goes; `shortfall` names the rest).
-Rows: `agent` {id, kind: persistent|sub, parent, brief, by?}, `retire` {agent, reason, by}, `drip` {since, until, minutes, usd, to: {agent: usd}},
+Rows: `agent` {id, kind: persistent|sub, parent, brief, by?, runtime?, model?} (a later row for the same id replaces it), `retire` {agent, reason, by}, `drip` {since, until, minutes, usd, to: {agent: usd}},
 `bet` {job, variant, side, usd, agent, book (the wallet), tags: auto|self}, `settle` {job, variant, outcome:
 pass|fail|void, verdict, totals, pot, vig, payouts: {wallet: usd}}. A job node whose spec has `proposer` is the
 budget debit. A sub has no wallet: its budgets and bets are booked to its persistent ancestor.
@@ -136,12 +136,33 @@ class Book:
 
 # ---- verbs ------------------------------------------------------------------------------------------
 
-def agent_row(book: Book, aid: str, brief: str, parent: str | None = None) -> dict:
+RUNTIMES = ("claude", "codex")      # what an agent's turns are spawned on (pit.autopilot.Autopilot.argv)
+
+
+def runtime_fields(runtime: str | None, model: str | None) -> dict:
+    if runtime and runtime not in RUNTIMES:
+        raise SystemExit(f"unknown runtime {runtime} (one of {', '.join(RUNTIMES)})")
+    return {**({"runtime": runtime} if runtime else {}), **({"model": model} if model else {})}
+
+
+def agent_row(book: Book, aid: str, brief: str, parent: str | None = None, runtime: str | None = None,
+              model: str | None = None) -> dict:
     if aid in book.agents or aid == HOUSE:
         raise SystemExit(f"agent {aid} already exists")
     if parent and parent not in book.agents:
         raise SystemExit(f"no agent {parent}")
-    return {"t": "agent", "id": aid, "kind": "sub" if parent else "persistent", "parent": parent, "brief": brief}
+    return {"t": "agent", "id": aid, "kind": "sub" if parent else "persistent", "parent": parent, "brief": brief,
+            **runtime_fields(runtime, model)}
+
+
+def agent_set_row(book: Book, aid: str, runtime: str | None = None, model: str | None = None) -> dict:
+    """A new row for an existing agent with its runtime/model changed; the latest row wins (Book keeps the last)."""
+    if aid not in book.agents:
+        raise SystemExit(f"no agent {aid}")
+    old = {k: v for k, v in book.agents[aid].items() if k not in ("ts", "host")}
+    if runtime and runtime != old.get("runtime", "claude"):
+        old.pop("model", None)             # a model names one runtime's model; a runtime switch drops it
+    return {**old, **runtime_fields(runtime, model)}
 
 
 def retire_row(book: Book, aid: str, reason: str, by: str | None = None) -> dict:
@@ -562,7 +583,8 @@ def thread(rows: list[dict], agent: str) -> str:
     claimed = {r["job"] for r in rows if r["t"] == "claim" and r.get("agent") in fam}
     out = [f"{agent} ({record(records(book), book.wallet(agent))}; {a['kind']}{', under ' + a['parent'] if a.get('parent') else ''}) · balance "
            f"${book.balance(agent):.2f}" + (f" (wallet {book.wallet(agent)})" if book.wallet(agent) != agent else ""),
-           f"brief: {a['brief']}"]
+           f"brief: {a['brief']}" + (f" · runtime {a.get('runtime', 'claude')}{'/' + a['model'] if a.get('model') else ''}"
+                                     if a.get("runtime") or a.get("model") else "")]
     z = sleepers(rows).get(agent)
     if z:
         out.append(f"awake: {z['wake']['reason']}" if z["wake"] else

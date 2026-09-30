@@ -105,15 +105,22 @@ def cmd_agent(a):
         lg.append(B.retire_row(book, a.id, a.reason, a.by))
         sync(root, lg, f"retire {a.id}")
         return print(f"agent {a.id} retired: {a.reason}")
-    if not a.brief:
-        sys.exit("q agent add <id> --brief '<a capability or research goal to prove or refute>'")
-    row = lg.append({**B.agent_row(book, a.id, a.brief, a.parent), **({"by": a.by} if a.by else {})})
+    if a.verb == "set":
+        if not (a.runtime or a.model):
+            sys.exit("q agent set <id> [--runtime claude|codex] [--model <name>]")
+        row = lg.append(B.agent_set_row(book, a.id, a.runtime, a.model))
+    else:
+        if not a.brief:
+            sys.exit("q agent add <id> --brief '<a capability or research goal to prove or refute>'")
+        row = lg.append({**B.agent_row(book, a.id, a.brief, a.parent, a.runtime, a.model), **({"by": a.by} if a.by else {})})
     (root / "agents").mkdir(exist_ok=True)
     (root / "agents" / f"{a.id}.toml").write_text(
-        f'id = "{a.id}"\nkind = "{row["kind"]}"\n' + (f'parent = "{a.parent}"\n' if a.parent else "") + f"brief = {json.dumps(a.brief)}\n")
+        f'id = "{a.id}"\nkind = "{row["kind"]}"\n' + (f'parent = "{row["parent"]}"\n' if row.get("parent") else "")
+        + f"brief = {json.dumps(row['brief'])}\n" + "".join(f"{k} = {json.dumps(row[k])}\n" for k in ("runtime", "model") if row.get(k)))
     L.git(root, "add", str(root / "agents" / f"{a.id}.toml"))
-    sync(root, lg, f"agent {a.id}")
-    print(f"agent {a.id} ({row['kind']})" + (f", planted by {a.by}" if a.by else ""))
+    sync(root, lg, f"agent {a.verb} {a.id}")
+    print(f"agent {a.id} ({row['kind']}; {row.get('runtime', 'claude')}{'/' + row['model'] if row.get('model') else ''})"
+          + (f", planted by {a.by}" if a.by else ""))
 
 
 def print_balances(book):
@@ -510,8 +517,10 @@ def main(argv=None):
     p = sub.add_parser("bet", help="q bet <job> [<variant>] PASS|FAIL <amount> --as <agent>")
     p.add_argument("job"); p.add_argument("args", nargs="+"); p.add_argument("--as", dest="agent", required=True)
     p.set_defaults(f=cmd_bet)
-    p = sub.add_parser("agent", help="q agent add <id> --brief ... [--parent <id>] | q agent retire <id> --reason ...")
-    p.add_argument("verb", choices=("add", "retire")); p.add_argument("id"); p.add_argument("--brief"); p.add_argument("--parent")
+    p = sub.add_parser("agent", help="q agent add <id> --brief ... [--parent <id>] [--runtime claude|codex] [--model <name>] | "
+                                     "q agent set <id> --runtime ... --model ... | q agent retire <id> --reason ...")
+    p.add_argument("verb", choices=("add", "set", "retire")); p.add_argument("id"); p.add_argument("--brief"); p.add_argument("--parent")
+    p.add_argument("--runtime", help="what its turns run on: claude (default) or codex"); p.add_argument("--model", help="default: [autopilot] runtimes.<runtime>.model")
     p.add_argument("--reason"); p.add_argument("--as", dest="by", help="who adds or retires it (reflect, when it plants or retires)")
     p.set_defaults(f=cmd_agent)
     p = sub.add_parser("tick", help="pay the income since the last tick; print balances")
