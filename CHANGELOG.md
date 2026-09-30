@@ -10,6 +10,7 @@
 - Results retain the tested ref and diffstat. `q list --changes` lists PASS PR candidates, newest first; nothing auto-merges. Views mark a post that carries a change (the terminal's glyph hovers to the ref name); `q diff <job>` prints its diffstat and patch so bettors can inspect it.
 - Autopilot `workspace` / `workspace_init` creates a tree per wallet before its first turn, names the tree and branch in the prompt and adds the paths to both runtimes. The prompt describes making a change, committing and betting on its run.
 
+- Under blind betting, each new market and the agent's board show what $1 on each side returns against the opening book (the automatic stake, the house seed, a human's stake): "$1 on PASS returns $0.98 unless FAIL money arrives · $1 on FAIL returns up to $X if it fails". Later bets, the proposer's included, stay hidden.
 - Lane `house_seed` overrides `[pit] house_seed` for that lane's roots (0 turns the seed off there).
 - Lane `prepare`: a command run inside the tree before every job on a local repo lane (ignored inputs, dependencies); a non-zero exit books the run INVALID with `prepare: <last line>`, and its time is billed like the checkout.
 - A lane whose device is held by another lane is not idle: no `auto idle` row while a read or run on the shared device keeps it out.

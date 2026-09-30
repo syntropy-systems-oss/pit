@@ -34,7 +34,8 @@ def conf(cfg: dict) -> dict:
 
 def blind(cfg: dict) -> bool:
     """[pit] blind (default true): what an agent sees carries nothing about others' bets (no pools, odds, backers or
-    whys), only job, lane, claim, question, funding, proposer and record. The human terminal and ranking see everything."""
+    whys), only job, lane, claim, question, funding, proposer, record, and what $1 on each side returns against the
+    opening book (the proposer's stake and the house seed: rules, not opinions). The human terminal and ranking see everything."""
     return bool(conf(cfg)["blind"])
 
 
@@ -503,7 +504,8 @@ def new_markets(rows: list[dict], cfg: dict, agent: str, since: int, n: int = 10
             side, x = pays(book, r["id"], v, "pass", cfg)
             out.append(f"{r['id'] if v == 'main' else r['id'] + '/' + v}{specmod.change_mark(s)} [{s['lane']}] {specmod.claim_first(s, 100)} · "
                        + f"{funded(s, cfg)}{typical_here(s, cfg, typ)} · "
-                       + ("" if blind(cfg) else f"PASS ${t['pass']:.2f} / FAIL ${t['fail']:.2f} · $1 on {side.upper()} pays ${x:.2f} · ")
+                       + (f"{payoff_line(book, r['id'], v, cfg)} · " if blind(cfg) else
+                          f"PASS ${t['pass']:.2f} / FAIL ${t['fail']:.2f} · $1 on {side.upper()} pays ${x:.2f} · ")
                        + f"proposer {prop} ({record(recs, prop)})")
     if not out:
         return ""
@@ -714,6 +716,24 @@ def record(recs: dict, wallet: str) -> str:
     return f"{pw}-{pl} on posts, {bw}-{bl} on bets"
 
 
+def opening(book: Book, job: str, variant: str) -> dict[str, float]:
+    """The pools an agent may see under blind: the automatic stake, the house seed and a human's stake at posting
+    (rules, not opinions); a later bet, even the proposer's own, is an opinion and stays hidden."""
+    tot = {"pass": 0.0, "fail": 0.0}
+    for b in book.bets:
+        if b["job"] == job and b["variant"] == variant and set(b.get("tags") or []) & {"auto", "seed", "human"}:
+            tot[b["side"]] = round(tot[b["side"]] + b["usd"], 4)
+    return tot
+
+
+def payoff_line(book: Book, job: str, variant: str, cfg: dict) -> str:
+    """What $1 on each side returns against the opening book, so a bettor sees the arithmetic of agreeing vs disagreeing:
+    $1 with the proposer returns its own dollar less vig unless someone bets the other way; $1 against wins the stake."""
+    o, vig = opening(book, job, variant), conf(cfg)["vig_rate"]
+    ret = lambda side: (o["pass"] + o["fail"] + 1) * (1 - vig) / (o[side] + 1)
+    return f"$1 on PASS returns ${ret('pass'):.2f} unless FAIL money arrives · $1 on FAIL returns up to ${ret('fail'):.2f} if it fails"
+
+
 def pays(book: Book, job: str, variant: str, other: str, cfg: dict) -> tuple[str, float]:
     """The thinner side (ties: the side against `other`, the proposer's) and what $1 placed there now returns per $1."""
     t = book.totals(job, variant)
@@ -740,7 +760,7 @@ def board(rows: list[dict], cfg: dict, n: int = 20, hide: bool = False) -> str:
                         and b["side"] != "pass"), None)      # the latest counter-bettor's reason
             if hide:
                 lines.append((0, f"{name} [{s['lane']}] {specmod.claim_first(s, 100)} · {funded(s, cfg)}{typical_here(s, cfg, typ)} · "
-                                 f"proposer {prop} ({record(recs, prop)})"))
+                                 f"{payoff_line(book, jid, v, cfg)} · proposer {prop} ({record(recs, prop)})"))
                 continue
             lines.append(((min(t.values()) > 0, 2 * min(t.values())),
                           f"{name} [{s['lane']}, ${s.get('budget_usd', 0):g}] {specmod.claim_first(s, 100)} · PASS ${t['pass']:.2f} / FAIL ${t['fail']:.2f} · "

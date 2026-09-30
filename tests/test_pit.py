@@ -861,6 +861,18 @@ class Pit(unittest.TestCase):
         self.assertIn("\nm10 [", more)
         self.assertIn("… 2 more: q board", more)                                  # 12 open (x + m0..m10), 10 shown
 
+    def test_blind_new_markets_show_what_a_dollar_returns_against_the_opening_book(self):
+        """Under blind, a bettor sees the arithmetic of agreeing vs disagreeing from the proposer's stake and the house
+        seed only: another agent's bet must not change the line."""
+        seen = {**self.PCFG, "pit": {**self.PCFG["pit"], "blind": True, "stake_share": 0.25}}
+        self.post(job("m1", budget_usd=4), "b", cfg=seen)                    # b stakes $1 on PASS
+        before = B.new_markets(self.lg.rows(), seen, "a", 0)
+        self.assertIn("$1 on PASS returns $0.98 unless FAIL money arrives · $1 on FAIL returns up to $1.96 if it fails", before)
+        self.assertNotIn("PASS $", before)
+        self.bet("m1", "fail", 3, "b")                                        # a later bet (not a stake or seed) stays invisible
+        self.assertEqual(B.new_markets(self.lg.rows(), seen, "a", 0), before)
+        self.assertIn("$1 on FAIL returns up to $1.96", B.board(self.lg.rows(), seen, hide=True))
+
     def test_blind_agent_views_carry_no_market_information(self):
         self.post(job("x", question="does x hold?"), "b")
         self.bet("x", "fail", 1, "a", why="x breaks on held-out input")
@@ -874,7 +886,8 @@ class Pit(unittest.TestCase):
         for text in views(blind, True)[:3]:
             self.assertFalse([k for k in leaks if k in text], text)
         self.assertNotIn("book PASS", views(blind, True)[3])                           # the thread keeps only its own stakes
-        self.assertIn("x [gpu-small] x holds · does x hold? · funded $1 (257s) · proposer b (0-0 on posts, 0-0 on bets)", B.board(rows, blind, hide=True))
+        self.assertIn("x [gpu-small] x holds · does x hold? · funded $1 (257s) · $1 on PASS returns $0.98 unless FAIL money arrives · "
+                      "$1 on FAIL returns up to $1.23 if it fails · proposer b (0-0 on posts, 0-0 on bets)", B.board(rows, blind, hide=True))
         self.assertIn("x/main FAIL $1.00", B.thread(rows, "a", True))                # its own stake stays visible
         full = "\n".join(views(seen, False))
         for k in ("PASS $", "pays", "held-out input", "book PASS"):
