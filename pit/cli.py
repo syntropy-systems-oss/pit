@@ -46,7 +46,9 @@ def cmd_add(a):
 
 def add_specs(root, lg, cfg, loaded):
     st = L.fold(lg.rows())
-    specs, bad, known = [], [], specmod.scenarios(root, cfg)
+    # Custom commands and desk jobs do not use the bench scenario registry.
+    known = specmod.scenarios(root, cfg) if any(s.get("scenario") for _, s in loaded) else None
+    specs, bad = [], []
     for path, s in loaded:        # validate all first: a batch goes in whole or not at all
         errs = specmod.validate(s, cfg["lanes"], known, cfg.get("bench", {}).get("drivers"))
         if s.get("id") in st.jobs or s.get("id") in [x["id"] for _, x in specs]:
