@@ -604,6 +604,7 @@ class Autopilot:
             f"q thread {agent}:\n" + B.thread(self.lg.rows(), agent),
             "\n".join(t for _, _, t in items),
             f"Your claim ({agent}'s brief): {B.Book(rows).agents[agent]['brief']}", CLAIM, digest,
+            B.new_markets(rows, self.cfg, agent, self.since(agent, rows)),
             B.settled_stakes(rows, agent, self.since(agent, rows)), B.reflection_since(rows, self.since(agent, rows)), BOARD, "q board:\n" + B.board(rows, self.cfg),
             f"You MUST end your turn by saying what you are waiting on (`q sleep --as {sub} --until-result <job>`, or "
             f"`q sleep --as {sub} --until-event --note '<what>'`), then stop; you will be woken again in about "

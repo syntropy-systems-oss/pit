@@ -11,7 +11,7 @@ budget debit. A sub has no wallet: its budgets and bets are booked to its persis
 Who funds a post (v1.1): a root (no depends_on, no `from`) posted by `reflect` (or a sub of it) or with --seed is
 staked by the house from its vig pool (`house_seed` per variant, capped by the pool; a `bet` row with agent `house`,
 tagged `seed`) and debits no budget; a post `--as human` debits nothing and carries its --stake (tagged `human`);
-any other agent pays its budget and the default stake from its wallet.
+any other agent pays its budget and the auto stake (max(default_stake, stake_share x budget_usd)) from its wallet.
 """
 import re
 from datetime import datetime, timedelta, timezone
@@ -26,7 +26,7 @@ SIDES = ("pass", "fail")
 
 def conf(cfg: dict) -> dict:
     return {"enabled": False, "default_stake": 0.25, "vig_rate": 0.02, "house_seed": 1.0, "rank": "matched", "mint": 1.0,
-            "max_posts_per_hour": 0, **cfg.get("pit", {})}
+            "max_posts_per_hour": 0, "stake_share": 0.25, **cfg.get("pit", {})}
 
 
 def enabled(cfg: dict) -> bool:
@@ -222,6 +222,12 @@ def funding(book: Book, spec: dict, agent: str, seed: bool = False) -> str:
     return "human" if agent == HUMAN else "agent"
 
 
+def auto_stake(cfg: dict, spec: dict) -> float:
+    """The stake a post puts on its expect, per variant: a share of its funding, default_stake the floor."""
+    c = conf(cfg)
+    return round(max(c["default_stake"], c["stake_share"] * spec.get("budget_usd", 0)), 4)
+
+
 def stakes(rows: list[dict], cfg: dict, spec: dict, agent: str, mode: str, stake: float = 0.0) -> list[dict]:
     """The bet rows a post opens the book with, per variant (append them after the job node)."""
     out = []
@@ -238,7 +244,7 @@ def stakes(rows: list[dict], cfg: dict, spec: dict, agent: str, mode: str, stake
                 out.append({"t": "bet", "job": spec["id"], "variant": v, "side": spec["expect"], "usd": round(stake, 4),
                             "agent": HUMAN, "book": HUMAN, "tags": ["human"]})
         else:
-            out.append(bet_row(book, L.fold(rows), spec["id"], v, spec["expect"], conf(cfg)["default_stake"], agent, auto=True))
+            out.append(bet_row(book, L.fold(rows), spec["id"], v, spec["expect"], auto_stake(cfg, spec), agent, auto=True))
     return out
 
 
@@ -261,10 +267,10 @@ def funding_row(rows: list[dict], spec: dict, cost_usd: float) -> dict:
 def check_post(book: Book, cfg: dict, spec: dict, agent: str, rows: list[dict] | None = None) -> str | None:
     if agent not in book.agents:
         return f"no agent {agent} (q agent add)"
-    need = spec.get("budget_usd", 0) + conf(cfg)["default_stake"] * len(variants(spec))
+    need = spec.get("budget_usd", 0) + auto_stake(cfg, spec) * len(variants(spec))
     if book.balance(agent) < need:
         return f"{book.wallet(agent)} has ${book.balance(agent):.2f}; posting {spec.get('id')} needs ${need:.2f} " \
-               f"(budget ${spec.get('budget_usd', 0)} + the default stake)"
+               f"(budget ${spec.get('budget_usd', 0)} + the auto stake ${auto_stake(cfg, spec):.2f} per variant)"
     cap = conf(cfg)["max_posts_per_hour"]
     w = book.wallet(agent)
     if w != "house" and cap:
@@ -407,6 +413,38 @@ def reflection_since(rows: list[dict], since: int) -> str:
     out += [f"agents/BOOTSTRAP.md edited ({r.get('job') or 'by hand'}): " + "; ".join([f"+ {x}" for x in r.get("add", [])] + [f"- {x}" for x in r.get("remove", [])])
             for r in win if r["t"] == "bootstrap"]
     return "Reflection since your last turn:\n" + "\n".join(out) if out else ""
+
+
+NEW_RULE = ("For each: bet (`q bet <job> PASS|FAIL <usd> --as <you> --why '…'`) or write `pass: <one-line reason>` in your "
+            "findings. Skipping one silently is a wasted turn.")
+
+
+def new_markets(rows: list[dict], cfg: dict, agent: str, since: int, n: int = 10) -> str:
+    """'New markets since your last turn': every open market (job x variant) posted at row >= since by another wallet
+    that the agent's family has not bet on, newest first, with its pools, what $1 on the thin side pays, and the proposer."""
+    book, st = Book(rows), L.fold(rows)
+    fam, recs, out = book.family(agent), records(book), []
+    have = {(b["job"], b["variant"]) for b in book.bets if b["agent"] in fam}
+    for r in reversed(rows[since:]):
+        j = st.jobs.get(r.get("id")) if r["t"] == "node" and r.get("kind") == "job" else None
+        if not j or j["state"] != "queued":
+            continue
+        s = j["spec"]
+        prop = book.wallet(book.proposers.get(r["id"]) or s.get("proposer") or HUMAN)
+        if prop == book.wallet(agent):
+            continue
+        for v in variants(s):
+            if (r["id"], v) in have:
+                continue
+            t = book.totals(r["id"], v)
+            side, x = pays(book, r["id"], v, s.get("expect", "pass"), cfg)
+            out.append(f"{r['id'] if v == 'main' else r['id'] + '/' + v} [{s['lane']}] {' '.join(s['question'].split())[:100]} · "
+                       f"PASS ${t['pass']:.2f} / FAIL ${t['fail']:.2f} · $1 on {side.upper()} pays ${x:.2f} · "
+                       f"proposer {prop} ({record(recs, prop)})")
+    if not out:
+        return ""
+    more = [f"… {len(out) - n} more: q board"] if len(out) > n else []
+    return "New markets since your last turn:\n" + "\n".join(out[:n] + more) + "\n" + NEW_RULE
 
 
 def until_text(u: dict) -> str:

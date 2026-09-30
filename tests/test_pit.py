@@ -601,7 +601,7 @@ class Pit(unittest.TestCase):
         a_before = b.balance("a")
         self.assertEqual(self.post(job("g1", budget_usd=3), "a"), "agent")
         b = self.book()
-        self.assertAlmostEqual(b.balance("a"), a_before - 3.25)                 # its wallet pays, as before
+        self.assertAlmostEqual(b.balance("a"), a_before - 3.75)                 # its wallet pays: budget + 25% of it
         self.assertEqual([x["agent"] for x in b.bets if x["job"] == "g1"], ["a"])
         self.assertAlmostEqual(b.balances()["house"], 0.20)                     # untouched
 
@@ -659,10 +659,32 @@ class Pit(unittest.TestCase):
     def test_post_debits_and_auto_stakes(self):
         self.post(job("x", budget_usd=10, expect="fail"), "a.sub")               # a sub spends from its parent
         b = self.book()
-        self.assertAlmostEqual(b.balance("a"), 53.5 - 10 - 0.25)
-        self.assertEqual(b.bets[0]["tags"], ["auto", "self"])
+        self.assertAlmostEqual(b.balance("a"), 53.5 - 10 - 2.5)                 # auto stake: 25% of $10 funding
+        self.assertEqual((b.bets[0]["usd"], b.bets[0]["tags"]), (2.5, ["auto", "self"]))
+        self.post(job("small", budget_usd=0.4), "b")                             # 25% of $0.40 is under the floor
+        self.assertEqual(self.book().totals("small", "main")["pass"], 0.25)
         self.assertEqual((b.bets[0]["side"], b.bets[0]["book"]), ("fail", "a"))
         self.assertIn("needs", B.check_post(b, self.PCFG, job("y", budget_usd=500, lane="ci"), "b"))
+
+    def test_new_markets_since_last_turn(self):
+        self.post(job("old"), "b")
+        since = len(self.lg.rows())
+        self.post(job("x", lane="ci", question="does the small model pass multi-step tasks?"), "b")
+        self.post(job("mine"), "a.sub")                                          # a's own post: not listed
+        self.post(job("done"), "b")
+        self.bet("done", "fail", 0.5, "a.sub")                                   # already bet on by a: not listed
+        text = B.new_markets(self.lg.rows(), self.PCFG, "a", since)
+        self.assertIn("x [ci] does the small model pass multi-step tasks? · PASS $0.25 / FAIL $0.00 · $1 on FAIL pays $1.23 · "
+                      "proposer b (0-0 on posts, 0-0 on bets)", text)
+        self.assertTrue(text.startswith("New markets since your last turn:\n") and text.endswith(B.NEW_RULE))
+        for jid in ("old", "mine", "done"):
+            self.assertNotIn(f"\n{jid} [", text)
+        self.assertEqual(B.new_markets(self.lg.rows(), self.PCFG, "b", since).count("\nmine ["), 1)
+        for i in range(11):
+            self.post(job(f"m{i}"), "b")
+        more = B.new_markets(self.lg.rows(), self.PCFG, "a", since)
+        self.assertIn("\nm10 [", more)
+        self.assertIn("… 2 more: q board", more)                                  # 12 open (x + m0..m10), 10 shown
 
     def test_bet_escrow_sub_booking_self_tag(self):
         self.post(job("x", arms=["V1", "V2"]), "a")
@@ -727,10 +749,10 @@ class Pit(unittest.TestCase):
         st = L.fold(self.lg.rows())
         order, fb = B.rank(st, self.book())
         self.assertEqual((order, fb), (["cheap", "big"], {"cheap"}))            # nothing matched: cheapest, flagged
-        self.bet("big", "fail", 5, "b")                                           # matched = 2 x min(0.25, 5) = 0.5
+        self.bet("big", "fail", 5, "b")                                           # matched = 2 x min(5 (25% of $20), 5) = 10
         order, fb = B.rank(L.fold(self.lg.rows()), self.book())
         self.assertEqual((order, fb), (["big", "cheap"], set()))
-        self.assertAlmostEqual(self.book().matched("big", st.jobs["big"]["spec"]), 0.5)
+        self.assertAlmostEqual(self.book().matched("big", st.jobs["big"]["spec"]), 10)
         self.assertEqual(B.order(st, self.lg.rows(), CFG | {"pit": {"enabled": False}})[1], set())   # old ranking when off
 
     def test_post_cap_per_wallet_per_hour(self):
@@ -758,8 +780,9 @@ class Pit(unittest.TestCase):
         self.assertEqual(sorted(L.fold(self.lg.rows()).findings), ["F:a-1", "F:a-2", "F:session-1"])
 
     def test_rank_modes_most_uncertain_then_cheapest(self):
-        self.post(job("cheap", budget_usd=1), "a")
-        self.post(job("big", budget_usd=20), "a")
+        flat = {**self.PCFG, "pit": {**self.PCFG["pit"], "stake_share": 0}}       # every auto stake at the floor
+        self.post(job("cheap", budget_usd=1), "a", cfg=flat)
+        self.post(job("big", budget_usd=20), "a", cfg=flat)
         self.bet("cheap", "fail", 0.25, "b")                                      # matched 0.5 on $1
         self.bet("big", "fail", 5, "b")                                           # matched 0.5 on $20
         st = L.fold(self.lg.rows())
@@ -825,7 +848,7 @@ class Pit(unittest.TestCase):
         self.assertIn("brief: a brief", out)
         self.assertIn("x [done fail]", out)
         self.assertIn("-> F:x", out)
-        self.assertIn("open/main PASS $0.25 / FAIL $0.00", out)                  # b's market, a has not bet
+        self.assertIn("open/main PASS $0.50 / FAIL $0.00", out)                  # b's market, a has not bet
         cal = {l.split()[0]: l.split() for l in B.calibration(self.lg.rows()).splitlines()[1:]}
         self.assertEqual(cal["b"][:3], ["b", "1", "1"])                           # 1 bet, 1 win
         self.assertEqual(cal["b"][5], f"{(1 / 1.25 - 1) ** 2:.3f}")              # implied 80% FAIL at close
@@ -833,16 +856,16 @@ class Pit(unittest.TestCase):
         self.assertEqual((cal["a"][1], cal["a"][-1]), ("0", "1"))                 # a's auto stake is a self bet
 
     def test_board_prices_and_order(self):
-        self.post(job("old", budget_usd=2), "a")                                 # PASS 0.25 / FAIL 0: unopposed
+        self.post(job("old", budget_usd=2), "a")                                 # PASS 0.50 (25% of $2) / FAIL 0: unopposed
         self.post(job("both"), "b")
         self.bet("both", "fail", 1, "a")                                          # opposed, matched 0.50
         self.post(job("new", budget_usd=3, expect="fail"), "b", ts="2026-09-29T04:33:00Z")   # newest unopposed
         lines = B.board(self.lg.rows(), self.PCFG).splitlines()
         self.assertEqual([l.split()[0] for l in lines], ["new", "old", "both"])
-        # $1 on the empty FAIL side: (0.25 + 1) * 0.98 / 1 = 1.225
-        self.assertEqual(lines[1], "old [gpu-small, $2] PASS $0.25 / FAIL $0.00 · FAIL pays 1.2:1 · proposer a "
+        # $1 on the empty FAIL side: (0.50 + 1) * 0.98 / 1 = 1.47
+        self.assertEqual(lines[1], "old [gpu-small, $2] PASS $0.50 / FAIL $0.00 · FAIL pays 1.5:1 · proposer a "
                                    "(0-0 on posts, 0-0 on bets)")
-        self.assertIn("PASS pays 1.2:1", lines[0])
+        self.assertIn("FAIL $0.75 · PASS pays 1.7:1", lines[0])
         self.assertEqual(B.pays(self.book(), "both", "main", "pass", self.PCFG), ("pass", (1.25 + 1) * 0.98 / 1.25))
 
     # ---- funding: budget_usd is the only budget; time and tokens burn it; the market pool is separate ----
