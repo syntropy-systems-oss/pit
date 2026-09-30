@@ -11,6 +11,7 @@
   --fg:#dde2ea;--fg2:#a3acba;--dim:#8a93a2;
   --acc:#f0a830;--acc-bg:rgba(240,168,48,.14);
   --pass:#3ecf7e;--pass-bg:rgba(62,207,126,.20);--fail:#ff6b6b;--fail-bg:rgba(255,107,107,.20);
+  --thumb:color-mix(in srgb,var(--dim) 35%,transparent);
   color-scheme:dark}
 :root[data-theme=light]{
   --bg:#f5f6f8;--pan:#ffffff;--hi:#eef0f4;--sel:#e4e9f1;--line:#d9dde4;--line2:#b9c0cb;
@@ -25,8 +26,8 @@
   --pass:#08672f;--pass-bg:rgba(8,103,47,.12);--fail:#b01f26;--fail-bg:rgba(176,31,38,.10);
   color-scheme:light}}
 *{box-sizing:border-box}
-html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:13px/16px var(--mono);font-variant-numeric:tabular-nums}
-body{display:grid;grid-template-rows:40px minmax(0,7fr) minmax(0,3fr) 32px;height:100%;overflow:hidden}
+html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--fg);font:13px/16px var(--mono);font-variant-numeric:tabular-nums}
+body{display:grid;grid-template-rows:40px minmax(0,7fr) minmax(0,3fr) 32px;height:100%;height:100dvh}
 body.tape-closed{grid-template-rows:40px minmax(0,1fr) auto 32px}
 button,input{font:inherit;color:inherit}
 .dim{color:var(--dim)}.fg2{color:var(--fg2)}.acc{color:var(--acc)}.P{color:var(--pass)}.F{color:var(--fail)}
@@ -58,7 +59,15 @@ code{font-family:var(--mono);color:var(--fg2)}
 .ph{flex:none;display:flex;align-items:center;gap:8px;height:24px;padding:0 8px;background:var(--pan);border-bottom:1px solid var(--line);font:600 11px/1 var(--ui);letter-spacing:.1em;text-transform:uppercase;color:var(--fg2);white-space:nowrap}
 .ph .n{color:var(--dim);font:12px/1 var(--mono);letter-spacing:0;text-transform:none}
 .ph .r{margin-left:auto;font:500 11px/1 var(--ui);letter-spacing:.06em;color:var(--dim)}
-.pb{flex:1;overflow:auto;min-height:0}
+.pb{flex:1;min-height:0}
+/* one scroller per panel (.pb, the tape's #tl, the help box); thin bars, thumb only while the panel is hovered */
+.pb,#tl,#help .box{overflow:auto;scrollbar-gutter:stable;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:transparent transparent}
+.panel:hover .pb,#tape:hover #tl,#help .box{scrollbar-color:var(--thumb) transparent}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track,::-webkit-scrollbar-corner{background:transparent}
+::-webkit-scrollbar-thumb{background:transparent;border-radius:3px}
+.panel:hover ::-webkit-scrollbar-thumb,#tape:hover ::-webkit-scrollbar-thumb,#help ::-webkit-scrollbar-thumb{background:var(--thumb)}
+@media (hover:none){.pb,#tl{scrollbar-color:var(--thumb) transparent}::-webkit-scrollbar-thumb{background:var(--thumb)}}
 .empty{padding:16px 8px;color:var(--dim);line-height:20px}
 
 /* lanes */
@@ -139,7 +148,7 @@ tr.detail td{height:auto;white-space:normal;background:var(--pan);padding:8px 8p
 #tape .ph input{flex:1;min-width:0;height:20px;background:var(--bg);border:1px solid var(--line2);padding:0 8px;font:12px var(--mono);text-transform:none;letter-spacing:0;color:var(--fg)}
 #tape .ph input::placeholder{color:var(--dim)}
 #tapet{height:18px;min-width:18px;padding:0;border:0}
-#tl{flex:1;overflow:auto;min-height:0}
+#tl{flex:1;min-height:0}
 .ev{display:grid;grid-template-columns:8ch 9ch 12ch minmax(0,1fr);gap:0 16px;padding:0 8px;line-height:20px;white-space:nowrap}
 .ev:hover{background:var(--hi)}
 .ev>span{overflow:hidden;text-overflow:ellipsis}
@@ -159,7 +168,7 @@ tr.detail td{height:auto;white-space:normal;background:var(--pan);padding:8px 8p
 /* help */
 #help{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45);z-index:10}
 #help.on{display:flex}
-#help .box{background:var(--pan);border:1px solid var(--line2);width:min(800px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto}
+#help .box{background:var(--pan);border:1px solid var(--line2);width:min(800px,calc(100vw - 32px));max-height:calc(100dvh - 32px)}
 #help .body{padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:16px 24px;line-height:20px}
 #help h4{margin:0 0 8px;font:600 11px/16px var(--ui);letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
 #help dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:4px 12px}
@@ -184,8 +193,7 @@ kbd{font:12px/16px var(--mono);padding:0 4px;border:1px solid var(--line2);borde
   #main{display:flex;flex-direction:column}
   .panel{border-right:0;border-bottom:1px solid var(--line)}
   #p-mkt{order:1}#p-lanes{order:2}#p-agents{order:3}
-  .pb{overflow:visible}
-  th{position:static}
+  .pb{max-height:70vh}.pb,#tl{overscroll-behavior:auto}
   col.c-book{width:104px}col.c-m{width:96px}
   #tape:not(.closed) #tl{max-height:60vh}
   .ev{grid-template-columns:8ch 9ch minmax(0,1fr);gap:0 8px}.ev .who{display:none}
