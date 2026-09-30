@@ -128,7 +128,7 @@ def market_json(rows: list[dict], cfg: dict, now: datetime | None = None) -> dic
                      "burned_usd": round(_age(v["claim"]["ts"], now) / 3600 * l.get("usd_per_h", 0), 4), "fallback": bool(v["claim"].get("fallback"))}
                     for j, v in st.jobs.items() if v["state"] == "running" and v["spec"]["lane"] == name), None)
         q = [j for j in order if st.jobs[j]["spec"]["lane"] == name]
-        lane_out.append({"lane": name, "price": l.get("usd_per_h", 0), "box": l.get("box", ""), "running": run,
+        lane_out.append({"lane": name, "price": l.get("usd_per_h", 0), "box": l.get("box", ""), "device": l.get("device"), "running": run,
                          "idle_s": None if run else autopilot.lane_idle(rows, st, name, now),
                          "depth": len(q), "queue": [{"task": j, "score": mk[j]["score"], "matched": mk[j]["matched"], "budget": mk[j]["budget"],
                                                      "fallback": j in fb, "proposer": mk[j]["proposer"], "read": mk[j]["read"]} for j in q], "spend_today": spend.get(name, 0.0),

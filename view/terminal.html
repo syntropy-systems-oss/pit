@@ -74,6 +74,7 @@ code{font-family:var(--mono);color:var(--fg2)}
 .lane{padding:8px;border-bottom:1px solid var(--line)}
 .lane .top{display:flex;align-items:baseline;gap:8px}
 .lane .name{font-weight:600}
+.lane.held{opacity:.45}
 .lane .top .num{margin-left:auto}
 .lane .st{display:flex;gap:8px;margin-top:8px;align-items:baseline;min-width:0}
 .lane .st .chip{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -314,7 +315,8 @@ function renderLanes(m) {
   if (!m.lanes.length) return setHTML("lanes", `<div class="empty">no lanes: name them, with a $/h each, in <code>lanes.toml</code></div>`);
   setHTML("lanes", m.lanes.map(l => {
     const r = l.running, pct = r ? Math.min(100, 100 * r.burned_usd / Math.max(0.01, r.budget_usd)) : 0, q = l.queue.slice(0, 8);   // money burned (elapsed x rate) of the funding
-    return `<div class="lane" title="${esc(l.box || "")}"><div class="top"><span class="name">${esc(l.lane)}</span><span class="dim">${usd(l.price)}/h</span><span class="num fg2" title="spent today">${usd(l.spend_today)}</span></div>` +
+    const held = l.device && !r && m.lanes.find(o => o !== l && o.device === l.device && o.running);   // its device runs a job on another lane
+    return `<div class="lane${held ? " held" : ""}" title="${esc(l.box || "")}${held ? esc(` · device ${l.device} busy (${held.running.job} on ${held.lane})`) : ""}"><div class="top"><span class="name">${esc(l.lane)}</span>${l.device ? `<span class="dim" title="device: lanes on one device never run together">${esc(l.device)}</span>` : ""}<span class="dim">${usd(l.price)}/h</span><span class="num fg2" title="spent today">${usd(l.spend_today)}</span></div>` +
       (l.bag ? `<div class="dim">bag: ${l.bag.n}/${l.bag.max} today</div>` : "") +
       (r ? `<div class="st"><span class="b acc">run</span><span class="chip" data-task="${esc(r.job)}">${esc(r.job)}</span>${r.fallback ? '<span class="b q" title="fallback: nothing in this lane has matched stakes, so the cheapest runnable job runs">fbk</span>' : ""}</div>` +
         `<div class="pr"><div class="prog" role="progressbar" aria-label="${esc(r.job)} funding burned" aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100"><i class="${r.burned_usd > r.budget_usd ? "over" : ""}" style="width:${pct}%"></i></div>` +

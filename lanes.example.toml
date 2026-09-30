@@ -30,6 +30,7 @@ usd_per_h = 14
 slots = 1                       # GPU-exclusive
 max_usd_per_value = 25          # cheap lane: q add refuses budget_usd > value x this
 gate = "true"                   # a shell command; exit 0 = the lane is free
+# device = "gpu0"              # lanes that share a device declare it; they never run together (one job on the device at a time)
 # A spec with `scenario = "<name>"` and no `run` gets its driver from the lane: {scenario} {model} {funded_s} are filled in,
 # and `preflight` (optional) must exit 0 before the job is dispatched; it may also prepare the box (pull an image, warm a
 # cache) as long as it exits 0 when done. Without a runner a lane takes only `run` jobs.
@@ -69,6 +70,7 @@ gate = "true"
 # usd_per_h = 2                 # priced low: a read costs a fraction of a rollout
 # slots = 1
 # gate = "true"
+# device = "gpu0"              # reads on gpu-small's GPU: set the same device on both lanes
 # runner = "python3 lens_read.py {scenario}"    # a placeholder for your read driver; it ends with pit: verdict=read result={"readout": "<path or text>"}
 
 # `any` is built in: wherever the session is; charged its meters only, at [prices].

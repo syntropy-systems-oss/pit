@@ -625,6 +625,46 @@ class Autopilot(unittest.TestCase):
         self.assertNotIn("Reflection since your last turn", ap.prompt("b-3", "b", []))
         self.assertNotIn("Your stakes that settled", ap.prompt("b-3", "b", []))
 
+    def device_ap(self):
+        """gpu-small and lens share device gpu0; ci has no device."""
+        self.cfg["lanes"]["gpu-small"]["device"] = "gpu0"
+        self.cfg["lanes"]["lens"] = {"usd_per_h": 2, "slots": 1, "gate": "true", "device": "gpu0"}
+        said = []
+        ap = self.ap()
+        ap.echo = said.append
+        return ap, said
+
+    def test_device_running_on_one_lane_keeps_its_other_lanes_out(self):
+        ap, said = self.device_ap()
+        self.post(slow("g1"), "a")
+        self.post(slow("r1", lane="lens"), "b")
+        self.lg.append({"t": "claim", "job": "g1", "lane": "gpu-small", "cid": "c-g1"})    # g1 runs on the ledger, not a child
+        ap.dispatch(self.lg.rows(), datetime.now(timezone.utc))
+        ap.wait()
+        self.assertEqual(self.auto("dispatch"), [])
+        self.assertIn("lane lens: device gpu0 busy (g1 running on gpu-small)", said)
+        self.assertEqual(market.market_json(self.lg.rows(), self.cfg)["lanes"][-1]["device"], "gpu0")
+
+    def test_device_both_free_dispatches_exactly_one_per_tick(self):
+        ap, said = self.device_ap()
+        self.post(slow("g1"), "a")
+        self.post(slow("r1", lane="lens"), "b")
+        self.post(slow("c1", lane="ci"), "b")                                          # no device: unaffected
+        ap.dispatch(self.lg.rows(), datetime.now(timezone.utc))
+        self.assertEqual({r["job"] for r in self.auto("dispatch")}, {"g1", "c1"})
+        self.assertIn("lane lens: device gpu0 busy (g1 running on gpu-small)", said)
+        ap.wait()
+
+    def test_lanes_without_a_device_are_unaffected(self):
+        self.cfg["lanes"]["lens"] = {"usd_per_h": 2, "slots": 1, "gate": "true", "device": "gpu0"}
+        ap = self.ap()
+        self.post(slow("g1"), "a")
+        self.post(slow("r1", lane="lens"), "b")
+        self.post(slow("c1", lane="ci"), "b")
+        ap.dispatch(self.lg.rows(), datetime.now(timezone.utc))
+        self.assertEqual({r["job"] for r in self.auto("dispatch")}, {"g1", "r1", "c1"})
+        ap.wait()
+
 
 class Retire(unittest.TestCase):
     setUp, restore, ap, auto = Autopilot.setUp, Autopilot.restore, Autopilot.ap, Autopilot.auto

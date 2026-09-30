@@ -263,6 +263,15 @@ class Autopilot:
             if len(busy) >= slots:
                 self.echo(f"{head} busy ({', '.join(sorted(busy))})")
                 continue
+            # a device is shared by its lanes: one running on another lane of it (ledger claims, or a child this loop just
+            # spawned, which covers an earlier lane of this same tick) keeps this lane out. Gates still apply after.
+            dev = self.cfg["lanes"].get(lane, {}).get("device")
+            on = {j: st.jobs[j]["claim"]["lane"] for j in st.running()} | {j: l for j, (l, _) in self.runs.items()}
+            held = dev and next(((j, l) for j, l in sorted(on.items()) if l != lane
+                                 and self.cfg["lanes"].get(l, {}).get("device") == dev), None)
+            if held:
+                self.echo(f"lane {lane}: device {dev} busy ({held[0]} running on {held[1]})")
+                continue
             if not picks:
                 self.fill_from_bag(lane, head, st, rows, now, spent, cap)
                 continue
