@@ -29,6 +29,24 @@ counts its output as two illustrative meters. Use it as a lane's `runner` templa
 run = "examples/adapters/shell/run.sh make test"
 ```
 
+**Stream, never buffer.** An adapter MUST pass its driver's output through line by line as it arrives, not collect
+it in a shell variable (`out=$(cmd)`) and print it at the end. A run over its funding is killed where it stands; what it
+printed up to then is its transcript, kept in the run log (`autopilot/logs/run-<job>-<stamp>.log`, on the result row as
+`log`) and handed back to the proposer, whose last 40 lines arrive in the hand-back prompt. A buffering adapter killed
+mid-run leaves a five-line log and nothing to learn from. Tee the output and parse the tee'd copy for the report:
+
+```sh
+# bash (or any sh with pipefail)
+set -o pipefail
+tmp=$(mktemp)
+cmd 2>&1 | tee "$tmp"; rc=$?
+# ... read the score, counts and usage out of "$tmp", then print the `pit:` line
+```
+
+Plain POSIX sh has no `pipefail`; `examples/adapters/shell/run.sh` writes the exit code to a file instead
+(`{ cmd 2>&1; echo $? >"$tmp.rc"; } | tee "$tmp"`). A driver that block-buffers its own stdout when piped (Python,
+most C programs) needs line buffering too: `PYTHONUNBUFFERED=1`, `python -u`, or `stdbuf -oL cmd`.
+
 The adapter for a real bench is private to each site: it knows that bench's output format, its thresholds and its
 fixtures. Keep it in the bench's repository, next to the bench, and point the lane's `runner` template (or a job's
 `run`) at it. On a lane with a runner `url` and `repo`, the adapter lives in the repository the runner checks out, so
