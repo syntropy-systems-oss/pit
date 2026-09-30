@@ -670,10 +670,12 @@ class Autopilot:
     def spawn_run(self, jid: str, now: datetime):
         if self.dry:
             return None
-        with self.log(f"run-{jid}-{stamp(now)}.log").open("w") as out:   # the child keeps its own handle
+        log = self.log(f"run-{jid}-{stamp(now)}.log")
+        with log.open("w") as out:   # the child keeps its own handle
             # own session: a Ctrl-C of the loop never kills a run between its claim and its result
             return subprocess.Popen([sys.executable, "-m", "pit.cli", "--root", str(self.root), "run", jid],
-                                    stdout=out, stderr=subprocess.STDOUT, cwd=self.root, env=self.env(),
+                                    stdout=out, stderr=subprocess.STDOUT, cwd=self.root,
+                                    env={**self.env(), "PIT_RUN_LOG": str(log.relative_to(self.root))},
                                     start_new_session=True)
 
     def permission_mode(self) -> str:
@@ -820,4 +822,8 @@ def finished(jid: str, j: dict) -> str:
     branch = s.get(f"if_{res['verdict']}")
     return (f"Your job {jid} finished: {res['verdict']}, {json.dumps(res.get('result', {}))}, "
             f"cost ${c.get('usd', 0):.2f} ({c.get('wall_s', 0):.0f}s on {c.get('lane', '?')}, meters {json.dumps(c.get('meters', {}))})." + (f" Note: {res['note']}." if res.get("note") else "")
-            + (f" The spec's {res['verdict']} branch: {branch}" if branch else ""))
+            + (f" The spec's {res['verdict']} branch: {branch}" if branch else "")
+            + (f"\nThe run log (everything it printed): {res['log']}" if res.get("log") else "")
+            + (f"\nWhat your run did before it stopped (last 40 lines):\n{res['tail']}\n"
+               "A run killed for funding still hands you everything it printed; read it before you re-post."
+               if res["verdict"] != "pass" and res.get("tail") else ""))

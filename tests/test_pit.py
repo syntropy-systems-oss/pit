@@ -164,7 +164,7 @@ class Run(unittest.TestCase):
 
     def test_shell_adapter_prints_a_report_line(self):
         r = runmod.execute(f"{ROOT}/examples/adapters/shell/run.sh sh -c 'echo a; echo b; exit 1'", 10, [], echo=lambda *_: None)
-        self.assertEqual((runmod.verdict_of(r)[0], r["report"]["meters"], r["report"]["result"]), ("fail", {"out_lines": 2, "out_bytes": 3}, {"rc": 1}))
+        self.assertEqual((runmod.verdict_of(r)[0], r["report"]["meters"], r["report"]["result"]), ("fail", {"out_lines": 2, "out_bytes": 4}, {"rc": 1}))
 
     def test_refusal_is_invalid(self):
         r = runmod.execute("exit 2", 10, [], echo=lambda *_: None)
@@ -241,6 +241,22 @@ class Claim(unittest.TestCase):
         with mock.patch.object(L, "git", wraps=L.git) as g:
             runmod.run_job(tmp, lg, CFG, "j", echo=lambda *_: None)
         self.assertFalse([c for c in g.call_args_list if c.args[1] == "push"])
+
+    def test_killed_run_keeps_its_transcript_and_hands_back_the_tail(self):
+        from pit import autopilot as A
+        tmp, lg = self.repo()
+        add(lg, job("k", run="i=0; while [ $i -lt 50 ]; do echo line$i; i=$((i+1)); done; sleep 5"))
+        with mock.patch.object(specmod, "funded_seconds", return_value=1):
+            row = runmod.run_job(tmp, lg, CFG, "k", echo=lambda *_: None)
+        self.assertEqual(row["verdict"], "fail")
+        self.assertTrue(row["note"].startswith("over budget"))
+        self.assertTrue(row["log"].startswith("autopilot/logs/run-k-"))
+        self.assertIn("line49", (tmp / row["log"]).read_text())
+        self.assertEqual(row["tail"].splitlines(), [f"line{i}" for i in range(10, 50)])
+        text = A.finished("k", L.fold(lg.rows()).jobs["k"])
+        self.assertIn(f"The run log (everything it printed): {row['log']}", text)
+        self.assertIn("What your run did before it stopped (last 40 lines):\nline10\n", text)
+        self.assertIn("A run killed for funding still hands you everything it printed; read it before you re-post.", text)
 
 
 def _ident(d):
@@ -1007,6 +1023,10 @@ class TypicalCost(unittest.TestCase):
                             "cost": {"wall_s": wall, "usd": usd, "lane": "gpu-small"}})
         add(self.lg, job("e", run="bench --scenario 's1' --timeout 9"))              # no scenario field: read off the runner call
         self.lg.append({"t": "result", "job": "e", "verdict": "pass", "note": "", "cost": {"wall_s": 200, "usd": 0.8, "lane": "gpu-small"}})
+        add(self.lg, job("f", scenario="s2"))                                          # every run killed: no typical cost
+        self.lg.append({"t": "result", "job": "f", "verdict": "fail", "note": "over budget: killed at 30s",
+                        "cost": {"wall_s": 30, "usd": 0.12, "lane": "gpu-small"}})
+        add(self.lg, job("s2open", scenario="s2", budget_usd=0.12))
         self.cfg = lanes.load(self.root)
 
     def q(self, fn, **kw):
@@ -1018,13 +1038,14 @@ class TypicalCost(unittest.TestCase):
 
     def test_medians_and_kill_share(self):
         t = B.typical_cost(self.lg.rows(), "s1", "gpu-small", self.cfg)
-        self.assertEqual(t, {"n": 4, "wall_s": 228.5, "usd": 0.9, "kill": 0.25})
+        self.assertEqual(t, {"n": 4, "wall_s": 200, "usd": 0.8, "kill": 0.25})          # medians skip the killed run c
         self.assertEqual(B.typical_cost(self.lg.rows(), "s1", "gpu-small")["n"], 3)        # no cfg: no runner template to read
-        self.assertIsNone(B.typical_cost(self.lg.rows(), "s2", "gpu-small", self.cfg))
+        self.assertEqual(B.typical_cost(self.lg.rows(), "s2", "gpu-small", self.cfg), {"n": 1, "wall_s": None, "usd": None, "kill": 1.0})
+        self.assertIsNone(B.typical_cost(self.lg.rows(), "s2", "ci", self.cfg))
 
     def test_scenarios_listing_shows_typical_per_lane(self):
         out = self.q(self.cli.cmd_list, scenarios=True, frontier=False, lane=None)
-        self.assertEqual(out, "s1 · gpu-small typical $0.90 (228s, n=4)\ns2\n")
+        self.assertEqual(out, "s1 · gpu-small typical $0.80 (200s, n=4)\ns2 · gpu-small typical unknown (all 1 runs killed)\n")
 
     def test_post_warns_below_typical_not_above(self):
         for jid, usd in (("low", 0.5), ("ok", 1.4)):
@@ -1032,8 +1053,10 @@ class TypicalCost(unittest.TestCase):
             p.write_text(f'id = "{jid}"\nquestion = "q?"\nif_pass = "go"\nif_fail = "stop"\nlane = "gpu-small"\n'
                          f'scenario = "s1"\nbudget_usd = {usd}\n')
             out = self.q(self.cli.cmd_post, spec=str(p), agent="human", seed=False, stake=0.0)
-            self.assertEqual("warning: typical cost on gpu-small is $0.90 (228s); $0.5 buys 128s and will likely be killed" in out,
+            self.assertEqual("warning: typical cost on gpu-small is $0.80 (200s); $0.5 buys 128s and will likely be killed" in out,
                              jid == "low", out)
         rows = self.lg.rows()
-        self.assertIn("typical here $0.90 (228s)", B.board(rows, self.cfg, hide=True))
-        self.assertIn("funded $1.4 (360s) · typical here $0.90 (228s)", B.new_markets(rows, self.cfg, "someone", 0))
+        board = B.board(rows, self.cfg, hide=True)
+        self.assertIn("typical here $0.80 (200s)", board)
+        self.assertNotIn("typical here", next(l for l in board.splitlines() if l.startswith("s2open ")))    # all killed: nothing to show
+        self.assertIn("funded $1.4 (360s) · typical here $0.80 (200s)", B.new_markets(rows, self.cfg, "someone", 0))

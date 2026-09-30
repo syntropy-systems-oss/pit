@@ -17,9 +17,11 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 from . import lanes, ledger as L, book as B, spec as specmod
 
+TAIL_LINES, TAIL_BYTES = 40, 4096      # a stopped run's output tail on its result row
 LINE = re.compile(r"^pit:\s+(.*)$")
 STOPS = {
     "feedback_report": re.compile(r"feedback[_:]report"),
@@ -175,6 +177,13 @@ def run_job(root, ledger: L.Ledger, cfg: dict, jid: str, lane: str | None = None
     else:
         r = execute(cmd, funded, s["fail_on"], cwd=os.path.expanduser(s["cwd"]) if s.get("cwd") else (root if synth else None),
                     echo=echo, env=env)
+    # the transcript: autopilot's log of this process (PIT_RUN_LOG), else a q run by hand writes one in the same place
+    r["log"] = os.environ.pop("PIT_RUN_LOG", None)
+    if not r["log"]:
+        r["log"] = f"autopilot/logs/run-{jid}-{time.strftime('%Y%m%dT%H%M%S', time.gmtime())}.log"
+        f = Path(root) / r["log"]
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(r.get("output", ""))
     return record(ledger, cfg, s, lane, r)
 
 
@@ -191,9 +200,12 @@ def record(ledger: L.Ledger, cfg: dict, s: dict, lane: str, r: dict, ts: str | N
     fund = B.funding_row(rows, s, cost["usd"])
     if fund.get("shortfall"):
         note += f"; {fund['wallet']} short ${fund['shortfall']:.2f} of the overage"
+    extra = {"log": r["log"]} if r.get("log") else {}
+    if verdict != "pass" and r.get("output"):     # what a stopped run did, for the proposer's hand-back
+        extra["tail"] = "\n".join(r["output"].splitlines()[-TAIL_LINES:])[-TAIL_BYTES:]
     row = ledger.append({"t": "result", "job": s["id"], "verdict": verdict, "cost": cost,
                          "result": rep.get("result", {}), "note": note, **({"funding": fund} if fund else {}),
-                         **({"agent": agent} if agent else {})}, ts)
+                         **({"agent": agent} if agent else {}), **extra}, ts)
     L.settle(ledger, s, verdict, ts)
     B.settle_due(ledger, cfg)
     return row

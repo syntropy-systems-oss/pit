@@ -74,7 +74,7 @@ def cmd_post(a):
     if err:
         sys.exit(f"refused {a.spec}: {err}")
     t = B.typical_cost(lg.rows(), B.scenario_of(s, cfg), s.get("lane"), cfg)
-    if t and s.get("budget_usd", 0) < t["usd"]:
+    if t and t["usd"] is not None and s.get("budget_usd", 0) < t["usd"]:
         print(f"warning: typical cost on {s['lane']} is ${t['usd']:.2f} ({t['wall_s']:.0f}s); ${s.get('budget_usd', 0):g} buys "
               f"{specmod.funded_seconds(s, cfg['lanes'])}s and will likely be killed")
     add_specs(root, lg, cfg, [(a.spec, {**s, "proposer": a.agent, **({"seed": True} if mode == "seed" else {})})])
@@ -196,7 +196,8 @@ def cmd_list(a):
             sys.exit(f"no scenario registry: set [bench] scenario_dir (default: scenarios/ in {root}) or scenario_cmd in lanes.toml")
         typ = B.typical_costs(lg.rows(), cfg)
         for n in names:
-            seen = [f"{l} typical ${t['usd']:.2f} ({t['wall_s']:.0f}s, n={t['n']})" for (sc, l), t in sorted(typ.items()) if sc == n]
+            seen = [f"{l} typical ${t['usd']:.2f} ({t['wall_s']:.0f}s, n={t['n']})" if t["usd"] is not None else
+                    f"{l} typical unknown (all {t['n']} runs killed)" for (sc, l), t in sorted(typ.items()) if sc == n]
             print(n + (" · " + " · ".join(seen) if seen else ""))
         return
     st = L.fold(lg.rows())
@@ -233,6 +234,9 @@ def cmd_why(a):
         if not (s.get("run") or specmod.synth(s, cfg)):
             reasons.append(f"undriven: no run or scenario; a desk job for its proposer ({s.get('proposer') or 'human'}), no lane picks it")
     print(f"{a.id}: " + ("runnable" if not reasons else "\n  ".join(["blocked", *reasons])))
+    res = st.jobs[a.id]["result"] if a.id in st.jobs else None
+    if res:
+        print(f"  result: {res['verdict']}" + (f" · {res['note']}" if res.get("note") else "") + (f" · log {res['log']}" if res.get("log") else ""))
 
 
 def cmd_show(a):

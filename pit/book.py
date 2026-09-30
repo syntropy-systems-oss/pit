@@ -54,7 +54,7 @@ def scenario_of(spec: dict, cfg: dict | None = None) -> str | None:
 
 def typical_costs(rows: list[dict], cfg: dict | None = None) -> dict[tuple[str, str], dict]:
     """(scenario, lane) -> {n, wall_s, usd, kill} from the settled result of every job with a scenario: medians of wall_s
-    and usd over its non-invalid results, kill = the share of those killed for funding (over budget)."""
+    and usd over its non-invalid results not killed for funding (None when all were), kill = the share killed (over budget)."""
     specs = {r["id"]: r["spec"] for r in rows if r["t"] == "node" and r.get("kind") == "job"}
     last = {r["job"]: r for r in rows if r["t"] == "result" and r["job"] in specs}      # a corrected result replaces the first
     runs: dict[tuple[str, str], list[dict]] = {}
@@ -62,9 +62,13 @@ def typical_costs(rows: list[dict], cfg: dict | None = None) -> dict[tuple[str, 
         sc = scenario_of(specs[jid], cfg)
         if sc and r["verdict"] != "invalid":
             runs.setdefault((sc, r["cost"].get("lane") or specs[jid]["lane"]), []).append(r)
-    return {k: {"n": len(rs), "wall_s": statistics.median(r["cost"]["wall_s"] for r in rs),
-                "usd": statistics.median(r["cost"]["usd"] for r in rs),
-                "kill": sum(r.get("note", "").startswith("over budget") for r in rs) / len(rs)} for k, rs in runs.items()}
+    killed = lambda r: r.get("note", "").startswith("over budget")
+    out = {}
+    for k, rs in runs.items():
+        ok = [r for r in rs if not killed(r)]      # a killed run's wall stops at its funding: it would bias the typical cost low
+        med = lambda f: statistics.median(r["cost"][f] for r in ok) if ok else None
+        out[k] = {"n": len(rs), "wall_s": med("wall_s"), "usd": med("usd"), "kill": (len(rs) - len(ok)) / len(rs)}
+    return out
 
 
 def typical_cost(rows: list[dict], scenario: str, lane: str, cfg: dict | None = None) -> dict | None:
@@ -74,7 +78,7 @@ def typical_cost(rows: list[dict], scenario: str, lane: str, cfg: dict | None = 
 def typical_here(spec: dict, cfg: dict, typ: dict) -> str:
     """' · typical here $Y (Ms)' for the spec's scenario on its lane, or '' when no run of it has settled there."""
     t = typ.get((scenario_of(spec, cfg), spec.get("lane")))
-    return f" · typical here ${t['usd']:.2f} ({t['wall_s']:.0f}s)" if t else ""
+    return f" · typical here ${t['usd']:.2f} ({t['wall_s']:.0f}s)" if t and t["usd"] is not None else ""
 
 
 def enabled(cfg: dict) -> bool:
@@ -742,6 +746,8 @@ def thread(rows: list[dict], agent: str, hide: bool = False) -> str:
         j = st.jobs[jid]
         v = f" {j['result']['verdict']}" if j["result"] else ""
         nodes.append(f"  {jid} [{j['state']}{v}] ${j['spec']['budget_usd']} {j['spec']['question'][:80]}")
+        if (j["result"] or {}).get("log"):
+            nodes.append(f"    log: {j['result']['log']}")
         nodes += [f"    -> {fid}: {f['text'][:90]}" for fid, f in st.findings.items() if f["from"] == jid]
     out += ["nodes:"] + (_cap(nodes[::-1], 20, "earlier lines")[::-1] if nodes else ["  none yet"])
     mine = [b for b in book.bets if b["agent"] in fam and (b["job"], b["variant"]) not in book.settled]
