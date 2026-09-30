@@ -83,7 +83,8 @@ def cmd_post(a):
     sync(root, lg, f"post {s['id']} as {a.agent}")
     book = B.Book(lg.rows())
     t = {v: book.totals(s["id"], v) for v in B.variants(s)}
-    print(f"{s['id']}: {mode}-funded, book " + ", ".join(f"{v} PASS ${x['pass']:.2f} / FAIL ${x['fail']:.2f}" for v, x in t.items()))
+    print(f"{s['id']}: {mode}-funded read (no market)" if specmod.is_read(s) else
+          f"{s['id']}: {mode}-funded, book " + ", ".join(f"{v} PASS ${x['pass']:.2f} / FAIL ${x['fail']:.2f}" for v, x in t.items()))
     who = B.HOUSE if mode == "seed" else a.agent
     print(f"{who} balance ${book.flows.get(who, 0.0) if who in (B.HOUSE, B.HUMAN) else book.balance(who):.2f}")
 
@@ -364,7 +365,8 @@ def cmd_run(a):
     c = row["cost"]
     print(f"{a.id}: {row['verdict'].upper()} {row['note']}\n  cost: {c['wall_s']}s · {json.dumps(c.get('meters', {}))} · "
           f"${c['usd']:.2f} on {c['lane']}")
-    branch = L.fold(lg.rows()).jobs[a.id]["spec"].get(f"if_{row['verdict']}")
+    s = L.fold(lg.rows()).jobs[a.id]["spec"]
+    branch = s.get("then") if row["verdict"] == "read" else s.get(f"if_{row['verdict']}")
     if branch:
         print(f"  next ({row['verdict']}): {branch}")
 

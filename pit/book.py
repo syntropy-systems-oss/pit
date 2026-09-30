@@ -12,6 +12,8 @@ Who funds a post (v1.1): a root (no depends_on, no `from`) posted by `reflect` (
 staked by the house from its vig pool (`house_seed` per variant, capped by the pool; a `bet` row with agent `house`,
 tagged `seed`) and debits no budget; a post `--as human` debits nothing and carries its --stake (tagged `human`);
 any other agent pays its budget and the auto stake (max(default_stake, stake_share x budget_usd)) from its wallet.
+A read (`kind = "read"`, spec.is_read) is funded like any post but has no market: no seed, no stake, no bets, no settle;
+it is never counted in a record, and ranks by cost among the zero-matched jobs (it can have no matched stakes).
 """
 import re
 import statistics
@@ -247,6 +249,8 @@ def bet_row(book: Book, st: L.State, job: str, variant: str, side: str, usd: flo
     j = st.jobs.get(job)
     if not j:
         raise SystemExit(f"no job {job}")
+    if specmod.is_read(j["spec"]):
+        raise SystemExit(f"{job} is a read: reads have no market")
     if j["state"] != "queued":
         raise SystemExit(f"{job} is {j['state']}: betting closed at claim")
     if variant not in variants(j["spec"]):
@@ -266,7 +270,7 @@ def bet_row(book: Book, st: L.State, job: str, variant: str, side: str, usd: flo
 
 def funding(book: Book, spec: dict, agent: str, seed: bool = False) -> str:
     """"seed" (the house stakes a root from its vig), "human" (no wallet; --stake) or "agent" (its wallet pays)."""
-    root = not spec.get("depends_on") and not spec.get("from")
+    root = not spec.get("depends_on") and not spec.get("from") and not specmod.is_read(spec)     # a read is never seeded
     if root and (seed or book.wallet(agent) == REFLECT):
         return "seed"
     return "human" if agent == HUMAN else "agent"
@@ -281,7 +285,7 @@ def auto_stake(cfg: dict, spec: dict) -> float:
 def stakes(rows: list[dict], cfg: dict, spec: dict, agent: str, mode: str, stake: float = 0.0) -> list[dict]:
     """The bet rows a post opens the book with, per variant (append them after the job node)."""
     out = []
-    for v in variants(spec):
+    for v in [] if specmod.is_read(spec) else variants(spec):
         book = Book(rows + out)
         if mode == "seed":
             usd = round(min(conf(cfg)["house_seed"], book.flows.get(HOUSE, 0.0)), 4)
@@ -317,10 +321,11 @@ def funding_row(rows: list[dict], spec: dict, cost_usd: float) -> dict:
 def check_post(book: Book, cfg: dict, spec: dict, agent: str, rows: list[dict] | None = None) -> str | None:
     if agent not in book.agents:
         return f"no agent {agent} (q agent add)"
-    need = spec.get("budget_usd", 0) + auto_stake(cfg, spec) * len(variants(spec))
+    read = specmod.is_read(spec)
+    need = spec.get("budget_usd", 0) + (0 if read else auto_stake(cfg, spec) * len(variants(spec)))
     if book.balance(agent) < need:
-        return f"{book.wallet(agent)} has ${book.balance(agent):.2f}; posting {spec.get('id')} needs ${need:.2f} " \
-               f"(budget ${spec.get('budget_usd', 0)} + the auto stake ${auto_stake(cfg, spec):.2f} per variant)"
+        return f"{book.wallet(agent)} has ${book.balance(agent):.2f}; posting {spec.get('id')} needs ${need:.2f} " + \
+            (f"(a read: its budget only)" if read else f"(budget ${spec.get('budget_usd', 0)} + the auto stake ${auto_stake(cfg, spec):.2f} per variant)")
     cap = conf(cfg)["max_posts_per_hour"]
     w = book.wallet(agent)
     if w != "house" and cap:
@@ -401,7 +406,9 @@ def digest(rows: list[dict], events: list[int], cfg: dict | None = None) -> str:
     book, st, lines = Book(rows), L.fold(rows), {}
     for i in events:
         r = rows[i]
-        if r["t"] == "node" and r.get("kind") == "job":
+        if r["t"] == "node" and r.get("kind") == "job" and specmod.is_read(r["spec"]):
+            lines[f"m{r['id']}"] = f"new read {r['id']} {funded(r['spec'], cfg or {})} {r['spec'].get('lane')} · {r['spec'].get('question', '')[:60]}"
+        elif r["t"] == "node" and r.get("kind") == "job":
             for v in variants(r["spec"]):
                 t = book.totals(r["id"], v)
                 lines[f"m{r['id']}/{v}"] = (f"new market {r['id']}/{v}{' [bag]' if r['spec'].get('bag') else ''} "
@@ -482,7 +489,7 @@ def new_markets(rows: list[dict], cfg: dict, agent: str, since: int, n: int = 10
     have = {(b["job"], b["variant"]) for b in book.bets if b["agent"] in fam}
     for r in reversed(rows[since:]):
         j = st.jobs.get(r.get("id")) if r["t"] == "node" and r.get("kind") == "job" else None
-        if not j or j["state"] != "queued":
+        if not j or j["state"] != "queued" or specmod.is_read(j["spec"]):
             continue
         s = j["spec"]
         prop = book.wallet(book.proposers.get(r["id"]) or s.get("proposer") or HUMAN)
@@ -699,7 +706,7 @@ def board(rows: list[dict], cfg: dict, n: int = 20, hide: bool = False) -> str:
     book, st = Book(rows), L.fold(rows)
     recs, lines, refs, typ = records(book), [], refuters(rows), typical_costs(rows, cfg) if hide else {}
     for jid, j in sorted(st.jobs.items(), key=lambda kv: kv[1]["added"], reverse=True):      # newest first; sort below is stable
-        if j["state"] != "queued":
+        if j["state"] != "queued" or specmod.is_read(j["spec"]):
             continue
         s = j["spec"]
         prop = book.wallet(book.proposers.get(jid) or s.get("proposer") or HUMAN)
@@ -757,7 +764,7 @@ def thread(rows: list[dict], agent: str, hide: bool = False) -> str:
     have = {(b["job"], b["variant"]) for b in book.bets if b["agent"] in fam}
     markets = []
     for jid, j in st.jobs.items():
-        if j["state"] != "queued":
+        if j["state"] != "queued" or specmod.is_read(j["spec"]):
             continue
         for v in variants(j["spec"]):
             if (jid, v) not in have:

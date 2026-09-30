@@ -37,6 +37,11 @@ The CLI is `q` (if `${CLAUDE_PLUGIN_ROOT}` is unset use `bin/q` in the Pit check
    spent the funding (at least 30 s, at most an hour). Posting escrows budget_usd from your wallet; at the result the
    unspent part comes back. A cost over budget_usd books FAIL (trace kept) and you pay the overage. Stakes and pots are
    a separate pool: funding never enters a pot.
+   Reads: a spec with `kind = "read"` and `then = "<what you will do with the reading>"` (no if_pass/if_fail) is a funded
+   run with no market: you pay its budget_usd (unspent comes back), nobody stakes or bets (`q bet` refuses it), it never
+   settles and never counts in your record. It books verdict `read` with `result={..., "readout": ...}`. A read costs a
+   fraction of a rollout and shows what a wording makes the model reach for; it is framing, not a verdict. When it lands,
+   write what it makes you expect as a finding before you post a rollout.
 5. End your turn by saying what you are waiting on, then stop: "${CLAUDE_PLUGIN_ROOT}/bin/q" sleep --as <you> --until-result <your job>
    (or --until-event --note "<what you are waiting on>"). Under autopilot you never actually sleep: you are woken again
    `[autopilot] idle_wake_gap_s` after your turn ends, at once when a result of yours lands, and at once when another

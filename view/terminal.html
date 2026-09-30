@@ -245,6 +245,7 @@ kbd{font:12px/16px var(--mono);padding:0 4px;border:1px solid var(--line2);borde
     <dt>score</dt><dd>matched per dollar of budget; each lane runs its highest first</dd>
     <dt><span class="b acc">run</span></dt><dd>claimed and running</dd>
     <dt><span class="b acc">fbk</span></dt><dd>fallback: nothing is matched in its lane, so the cheapest runs</dd>
+    <dt><span class="b q">read</span></dt><dd>a read: a funded run with no market; it buys framing, not a verdict</dd>
     <dt><span class="b">blk</span></dt><dd>blocked: a dependency, a dead branch or a refutation</dd>
     <dt><span class="b P">pass</span> <span class="b F">fail</span></dt><dd>the side of a bet, the verdict of a result</dd>
     <dt>spark</dt><dd>the wallet over the ledger; dashed = where it started</dd>
@@ -320,7 +321,7 @@ function renderLanes(m) {
         `<span class="num" title="${mmss(r.elapsed_s)} of ${mmss(r.funded_s)}">${usd(r.burned_usd)}<span class="dim"> / ${usd(r.budget_usd)}</span></span></div>`
         : `<div class="st"><span class="b ${l.idle_s > 120 ? "F" : "q"}">idle${l.idle_s != null ? " " + Math.floor(l.idle_s / 60) + "m" : ""}</span></div>`) +
       `<div class="qh"><span>Queue ${l.depth}</span><span class="num">score</span></div>` +
-      (q.map((x, i) => `<div class="qr" data-task="${esc(x.task)}"><span class="dim num">${i + 1}</span><span class="t">${esc(x.task)}</span><span>${x.fallback ? '<span class="b q" title="fallback: nothing in this lane has matched stakes, so the cheapest runnable job runs">fbk</span>' : ""}</span><span class="num">${x.score.toFixed(2)}</span></div>`).join("") ||
+      (q.map((x, i) => `<div class="qr" data-task="${esc(x.task)}"><span class="dim num">${i + 1}</span><span class="t">${esc(x.task)}</span><span>${x.read ? '<span class="b q" title="a read: funded framing, no market and no odds">read</span>' : x.fallback ? '<span class="b q" title="fallback: nothing in this lane has matched stakes, so the cheapest runnable job runs">fbk</span>' : ""}</span><span class="num">${x.read ? "" : x.score.toFixed(2)}</span></div>`).join("") ||
         `<div class="dim" style="line-height:20px">empty</div>`) +
       (l.depth > q.length ? `<div class="dim" style="line-height:20px">+ ${l.depth - q.length} more</div>` : "") + "</div>";
   }).join(""));
@@ -337,12 +338,12 @@ function marketRows(m) {
 function detail(mk, span) {
   const multi = mk.variants.length > 1 || mk.variants[0].variant !== "main";
   const bp = [...new Set(mk.variants.flatMap(v => v.pass_by))], bf = [...new Set(mk.variants.flatMap(v => v.fail_by))];
-  const bets = mk.bets.length ? `<div class="bets"><span class="h">time</span><span class="h">agent</span><span class="h">variant</span><span class="h">side</span><span class="h num">stake</span><span></span>` +
+  const bets = mk.read ? `<div class="dim" style="margin-top:8px">a read has no market: no bets, no odds, no settle</div>` : mk.bets.length ? `<div class="bets"><span class="h">time</span><span class="h">agent</span><span class="h">variant</span><span class="h">side</span><span class="h num">stake</span><span></span>` +
     mk.bets.map(b => `<span class="dim">${hms(b.ts)}</span><span>${chip(b.agent)}</span><span>${esc(b.variant)}</span><span class="${b.side === "pass" ? "P" : "F"}">${b.side.toUpperCase()}</span><span class="num">${usd(b.usd)}</span><span>${b.tags.map(t => `<span class="b q">${esc(t)}</span>`).join(" ")}</span>`).join("") + "</div>"
     : `<div class="dim" style="margin-top:8px">no bets yet: <code>q bet ${esc(mk.task)} PASS|FAIL &lt;usd&gt; --as &lt;agent&gt;</code></div>`;
   return `<tr class="detail"><td colspan="${span}"><div class="dgrid">` +
     `<span class="k">question</span><span>${esc(mk.question)}</span>` +
-    `<span class="k">if pass</span><span>${esc(mk.if_pass)}</span><span class="k">if fail</span><span>${esc(mk.if_fail)}</span>` +
+    (mk.read ? `<span class="k">then</span><span>${esc(mk.then)}</span>` : `<span class="k">if pass</span><span>${esc(mk.if_pass)}</span><span class="k">if fail</span><span>${esc(mk.if_fail)}</span>`) +
     `<span class="k">posted by</span><span>${mk.proposer ? chip(mk.proposer) : '<span class="dim">human</span>'} <span class="dim">on ${esc(mk.lane)}</span></span>` +
     `<span class="k">backers</span><span><span class="P">PASS</span> ${chips(bp)} &nbsp; <span class="F">FAIL</span> ${chips(bf)}</span>` +
     (multi ? `<span class="k">variants</span><span>${mk.variants.map(v => `${esc(v.variant)} <span class="P">${usd(v.pass)}</span> / <span class="F">${usd(v.fail)}</span> <span class="dim">matched</span> ${usd(v.matched)}`).join(" &nbsp;·&nbsp; ")}</span>` : "") +
@@ -364,10 +365,10 @@ function renderMarkets(m) {
     const td = {
       state: `<td><span class="b ${sc}">${st}</span></td>`,
       task: `<td title="${esc(mk.question)}">${esc(mk.task)}${multi ? `<span class="sub"> / ${esc(mk.variants.map(v => v.variant).join(" "))}</span>` : ""}</td>`,
-      lane: `<td class="fg2">${esc(mk.lane)}</td>`, odds: `<td>${book(mk.pass, mk.fail)}</td>`,
+      lane: `<td class="fg2">${esc(mk.lane)}</td>`, odds: `<td>${mk.read ? '<span class="b q" title="a read: funded framing, no market and no odds">read</span>' : book(mk.pass, mk.fail)}</td>`,
       pass: `<td class="num">${mk.pass ? usd(mk.pass) : dash}</td>`, fail: `<td class="num">${mk.fail ? usd(mk.fail) : dash}</td>`,
       matched: `<td class="num">${mk.matched ? usd(mk.matched) : dash}</td>`, budget: `<td class="num">${usd(mk.budget)}</td>`,
-      score: `<td class="num${mk.score ? "" : " dim"}">${mk.score.toFixed(2)}</td>`, age_s: `<td class="num fg2">${age(mk.age_s)}</td>`};
+      score: mk.read ? `<td class="num">${dash}</td>` : `<td class="num${mk.score ? "" : " dim"}">${mk.score.toFixed(2)}</td>`, age_s: `<td class="num fg2">${age(mk.age_s)}</td>`};
     return `<tr class="row${mk.task === S.sel ? " sel" : ""}" data-task="${esc(mk.task)}" aria-selected="${mk.task === S.sel}">` +
       cols.map(([c]) => td[c[0]]).join("") + "</tr>" + (mk.task === S.open ? detail(mk, cols.length) : "");
   }).join("") + "</tbody></table>");

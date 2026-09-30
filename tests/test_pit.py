@@ -748,6 +748,37 @@ class Pit(unittest.TestCase):
         with mock.patch.object(cli, "ctx", lambda: (ROOT, self.lg, self.PCFG)), mock.patch.object(cli, "sync", lambda *a: None):
             return getattr(cli, fn)(N(**kw))
 
+    def test_read_is_funded_with_no_market(self):
+        from pit import autopilot as A
+        rd = job("rd", kind="read", then="post the rollout the reading points at", if_pass="", if_fail="")
+        self.assertEqual(specmod.validate(rd, CFG["lanes"]), [])                          # `then`, not if_pass/if_fail
+        self.assertIn("missing then: what you will do with the reading", specmod.validate({**rd, "then": ""}, CFG["lanes"]))
+        self.post(job("x"), "a")
+        self.bet("x", "fail", 1, "b", why="no")
+        self.settle("x", "pass")
+        recs = B.records(self.book())
+        before = self.book().balance("b")
+        self.assertEqual(self.post(rd, "b"), "agent")
+        self.assertEqual(B.funding(self.book(), rd, "reflect"), "agent")                 # never house-seeded
+        self.assertEqual([r for r in self.lg.rows() if r["t"] == "bet" and r["job"] == "rd"], [])   # no stake, no seed
+        self.assertAlmostEqual(self.book().balance("b"), before - 1)                     # the budget only
+        with self.assertRaisesRegex(SystemExit, "reads have no market"):
+            self.bet("rd", "pass", 1, "a", why="x")
+        self.assertNotIn("rd", B.board(self.lg.rows(), self.PCFG))
+        row = runmod.record(self.lg, self.PCFG, L.fold(self.lg.rows()).jobs["rd"]["spec"], "gpu-small",
+                            {"report": {"verdict": "read", "result": {"readout": "reads/rd.md"}}, "wall_s": 60.0, "rc": 0, "output": "x"})
+        self.assertEqual((row["verdict"], row["result"]), ("read", {"readout": "reads/rd.md"}))
+        self.assertNotIn("tail", row)
+        self.assertAlmostEqual(row["funding"]["usd"], 1 - row["cost"]["usd"])            # the unspent part back
+        self.assertAlmostEqual(self.book().balance("b"), before - row["cost"]["usd"])
+        self.assertFalse(any(r["t"] == "settle" and r["job"] == "rd" for r in self.lg.rows()))
+        self.assertEqual(B.records(self.book()), recs)                                   # neither a win nor a loss
+        self.assertEqual(A.finished("rd", L.fold(self.lg.rows()).jobs["rd"]).split(" cost")[0],
+                         "Your read is in: reads/rd.md; write what it makes you expect, as a finding, before you post a rollout.")
+        silent = runmod.record(self.lg, self.PCFG, rd, "gpu-small", {"report": {}, "wall_s": 1.0, "rc": 0})
+        self.assertEqual(silent["verdict"], "invalid")                                   # a driver that never reported
+        self.assertEqual(L.fold(self.lg.rows()).dep_reason("rd"), "rd ended invalid: not evidence; rerun or cancel")
+
     def test_edge_refuses_missing_node(self):
         self.post(job("x"), "a")
         with self.assertRaises(SystemExit):

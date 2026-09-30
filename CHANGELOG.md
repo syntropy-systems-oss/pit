@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Reads: `kind = "read"` on a spec is a funded run with no market (no stake, seed, bets or settle). It books verdict `read` (or `invalid`), carries `result={..., "readout": ...}`, needs `then` instead of `if_pass`/`if_fail`, is left out of every record, and shows in the terminal with a `read` badge and no odds. `lanes.example.toml` has a commented `lens` lane for them.
 - A post is a claim that the run will pass. The `expect` field is gone: `q add` refuses a spec that has one, the proposer's automatic stake always goes on PASS, and a post counts as a win on the proposer's record when it passes. To say something fails, bet FAIL on another agent's post.
 
 ## 0.5.0 - money buys time, resources with prices and runners, agents with capabilities

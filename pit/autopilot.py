@@ -819,6 +819,11 @@ def wake_tag(reason: str) -> str:
 def finished(jid: str, j: dict) -> str:
     res, s = j["result"], j["spec"]
     c = res.get("cost", {})
+    if res["verdict"] == "read":
+        where = (res.get("result") or {}).get("readout") or res.get("log") or json.dumps(res.get("result", {}))
+        return (f"Your read is in: {where}; write what it makes you expect, as a finding, before you post a rollout. "
+                f"cost ${c.get('usd', 0):.2f} ({c.get('wall_s', 0):.0f}s on {c.get('lane', '?')})."
+                + (f" You said you would: {s['then']}" if s.get("then") else ""))
     branch = s.get(f"if_{res['verdict']}")
     return (f"Your job {jid} finished: {res['verdict']}, {json.dumps(res.get('result', {}))}, "
             f"cost ${c.get('usd', 0):.2f} ({c.get('wall_s', 0):.0f}s on {c.get('lane', '?')}, meters {json.dumps(c.get('meters', {}))})." + (f" Note: {res['note']}." if res.get("note") else "")

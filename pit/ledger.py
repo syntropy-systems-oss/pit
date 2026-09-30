@@ -130,7 +130,7 @@ class State:
             v = j["result"]["verdict"] if j["result"] else None
             if v is None:
                 return f"waiting on {did} ({j['state']})"
-            if v not in SETTLED:
+            if v not in SETTLED and not (v == "read" and not want):      # a read feeds a plain dependency, never a branch
                 return f"{did} ended {v}: not evidence; rerun or cancel"
             if want and v != want:
                 return f"{did} ended {v}; this job runs only on {want} (dead branch: cancel it)"

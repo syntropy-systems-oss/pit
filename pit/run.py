@@ -196,12 +196,16 @@ def record(ledger: L.Ledger, cfg: dict, s: dict, lane: str, r: dict, ts: str | N
     if cost["usd"] > budget:
         verdict, note = "fail", (f"over budget: ${cost['usd']:.2f} of ${budget:.2f} (time ${cost['usd_time']:.2f}, "
                                  f"meters ${cost['usd'] - cost['usd_time']:.2f}); trace kept")
+    if specmod.is_read(s):      # a read has no pass/fail: a driver that reported is the reading; a stopped or silent one is invalid
+        verdict = "invalid" if verdict == "invalid" or note else "read"
+    elif verdict == "read":
+        verdict, note = "invalid", "verdict read on a job that is not a read (kind = \"read\")"
     rows = ledger.rows()
     fund = B.funding_row(rows, s, cost["usd"])
     if fund.get("shortfall"):
         note += f"; {fund['wallet']} short ${fund['shortfall']:.2f} of the overage"
     extra = {"log": r["log"]} if r.get("log") else {}
-    if verdict != "pass" and r.get("output"):     # what a stopped run did, for the proposer's hand-back
+    if verdict not in ("pass", "read") and r.get("output"):     # what a stopped run did, for the proposer's hand-back
         extra["tail"] = "\n".join(r["output"].splitlines()[-TAIL_LINES:])[-TAIL_BYTES:]
     row = ledger.append({"t": "result", "job": s["id"], "verdict": verdict, "cost": cost,
                          "result": rep.get("result", {}), "note": note, **({"funding": fund} if fund else {}),

@@ -109,7 +109,8 @@ def market_json(rows: list[dict], cfg: dict, now: datetime | None = None) -> dic
                 "matched": round(m, 4), "budget": budget, "score": round(m / max(budget, 0.01), 4), "lane": s["lane"],
                 "proposer": book.proposers.get(jid), "fallback": jid in fb, "state": j["state"], "runnable": jid in frontier,
                 "rank": order.index(jid) if jid in order else None, "added": j["added"], "age_s": _age(born.get(jid), now),
-                "question": s["question"], "if_pass": s["if_pass"], "if_fail": s["if_fail"],
+                "question": s["question"], "if_pass": s.get("if_pass", ""), "if_fail": s.get("if_fail", ""),
+                "read": specmod.is_read(s), "then": s.get("then", ""),
                 "bets": [{"i": i, "ts": r["ts"], "agent": r["agent"], "variant": r["variant"], "side": r["side"], "usd": r["usd"], "tags": r.get("tags", [])}
                          for i, r in enumerate(rows) if r["t"] == "bet" and r["job"] == jid]}
     markets = [market(j) for j, v in st.jobs.items() if v["state"] in ("queued", "running")]
@@ -130,7 +131,7 @@ def market_json(rows: list[dict], cfg: dict, now: datetime | None = None) -> dic
         lane_out.append({"lane": name, "price": l.get("usd_per_h", 0), "box": l.get("box", ""), "running": run,
                          "idle_s": None if run else autopilot.lane_idle(rows, st, name, now),
                          "depth": len(q), "queue": [{"task": j, "score": mk[j]["score"], "matched": mk[j]["matched"], "budget": mk[j]["budget"],
-                                                     "fallback": j in fb, "proposer": mk[j]["proposer"]} for j in q], "spend_today": spend.get(name, 0.0),
+                                                     "fallback": j in fb, "proposer": mk[j]["proposer"], "read": mk[j]["read"]} for j in q], "spend_today": spend.get(name, 0.0),
                          "bag": (lambda c: c and {"n": bag.today(rows, name, now), "max": c["max_per_day"]})(bag.conf(cfg, name))})
 
     sleepers, fams = B.sleepers(rows), {}

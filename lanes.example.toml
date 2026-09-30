@@ -62,6 +62,15 @@ gate = "true"
 # ref = "main"
 # gate = "curl -sf -m 3 http://ci-box:8791/health"
 
+# A lane for reads (kind = "read": a funded run with no market; it buys framing, not a verdict). Uncomment to use; it is
+# left commented here because every lane's usd_per_h adds to the minted income.
+# [lanes.lens]
+# box = "reads: cheap qualitative runs that show what a wording makes the model reach for"
+# usd_per_h = 2                 # priced low: a read costs a fraction of a rollout
+# slots = 1
+# gate = "true"
+# runner = "python3 lens_read.py {scenario}"    # a placeholder for your read driver; it ends with pit: verdict=read result={"readout": "<path or text>"}
+
 # `any` is built in: wherever the session is; charged its meters only, at [prices].
 
 # The scenario registry: `q list --scenarios` prints the entries of this directory (relative to the state root; one file

@@ -130,6 +130,20 @@ and has three verbs:
 
 Everything else is house logic. `q tick` mints `[pit] mint` (default 1.0) x the sum of the lane rates for each whole minute since the last tick and splits it evenly across the persistent agents that are not retired (a sub-agent books to its parent); the terminal's MINT is that rate. A result settles each variant: winners split the pot less the vig, pro rata; with no winner the house keeps it; invalid, cancelled and superseded runs refund every stake. A corrected result that flips PASS and FAIL re-settles the market: the new settle row claws back what the last one paid (`clawback`), pays the new winners from the same pot, names the row it replaces (`supersedes`), and charges the vig once. A proposer that settles its own run-less job at $0 gets its own bets back rather than winning the pot. Wallets are never stored: a balance is drips plus settlements minus stakes and budgets, plus the funding booked back at each result. `q pit calibration` prints per agent: bets, wins, staked, returned, a Brier score from the stake share at close, and how often it bet with the side already ahead.
 
+### Reads and markets
+
+Reads are how you buy framing; markets are how you get paid for being right. A spec with `kind = "read"` is a funded run like any other: a lane, `budget_usd` escrowed and turned into funded seconds, meters priced, the unspent part refunded and the overage taken. It has no market: no automatic stake, no house seed, no bets (`q bet` refuses: "reads have no market"), no settle and no pass or fail. Its driver ends with `pit: verdict=read result={...}` carrying whatever it produced and, by convention, `readout` (a path or inline text); the result books verdict `read`, or `invalid` when the driver stops, runs out of funding or never reports. A read needs no `if_pass`/`if_fail`; it needs `then = "<what you will do with the reading>"`. Reads are not in any record (neither wins nor losses), rank among the zero-matched jobs by cost (cheapest first), and the terminal lists them in the lane queue and the market table with a `read` badge and no odds. The proposer's hand-back says "Your read is in: <readout or log>; write what it makes you expect, as a finding, before you post a rollout." A later job may depend on a read (plain `depends_on`, not `@pass`/`@fail`) and template its `result`.
+
+```toml
+id = "lens-wording-b"
+kind = "read"
+question = "What does wording B make the model reach for?"
+then = "post a rollout of B only if the reading names the tool it needs"
+lane = "lens"
+budget_usd = 0.5
+scenario = "wording-b"
+```
+
 ### Blind betting prevents cascades
 
 With `[pit] blind = true` (the default) nothing an agent sees carries information about other agents' bets: its board (`q board --as <agent>`), its "New markets since your last turn", the digest and its thread show each open market as job, lane, the question, its compute funding (`budget_usd` and funded seconds), the proposer and the proposer's record, with no pools, odds, matched amounts, backers or counter-bettor whys, and another agent's bet does not wake it. Its own stakes stay visible (open bets in its thread, settled stakes). An agent that cannot see the crowd bets what it believes instead of joining the side already ahead, so the book aggregates independent judgments. The dispatcher still ranks by matched stakes, settlements pay as before, and the human terminal, `/market.json` and `q board` without `--as` show everything. `blind = false` restores the priced view.

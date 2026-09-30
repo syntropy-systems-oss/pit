@@ -10,7 +10,7 @@ ID_RE = re.compile(r"^[A-Za-z0-9_.:\-]+$")
 TEMPLATE = re.compile(r"\{\{\s*(.*?)\s*\}\}")
 # jobs.<id>.result[.key...] | jobs.<id>.verdict | findings.<id>.text|status | inputs.<key>
 REF = re.compile(r"^(?:(jobs)\.(.+?)\.(result|verdict)|(findings)\.(.+?)\.(text|status)|(inputs))((?:\.[A-Za-z0-9_\-]+)*)$")
-VERDICTS = ("pass", "fail", "invalid", "unknown")
+VERDICTS = ("pass", "fail", "invalid", "unknown", "read")
 FINDING_LISTS = ("produces", "produces_if_pass", "produces_if_fail", "refutes_if_pass", "refutes_if_fail")
 DEFAULTS = {"value": 1, "depends_on": [], "inputs": {}, "priority": 0, "run": "",
             "fail_on": ["feedback_report"], **{k: [] for k in FINDING_LISTS}}
@@ -18,6 +18,11 @@ DEFAULTS = {"value": 1, "depends_on": [], "inputs": {}, "priority": 0, "run": ""
 
 class SpecError(ValueError):
     pass
+
+
+def is_read(spec: dict) -> bool:
+    """`kind = "read"`: a funded run with no market (no stake, seed, bets or settle); its verdict is `read` (or invalid)."""
+    return spec.get("kind") == "read"
 
 
 def load(path) -> dict:
@@ -92,14 +97,16 @@ def validate(spec: dict, lanes: dict, known: list[str] | None = None, drivers: l
     """Reasons to refuse the spec; empty list = accepted. `lanes` is lanes.load()['lanes']; `known` = scenarios() (None: any);
     `drivers` = [bench] drivers (None: a run is not checked for a verdict line)."""
     errs = []
-    for k in ("id", "question", "if_pass", "if_fail"):
+    if spec.get("kind") not in (None, "read"):
+        errs.append(f"unknown kind {spec['kind']!r} (a job, or \"read\")")
+    for k in ("id", "question", *(("then",) if is_read(spec) else ("if_pass", "if_fail"))):
         if not str(spec.get(k, "")).strip():
-            errs.append(f"missing {k}")
+            errs.append(f"missing {k}" + (": what you will do with the reading" if k == "then" else ""))
     if spec.get("id") and not ID_RE.match(str(spec["id"])):
         errs.append(f"bad id {spec['id']!r} (letters, digits, _ . : -)")
     if "expect" in spec:
         errs.append("no expect: a post claims the run will pass; to say something fails, bet FAIL on another agent's post")
-    if spec.get("if_pass") and str(spec["if_pass"]).strip() == str(spec.get("if_fail", "")).strip():
+    if not is_read(spec) and spec.get("if_pass") and str(spec["if_pass"]).strip() == str(spec.get("if_fail", "")).strip():
         errs.append("if_pass == if_fail: the run cannot change a decision")
     lane = spec.get("lane")
     if lane != "any" and lane not in lanes:
