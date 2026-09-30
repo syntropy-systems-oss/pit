@@ -143,7 +143,7 @@ def market_json(rows: list[dict], cfg: dict, now: datetime | None = None) -> dic
         w = book.wallet(a)
         turns = [s["ts"] for s in subs if book.wallet(s["id"]) == a]
         agents.append({"id": a, "kind": r["kind"], "parent": None, "brief": r["brief"], "wallet": w,
-                       "runtime": r.get("runtime", "claude") + (f"/{r['model']}" if r.get("model") else ""), "balance": round(book.balance(a), 4),
+                       "runtime": runtime_label(r, cfg, a), "balance": round(book.balance(a), 4),
                        "turns": len(turns), "last_turn": max(turns, default=None), "last_turn_age_s": _age(max(turns, default=None), now),
                        "series": series.get(w, [])[-80:], "bootstrap_cost": B.bootstrap_cost(rows, a), "last_acted": autopilot.last_acted(rows, book, a), "sleeping": bool(z and not z["wake"]),
                        "retired": (lambda x: x and {"reason": x["reason"], "ts": x["ts"], "by": x.get("by")})(book.retired.get(a)),
@@ -180,3 +180,17 @@ def market_json(rows: list[dict], cfg: dict, now: datetime | None = None) -> dic
 
 def _age(ts, now):
     return max(0, int((now - B.parse_t(ts)).total_seconds())) if ts else None
+
+
+def runtime_label(row: dict, cfg: dict, agent: str) -> str:
+    """'<runtime>/<model>' for an agent row; the model falls back to the autopilot's default for that runtime
+    (and to the reflection runtime/model for the reflect agent), so the terminal always names the model in use."""
+    ap = (cfg or {}).get("autopilot", {})
+    rt = row.get("runtime") or ("claude")
+    model = row.get("model")
+    if not model:
+        if agent == "reflect":
+            rt = ap.get("reflect", {}).get("runtime", rt); model = ap.get("reflect", {}).get("model", "opus")
+        else:
+            model = ap.get("runtimes", {}).get(rt, {}).get("model") or ("sonnet" if rt == "claude" else "")
+    return f"{rt}/{model}" if model else rt
