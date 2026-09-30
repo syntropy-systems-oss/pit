@@ -1,6 +1,5 @@
 id = "ci-build"
 question = "Does the release candidate build and pass CI?"
-expect = "pass"
 if_pass = "send it to review"
 if_fail = "fix the build"
 lane = "ci"

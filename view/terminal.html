@@ -342,7 +342,6 @@ function detail(mk, span) {
     : `<div class="dim" style="margin-top:8px">no bets yet: <code>q bet ${esc(mk.task)} PASS|FAIL &lt;usd&gt; --as &lt;agent&gt;</code></div>`;
   return `<tr class="detail"><td colspan="${span}"><div class="dgrid">` +
     `<span class="k">question</span><span>${esc(mk.question)}</span>` +
-    `<span class="k">expect</span><span class="${mk.expect === "pass" ? "P" : "F"}">${esc(String(mk.expect).toUpperCase())}</span>` +
     `<span class="k">if pass</span><span>${esc(mk.if_pass)}</span><span class="k">if fail</span><span>${esc(mk.if_fail)}</span>` +
     `<span class="k">posted by</span><span>${mk.proposer ? chip(mk.proposer) : '<span class="dim">human</span>'} <span class="dim">on ${esc(mk.lane)}</span></span>` +
     `<span class="k">backers</span><span><span class="P">PASS</span> ${chips(bp)} &nbsp; <span class="F">FAIL</span> ${chips(bf)}</span>` +

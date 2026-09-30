@@ -1,6 +1,5 @@
 id = "baseline-a"
 question = "Does variant A reach 70% on the held-out set?"
-expect = "pass"
 if_pass = "A is the baseline: run B against it"
 if_fail = "fix the eval harness before comparing variants"
 lane = "gpu-small"

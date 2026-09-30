@@ -122,7 +122,7 @@ def post(lg: L.Ledger, cfg: dict, s: dict, lane: str, c: dict, stamp: str) -> di
     taken = {r["id"] for r in bag_jobs(lg.rows())}
     jid = next(j for j in (f"bag-{s['id']}-{stamp}", *(f"bag-{s['id']}-{stamp}-{n}" for n in range(2, 99))) if j not in taken)
     spec = {**({"budget_usd": c["budget_usd"]} if "budget_usd" in c else {}),      # lane budget is the fallback; the spec's own wins
-            **s, "id": jid, "lane": lane, "expect": "pass", "proposer": B.HOUSE, "bag": True, "bag_spec": s["id"]}
+            **s, "id": jid, "lane": lane, "proposer": B.HOUSE, "bag": True, "bag_spec": s["id"]}
     lg.append({"t": "node", "kind": "job", "id": jid, "spec": spec})
     for v in B.variants(spec):
         usd = round(min(c["house_stake"], B.Book(lg.rows()).flows.get(B.HOUSE, 0.0)), 4)

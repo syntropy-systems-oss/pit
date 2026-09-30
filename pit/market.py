@@ -109,7 +109,7 @@ def market_json(rows: list[dict], cfg: dict, now: datetime | None = None) -> dic
                 "matched": round(m, 4), "budget": budget, "score": round(m / max(budget, 0.01), 4), "lane": s["lane"],
                 "proposer": book.proposers.get(jid), "fallback": jid in fb, "state": j["state"], "runnable": jid in frontier,
                 "rank": order.index(jid) if jid in order else None, "added": j["added"], "age_s": _age(born.get(jid), now),
-                "question": s["question"], "expect": s["expect"], "if_pass": s["if_pass"], "if_fail": s["if_fail"],
+                "question": s["question"], "if_pass": s["if_pass"], "if_fail": s["if_fail"],
                 "bets": [{"i": i, "ts": r["ts"], "agent": r["agent"], "variant": r["variant"], "side": r["side"], "usd": r["usd"], "tags": r.get("tags", [])}
                          for i, r in enumerate(rows) if r["t"] == "bet" and r["job"] == jid]}
     markets = [market(j) for j, v in st.jobs.items() if v["state"] in ("queued", "running")]

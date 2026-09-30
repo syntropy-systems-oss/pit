@@ -92,13 +92,13 @@ def validate(spec: dict, lanes: dict, known: list[str] | None = None, drivers: l
     """Reasons to refuse the spec; empty list = accepted. `lanes` is lanes.load()['lanes']; `known` = scenarios() (None: any);
     `drivers` = [bench] drivers (None: a run is not checked for a verdict line)."""
     errs = []
-    for k in ("id", "question", "expect", "if_pass", "if_fail"):
+    for k in ("id", "question", "if_pass", "if_fail"):
         if not str(spec.get(k, "")).strip():
             errs.append(f"missing {k}")
     if spec.get("id") and not ID_RE.match(str(spec["id"])):
         errs.append(f"bad id {spec['id']!r} (letters, digits, _ . : -)")
-    if spec.get("expect") and spec["expect"] not in ("pass", "fail"):
-        errs.append(f"expect must be pass or fail, not {spec['expect']!r}")
+    if "expect" in spec:
+        errs.append("no expect: a post claims the run will pass; to say something fails, bet FAIL on another agent's post")
     if spec.get("if_pass") and str(spec["if_pass"]).strip() == str(spec.get("if_fail", "")).strip():
         errs.append("if_pass == if_fail: the run cannot change a decision")
     lane = spec.get("lane")

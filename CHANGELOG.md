@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A post is a claim that the run will pass. The `expect` field is gone: `q add` refuses a spec that has one, the proposer's automatic stake always goes on PASS, and a post counts as a win on the proposer's record when it passes. To say something fails, bet FAIL on another agent's post.
+
 ## 0.5.0 - money buys time, resources with prices and runners, agents with capabilities
 
 - A job is funded in dollars. `budget_usd` is the only budget; a spec with `budget_s` is refused. The run is killed when its time alone has spent the funding (`budget_usd / usd_per_h`, at least 30 s, at most an hour; lane `any` gets the hour), and `q add` refuses funding outside that range.

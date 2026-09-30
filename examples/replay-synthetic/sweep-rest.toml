@@ -1,6 +1,5 @@
 id = "sweep-rest"
 question = "Do prompts 4-10 pass once the grader is fixed?"
-expect = "pass"
 if_pass = "ship the prompt set"
 if_fail = "fix the failing prompts first"
 lane = "gpu-large"

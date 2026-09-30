@@ -1,6 +1,5 @@
 id = "seed-sweep"
 question = "Does A's score hold within 1 point across three seeds?"
-expect = "pass"
 if_pass = "one seed is enough for this set"
 if_fail = "report every comparison over three seeds"
 lane = "gpu-small"

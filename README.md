@@ -79,7 +79,6 @@ One TOML file per job; `q add` validates it and appends it.
 ```toml
 id = "variant-b"
 question = "Does variant B beat A on the held-out set?"
-expect = "pass"                        # your prediction: pass | fail
 if_pass = "promote B; queue the ablation"
 if_fail = "keep A as the default"      # must differ from if_pass
 lane = "gpu-small"
@@ -91,7 +90,7 @@ run = "python3 eval.py --variant B --beat {{ inputs.baseline }}"
 produces_if_pass = ["F:b-beats-a"]
 ```
 
-Experiments climb in rungs. Each job names the branch it needs from the one below (`depends_on = ["job@pass"]`), so the next rung runs only if the last one came out that way, and a rung that ends on the other branch closes the ladder above it (`q why <id>` says "dead branch: cancel it"). `q add` refuses a spec with no prediction, identical branches, an unknown lane, funding that buys under 30 s or over an hour, a budget over the lane's cap, a `run` that names another lane's `--model`, or a template that reads something outside `depends_on`. With `[bench] drivers` set it also refuses a `run` that neither prints its own verdict line (`verdict=`) nor starts with a listed driver: an exit code alone is not a result.
+Experiments climb in rungs. Each job names the branch it needs from the one below (`depends_on = ["job@pass"]`), so the next rung runs only if the last one came out that way, and a rung that ends on the other branch closes the ladder above it (`q why <id>` says "dead branch: cancel it"). A post is a claim that the run will pass: the spec has no prediction field, and `q add` refuses one with `expect`. `if_pass` and `if_fail` say what the proposer will do either way. `q add` refuses a spec with identical branches, an unknown lane, funding that buys under 30 s or over an hour, a budget over the lane's cap, a `run` that names another lane's `--model`, or a template that reads something outside `depends_on`. With `[bench] drivers` set it also refuses a `run` that neither prints its own verdict line (`verdict=`) nor starts with a listed driver: an exit code alone is not a result.
 
 `q run <id>` checks the gate, claims the job, fills templates from upstream results (shell-quoted), runs the command until its funding runs out, and appends the result. The command reports with one line of output:
 
@@ -125,8 +124,8 @@ and has three verbs:
 
 | verb | command | what happens |
 |---|---|---|
-| **post** | `q post <spec.toml> --as <agent>` | the wallet pays `budget_usd`; the agent's `expect` goes on the book as a stake per variant (`arms = [...]`, or `main`) of max(`[pit] default_stake`, `stake_share` x `budget_usd`): 25% of the funding by default, `default_stake` the floor, so a bigger run opens a bigger pot |
-| **bet** | `q bet <job> [<variant>] PASS\|FAIL <usd> --as <agent> --why "<one line>"` | closes when the run is claimed; a bet on your own post buys queue position and is left out of your calibration. Say why: `--why` is required on another agent's job, and your losses come back to you next turn. Each wake lists the markets other agents posted since the agent's last turn that it has not bet on (up to 10, newest first, then `… N more: q board`), with pools and what $1 on the thin side pays (blind: its funding instead): for each it bets or writes `pass: <reason>` in its findings |
+| **post** | `q post <spec.toml> --as <agent>` | the wallet pays `budget_usd`; a post is a claim it works, so the agent's automatic stake goes on PASS, per variant (`arms = [...]`, or `main`) of max(`[pit] default_stake`, `stake_share` x `budget_usd`): 25% of the funding by default, `default_stake` the floor, so a bigger run opens a bigger pot |
+| **bet** | `q bet <job> [<variant>] PASS\|FAIL <usd> --as <agent> --why "<one line>"` | a post is a claim it works; disagreement is a FAIL bet on someone else's post. Closes when the run is claimed; a bet on your own post buys queue position and is left out of your calibration. Say why: `--why` is required on another agent's job, and your losses come back to you next turn. Each wake lists the markets other agents posted since the agent's last turn that it has not bet on (up to 10, newest first, then `… N more: q board`), with pools and what $1 on the thin side pays (blind: its funding instead): for each it bets or writes `pass: <reason>` in its findings |
 | **balance** | `q balance --as <agent>`, `q thread <agent>` | the wallet, and everything an agent needs when it is spawned (60 lines or fewer) |
 
 Everything else is house logic. `q tick` mints `[pit] mint` (default 1.0) x the sum of the lane rates for each whole minute since the last tick and splits it evenly across the persistent agents that are not retired (a sub-agent books to its parent); the terminal's MINT is that rate. A result settles each variant: winners split the pot less the vig, pro rata; with no winner the house keeps it; invalid, cancelled and superseded runs refund every stake. A corrected result that flips PASS and FAIL re-settles the market: the new settle row claws back what the last one paid (`clawback`), pays the new winners from the same pot, names the row it replaces (`supersedes`), and charges the vig once. A proposer that settles its own run-less job at $0 gets its own bets back rather than winning the pot. Wallets are never stored: a balance is drips plus settlements minus stakes and budgets, plus the funding booked back at each result. `q pit calibration` prints per agent: bets, wins, staked, returned, a Brier score from the stake share at close, and how often it bet with the side already ahead.

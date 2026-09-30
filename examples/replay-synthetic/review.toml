@@ -1,6 +1,5 @@
 id = "review"
 question = "Does an independent review find no blocking issue in the candidate?"
-expect = "pass"
 if_pass = "rehearse the release"
 if_fail = "address the review first"
 lane = "any"

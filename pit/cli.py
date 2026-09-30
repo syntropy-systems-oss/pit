@@ -66,7 +66,7 @@ def add_specs(root, lg, cfg, loaded):
 
 
 def cmd_post(a):
-    """q add + the proposer pays the budget + an automatic stake on its `expect`, per variant."""
+    """q add + the proposer pays the budget + an automatic stake on PASS, per variant."""
     root, lg, cfg = ctx()
     book, s = B.Book(lg.rows()), specmod.load(a.spec)
     mode = B.funding(book, s, a.agent, a.seed)
@@ -513,10 +513,10 @@ def main(argv=None):
     p = sub.add_parser("run", help="run a job's command: claim, kill when the funding runs out, stop rules, result")
     p.add_argument("id"); p.add_argument("--lane"); p.add_argument("--force-gate", action="store_true")
     p.add_argument("--as", dest="agent", help="the agent claiming it"); p.set_defaults(f=cmd_run)
-    p = sub.add_parser("post", help="add a spec as an agent: it pays the budget and stakes its expect")
+    p = sub.add_parser("post", help="add a spec as an agent: it pays the budget and stakes PASS")
     p.add_argument("spec"); p.add_argument("--as", dest="agent", required=True, help="an agent, `reflect` or `human`")
     p.add_argument("--seed", action="store_true", help="a root the house stakes from its vig pool")
-    p.add_argument("--stake", type=float, default=0.0, help="--as human: the stake per variant on its expect")
+    p.add_argument("--stake", type=float, default=0.0, help="--as human: the stake per variant on PASS")
     p.set_defaults(f=cmd_post)
     p = sub.add_parser("sleep", help="sleep until a condition; q tick wakes the agent")
     p.add_argument("--as", dest="agent", required=True)

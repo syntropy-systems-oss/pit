@@ -1,6 +1,5 @@
 id = "leak-check"
 question = "Does any held-out item appear in B's training data?"
-expect = "pass"
 if_pass = "B's gain is contamination: refute F:b-beats-a"
 if_fail = "B's gain stands"
 lane = "any"

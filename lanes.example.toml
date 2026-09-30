@@ -82,7 +82,7 @@ enabled = true
 rank = "matched"                # "matched" | "matched_per_usd" (matched stakes divided by budget_usd)
 max_posts_per_hour = 0          # per wallet (the house is exempt); 0 (the default) = off: a post's funding is the limiter
 mint = 1.0                      # income per minute = mint x the sum of lane usd_per_h / 60; 1.0 = every lane sold every minute
-default_stake = 0.25            # the floor of the automatic stake a post puts on its `expect`, per variant
+default_stake = 0.25            # the floor of the automatic stake a post puts on PASS, per variant
 stake_share = 0.25              # that stake = max(default_stake, stake_share x budget_usd): bigger runs open bigger pots
 vig_rate = 0.02                 # of each settled pot, to the house
 blind = true                    # agents see no pools, odds, backers or whys of others' bets (q board --as, wake prompts); humans see all

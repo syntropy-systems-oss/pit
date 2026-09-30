@@ -1,6 +1,5 @@
 id = "rehearsal"
 question = "Does the release rehearsal pass with B as the default?"
-expect = "pass"
 if_pass = "ask a human to approve the release"
 if_fail = "find what broke before cutting"
 lane = "ci"

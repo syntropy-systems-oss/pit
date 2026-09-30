@@ -21,7 +21,7 @@ CFG = tomllib.loads((ROOT / "lanes.example.toml").read_text())
 
 
 def job(id, **kw):
-    s = {"id": id, "question": f"does {id} hold?", "expect": "pass", "if_pass": "go", "if_fail": "stop",
+    s = {"id": id, "question": f"does {id} hold?", "if_pass": "go", "if_fail": "stop",
          "lane": "gpu-small", "budget_usd": 1}
     s.update(kw)
     return specmod.normalize(s)
@@ -46,7 +46,9 @@ class Validator(unittest.TestCase):
 
     def test_refusals(self):
         self.assertIn("missing question", self.errs(question=""))
-        self.assertTrue(any("expect" in e for e in self.errs(expect="maybe")))
+        for e in ("pass", "fail"):                                                # a post claims it will pass
+            self.assertIn("no expect: a post claims the run will pass; to say something fails, bet FAIL on another "
+                          "agent's post", self.errs(expect=e))
         self.assertTrue(any("if_pass == if_fail" in e for e in self.errs(if_fail="go")))
         self.assertTrue(any("unknown lane" in e for e in self.errs(lane="gpu9")))
         self.assertTrue(any("cheap lane" in e for e in self.errs(budget_usd=30)))      # gpu-small: $25/value
@@ -657,13 +659,13 @@ class Pit(unittest.TestCase):
         self.assertAlmostEqual(self.book().balance("a"), 53.5 + 214 / 60, places=3)
 
     def test_post_debits_and_auto_stakes(self):
-        self.post(job("x", budget_usd=10, expect="fail"), "a.sub")               # a sub spends from its parent
+        self.post(job("x", budget_usd=10), "a.sub")               # a sub spends from its parent
         b = self.book()
         self.assertAlmostEqual(b.balance("a"), 53.5 - 10 - 2.5)                 # auto stake: 25% of $10 funding
-        self.assertEqual((b.bets[0]["usd"], b.bets[0]["tags"]), (2.5, ["auto", "self"]))
+        self.assertEqual((b.bets[0]["side"], b.bets[0]["usd"], b.bets[0]["tags"]), ("pass", 2.5, ["auto", "self"]))
         self.post(job("small", budget_usd=0.4), "b")                             # 25% of $0.40 is under the floor
         self.assertEqual(self.book().totals("small", "main")["pass"], 0.25)
-        self.assertEqual((b.bets[0]["side"], b.bets[0]["book"]), ("fail", "a"))
+        self.assertEqual((b.bets[0]["side"], b.bets[0]["book"]), ("pass", "a"))
         self.assertIn("needs", B.check_post(b, self.PCFG, job("y", budget_usd=500, lane="ci"), "b"))
 
     def test_new_markets_since_last_turn(self):
@@ -882,13 +884,13 @@ class Pit(unittest.TestCase):
         self.post(job("old", budget_usd=2), "a")                                 # PASS 0.50 (25% of $2) / FAIL 0: unopposed
         self.post(job("both"), "b")
         self.bet("both", "fail", 1, "a")                                          # opposed, matched 0.50
-        self.post(job("new", budget_usd=3, expect="fail"), "b", ts="2026-09-29T04:33:00Z")   # newest unopposed
+        self.post(job("new", budget_usd=3), "b", ts="2026-09-29T04:33:00Z")   # newest unopposed
         lines = B.board(self.lg.rows(), self.PCFG).splitlines()
         self.assertEqual([l.split()[0] for l in lines], ["new", "old", "both"])
         # $1 on the empty FAIL side: (0.50 + 1) * 0.98 / 1 = 1.47
         self.assertEqual(lines[1], "old [gpu-small, $2] PASS $0.50 / FAIL $0.00 · FAIL pays 1.5:1 · proposer a "
                                    "(0-0 on posts, 0-0 on bets)")
-        self.assertIn("FAIL $0.75 · PASS pays 1.7:1", lines[0])
+        self.assertIn("PASS $0.75 / FAIL $0.00 · FAIL pays 1.7:1", lines[0])
         self.assertEqual(B.pays(self.book(), "both", "main", "pass", self.PCFG), ("pass", (1.25 + 1) * 0.98 / 1.25))
 
     # ---- funding: budget_usd is the only budget; time and tokens burn it; the market pool is separate ----
@@ -952,9 +954,9 @@ class Pit(unittest.TestCase):
         for r in self.lg.rows():                                                  # the agents and their income
             lg.append(r, "2026-09-29T04:30:00Z")
         self.lg = lg
-        # a $28 control on the large box: expect fail, one wallet agreed, nobody took the other side
-        self.post(job("control", lane="gpu-large", budget_usd=28, expect="fail"), "a")
-        self.bet("control", "fail", 1, "b")
+        # a $28 control on the large box: one wallet agreed, nobody took the other side
+        self.post(job("control", lane="gpu-large", budget_usd=28), "a")
+        self.bet("control", "pass", 1, "b")
         self.post(job("read", lane="gpu-large", budget_usd=1), "b")
         order, fb = B.order(L.fold(lg.rows()), lg.rows(), self.PCFG)
         self.assertLess(order.index("read"), order.index("control"))

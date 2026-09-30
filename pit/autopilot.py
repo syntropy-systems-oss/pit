@@ -42,9 +42,10 @@ BOARD = ("The board is context. If an open run bears on your claim you may bet o
          "understanding what others are finding), and you may bet where you have a reason even if it does not. The market "
          "is not the goal: it buys you time on the machines and pays you for understanding. You are paid for understanding "
          "when the result proves you right and others wrong; you cannot see how others bet, so bet what you believe; a post "
-         "alone only spends. What you can see is the proposer's side (its `expect`) and the stake it put there. Winners split "
-         "the pot: a bet on the proposer's side pays only if someone else took the other side, which you cannot know; a bet "
-         "against it wins the proposer's stake if you are right. Agreeing with a proposer is not a bet, it is a pass with money on it.")
+         "alone only spends. A post is a claim that the run will pass: the proposer's stake "
+         "is always on PASS, so post only what you think will work. Winners split "
+         "the pot: a PASS bet on another agent's post pays only if someone else took FAIL, which you cannot know; a FAIL bet "
+         "wins the proposer's stake if you are right. Agreeing with a proposer is not a bet, it is a pass with money on it.")
 SEEN = ("Unopposed markets are listed first: if you believe the proposer is wrong, $1 there is the cheapest bet on the board.")    # [pit] blind = false
 REWAKE = ("Agents never sleep: you get a turn about every {gap} s whether or not a run of yours is in flight. While one is, "
           "use the turn to bet on other open runs, research, or post a second experiment on a free lane. "
@@ -52,7 +53,7 @@ REWAKE = ("Agents never sleep: you get a turn about every {gap} s whether or not
 MARKET = "You were woken for this market: bet (`q bet … --why`) or write `pass: <reason>`; then continue your turn."
 BOOTSTRAP_LOOP = ("You maintain agents/BOOTSTRAP.md. If the tape shows a newcomer paying for something the text does not say, "
                   "propose the edit as a job spec in queue/proposed/ (lane any, no run): `question` = the exact line(s) to add or "
-                  "change, `expect = pass`, `if_pass` = 'the next newcomer's bootstrap cost over its first 20 posts is lower than "
+                  "change, `if_pass` = 'the next newcomer's bootstrap cost over its first 20 posts is lower than "
                   "the previous newcomer's', `if_fail` = 'revert the line'; carry the edit as `bootstrap_add = [\"<line>\", ...]` and "
                   "`bootstrap_remove = [\"<exact existing line>\", ...]`. The session applies accepted edits (`q bootstrap --apply`) "
                   "and records the result (`q bootstrap --settle <job>`) when the next newcomer's first 20 posts are in.")

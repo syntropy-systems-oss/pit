@@ -32,7 +32,7 @@ house_stake = 0.25
 
 
 def bag_spec(sid, verdict="pass", extra=""):
-    return (f'id = "{sid}"\nquestion = "{sid} holds?"\nexpect = "pass"\nif_pass = "ok"\nif_fail = "bisect"\nlane = "gpu-small"\n'
+    return (f'id = "{sid}"\nquestion = "{sid} holds?"\nif_pass = "ok"\nif_fail = "bisect"\nlane = "gpu-small"\n'
             f'budget_usd = 9\nrun = "echo \'pit: verdict={verdict}\'"\n{extra}')
 
 

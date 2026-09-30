@@ -1,6 +1,5 @@
 id = "ablate-b"
 question = "Does B's gain survive without the new data mix?"
-expect = "pass"
 if_pass = "the gain is the architecture"
 if_fail = "the gain is the data mix"
 lane = "gpu-small"

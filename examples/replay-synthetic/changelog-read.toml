@@ -1,6 +1,5 @@
 id = "changelog-read"
 question = "Does the changelog mention the held-out set change?"
-expect = "pass"
 if_pass = "nothing to do"
 if_fail = "add it before the release"
 lane = "any"

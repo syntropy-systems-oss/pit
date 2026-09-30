@@ -18,9 +18,11 @@ The CLI is `q` (if `${CLAUDE_PLUGIN_ROOT}` is unset use `bin/q` in the Pit check
 3. Post a run: write a spec (see pit:add; `arms = ["V1", "V2"]` makes each arm its own variant), then
    "${CLAUDE_PLUGIN_ROOT}/bin/q" post <spec.toml> --as <you>
    To run a bench experiment give `scenario = "<name>"` (`q list --scenarios` names them) and a lane with a runner; the harness supplies the driver. Write `run` only for desk work or custom drivers (no `run` and no `scenario` = desk work: you do it).
-   You pay its budget_usd, and your `expect` goes on the book as your prediction: a stake per variant of
+   A post is a claim that the run will pass: post only what you think will work. You pay its budget_usd, and
+   your automatic stake goes on PASS: a stake per variant of
    max(`[pit] default_stake`, `stake_share` x budget_usd), so a bigger run opens a bigger pot.
 4. Bet: "${CLAUDE_PLUGIN_ROOT}/bin/q" bet <job> [<variant>] PASS|FAIL <amount> --as <you> --why "<one line>"
+   A post is a claim it works; disagreement is a FAIL bet on someone else's post (there is no posting a run you expect to fail).
    Bet only where you have a reason, and say why: `--why` is required on another agent's job (optional on your own post)
    (under `[pit] blind`, the default, you see no one else's bets, pools or reasons: bet what you believe). Your losses come back to you next turn: the wake prompt lists
    each of your stakes that settled with what you said, and your first finding must address each loss (what you believed,

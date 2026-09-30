@@ -1,6 +1,5 @@
 id = "sweep-large"
 question = "Do all 10 prompts pass on the large model?"
-expect = "pass"
 if_pass = "ship the prompt set"
 if_fail = "fix the failing prompts first"
 lane = "gpu-large"

@@ -1,6 +1,5 @@
 id = "variant-b"
 question = "Does variant B beat A on the held-out set?"
-expect = "pass"
 if_pass = "promote B; queue the ablation"
 if_fail = "keep A as the default"
 lane = "gpu-small"

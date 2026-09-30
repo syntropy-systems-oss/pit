@@ -63,7 +63,6 @@ class Book:
         self.bets: list[dict] = []                       # in ledger order
         self.settled: dict[tuple, dict] = {}             # (job, variant) -> settle row
         self.proposers: dict[str, str] = {}              # job -> agent
-        self.expects: dict[str, str] = {}                # job -> the proposer's side
         self.flows: dict[str, float] = {}                # wallet -> usd
         self.last_drip: dict | None = None
         self.funds: dict[str, tuple[str, float]] = {}    # job -> (wallet, usd) booked at result: + refund, - overage
@@ -81,7 +80,6 @@ class Book:
                     self._add(a, usd)
             elif t == "node" and r.get("kind") == "job" and r["spec"].get("proposer"):
                 self.proposers[r["id"]] = r["spec"]["proposer"]
-                self.expects[r["id"]] = r["spec"].get("expect")
                 if self.payer(r["spec"]):
                     self._add(self.payer(r["spec"]), -r["spec"].get("budget_usd", 0))
             elif t == "result" and r.get("funding"):
@@ -233,7 +231,7 @@ def funding(book: Book, spec: dict, agent: str, seed: bool = False) -> str:
 
 
 def auto_stake(cfg: dict, spec: dict) -> float:
-    """The stake a post puts on its expect, per variant: a share of its funding, default_stake the floor."""
+    """The stake a post puts on PASS, per variant: a share of its funding, default_stake the floor."""
     c = conf(cfg)
     return round(max(c["default_stake"], c["stake_share"] * spec.get("budget_usd", 0)), 4)
 
@@ -247,14 +245,14 @@ def stakes(rows: list[dict], cfg: dict, spec: dict, agent: str, mode: str, stake
             usd = round(min(conf(cfg)["house_seed"], book.flows.get(HOUSE, 0.0)), 4)
             if usd <= 0:
                 break                     # the pool is empty: the root waits for a bettor
-            out.append({"t": "bet", "job": spec["id"], "variant": v, "side": spec["expect"], "usd": usd,
+            out.append({"t": "bet", "job": spec["id"], "variant": v, "side": "pass", "usd": usd,
                         "agent": HOUSE, "book": HOUSE, "tags": ["seed"]})
         elif mode == "human":
             if stake > 0:
-                out.append({"t": "bet", "job": spec["id"], "variant": v, "side": spec["expect"], "usd": round(stake, 4),
+                out.append({"t": "bet", "job": spec["id"], "variant": v, "side": "pass", "usd": round(stake, 4),
                             "agent": HUMAN, "book": HUMAN, "tags": ["human"]})
         else:
-            out.append(bet_row(book, L.fold(rows), spec["id"], v, spec["expect"], auto_stake(cfg, spec), agent, auto=True))
+            out.append(bet_row(book, L.fold(rows), spec["id"], v, "pass", auto_stake(cfg, spec), agent, auto=True))
     return out
 
 
@@ -452,7 +450,7 @@ def new_markets(rows: list[dict], cfg: dict, agent: str, since: int, n: int = 10
             if (r["id"], v) in have:
                 continue
             t = book.totals(r["id"], v)
-            side, x = pays(book, r["id"], v, s.get("expect", "pass"), cfg)
+            side, x = pays(book, r["id"], v, "pass", cfg)
             out.append(f"{r['id'] if v == 'main' else r['id'] + '/' + v} [{s['lane']}] {' '.join(s['question'].split())[:100]} · "
                        + (f"{funded(s, cfg)} · " if blind(cfg) else
                           f"PASS ${t['pass']:.2f} / FAIL ${t['fail']:.2f} · $1 on {side.upper()} pays ${x:.2f} · ")
@@ -627,12 +625,12 @@ def calibration(rows: list[dict]) -> str:
 
 
 def records(book: Book) -> dict[str, list[int]]:
-    """wallet -> [post wins, post losses, bet wins, bet losses] over settled pass/fail markets. A post wins when the
-    outcome is its spec's expect; a bet counts once per market and side, `self` bets excluded."""
+    """wallet -> [post wins, post losses, bet wins, bet losses] over settled pass/fail markets. A post wins when it
+    passes (a post is a claim that it will); a bet counts once per market and side, `self` bets excluded."""
     out: dict[str, list[int]] = {}
     for (job, v), s in book.settled.items():
-        if s["outcome"] in SIDES and book.expects.get(job) in SIDES:
-            out.setdefault(book.wallet(book.proposers[job]), [0, 0, 0, 0])[0 if book.expects[job] == s["outcome"] else 1] += 1
+        if s["outcome"] in SIDES and job in book.proposers:
+            out.setdefault(book.wallet(book.proposers[job]), [0, 0, 0, 0])[0 if s["outcome"] == "pass" else 1] += 1
     for b in {(b["book"], b["side"], b["job"], b["variant"]) for b in book.bets
               if not {"self", "seed", "bag"} & set(b.get("tags", []))}:
         s = book.settled.get((b[2], b[3]))
@@ -665,10 +663,10 @@ def board(rows: list[dict], cfg: dict, n: int = 20, hide: bool = False) -> str:
         prop = book.wallet(book.proposers.get(jid) or s.get("proposer") or HUMAN)
         for v in variants(s):
             t = book.totals(jid, v)
-            side, x = pays(book, jid, v, s.get("expect", "pass"), cfg)
+            side, x = pays(book, jid, v, "pass", cfg)
             name = jid if v == "main" else f"{jid}/{v}"
             ctr = next((b for b in reversed(book.bets) if (b["job"], b["variant"]) == (jid, v) and b.get("why")
-                        and b["side"] != s.get("expect", "pass")), None)      # the latest counter-bettor's reason
+                        and b["side"] != "pass"), None)      # the latest counter-bettor's reason
             if hide:
                 lines.append((0, f"{name} [{s['lane']}] {' '.join(s['question'].split())[:100]} · {funded(s, cfg)} · "
                                  f"proposer {prop} ({record(recs, prop)})"))
