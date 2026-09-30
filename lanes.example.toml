@@ -18,9 +18,10 @@ usd_per_mtok_out = 2.20
 [git]
 push = false                   # claims are a local commit; true also pushes them (git is then the cross-host lock)
 
-# When `q status` / the hooks say "reflect due": any predicate that fires (pit/reflect.py PREDICATES); a missing key = off.
+# Any predicate that fires starts an autonomous reflection pass in autopilot; a missing key = off.
+# The pass acts directly, and its child exit records the pass and restarts the cadence (pit/reflect.py).
 [reflect]
-rows = 64                       # ledger rows since the last reflect
+rows = 64                       # counted work rows since the last recorded pass
 hours = 8                       # hours since the last reflect
 after = ["result:invalid"]      # a row of this type: cancel, decision, result:<verdict>, node:<kind>
 spend_rising = 3                # the last N results each cost more than the one before
@@ -129,8 +130,9 @@ runtimes.claude.model = "sonnet"        # an agent with no model of its own, on 
 # runtimes.claude.args = []             # extra claude -p args
 # runtimes.codex.model = "<codex-model>"  # unset = the codex CLI's own configured default
 # runtimes.codex.args = ["--skip-git-repo-check", "--sandbox", "workspace-write", "-c", 'approval_policy="never"']   # the default
-# reflect.runtime = "claude"            # the reflection pass: claude (default) or codex
-# reflect.model = "opus"                # default opus on claude, runtimes.codex.model on codex
+# reflect.runtime = "claude"            # autonomous reflection: claude (default) or codex
+# reflect.model = "opus"                # override; default opus on claude, runtimes.codex.model on codex
+# If runtimes.codex.model is also unset, codex uses its own CLI configuration.
 # Runs and agent turns get <this repo>/bin first on PATH: `q`, and `python3` = scripts/py.sh (a Python >= 3.11 with pit
 # importable). Put your own tools on PATH before starting autopilot.
 # kill file: autopilot/STOP (checked every tick). Standing rules injected into every prompt: pit.autopilot.RULES

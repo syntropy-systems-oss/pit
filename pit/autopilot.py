@@ -4,7 +4,7 @@ Each tick: STOP file? -> B.tick (drip + wakes) -> per lane: free? pick B.order()
 gate -> claim+run in a subprocess (`q run`, so lanes run at once; `any` gets a small worker pool) ->
 desk jobs (no `run`) become a `wake` for their proposer -> hand-backs: every result of a posted job and every
 wake spawns the proposer as a subagent on its runtime (claude or codex; a sub `<agent>-<ts>`, so it books to the parent) ->
-reflection when reflect.due() fires (Opus by default, a sub of `reflect`; proposals are printed and the session notified, never added).
+reflection when reflect.due() fires (a sub of `reflect`, acting directly and recorded when its child exits).
 Every decision is an `auto` row {type, lane, job, agent, reason}; fold() and Book ignore them.
 All state is the ledger plus the child processes of this loop, so a restart resumes where it left off.
 """
@@ -59,11 +59,9 @@ REWAKE = ("Agents never sleep: you get a turn about every {gap} s whether or not
           "Every turn must leave the market changed: a post, a bet, or a finding.")
 MARKET = "You were woken for this market: bet (`q bet … --why`) or write `pass: <reason>`; then continue your turn."
 BOOTSTRAP_LOOP = ("You maintain agents/BOOTSTRAP.md. If the tape shows a newcomer paying for something the text does not say, "
-                  "propose the edit as a job spec in queue/proposed/ (lane any, no run): `question` = the exact line(s) to add or "
-                  "change, `if_pass` = 'the next newcomer's bootstrap cost over its first 20 posts is lower than "
-                  "the previous newcomer's', `if_fail` = 'revert the line'; carry the edit as `bootstrap_add = [\"<line>\", ...]` and "
-                  "`bootstrap_remove = [\"<exact existing line>\", ...]`. The session applies accepted edits (`q bootstrap --apply`) "
-                  "and records the result (`q bootstrap --settle <job>`) when the next newcomer's first 20 posts are in.")
+                  "you may edit it directly. `q bootstrap --apply <spec> --as <you>` also applies and records edits carried "
+                  "in bootstrap_add / bootstrap_remove; `q bootstrap --settle <job>` records their outcome. "
+                  "Bootstrap cost is the INVALID share of an agent's first 20 posts, with cancellations reported alongside it.")
 STRUCTURE = ("You are the one agent with a standing, structural brief: the shape of the population. Every other agent's brief is a "
              "specific, falsifiable capability or research goal, never a role. Look across all agents' findings and results for "
              "struggles several of them share; for a shared cause, plant a new persistent agent whose brief names the capability "
@@ -72,7 +70,9 @@ STRUCTURE = ("You are the one agent with a standing, structural brief: the shape
              "whose brief has stopped producing new evidence (`q agent retire <id> --reason '<why>' --as reflect`): it stays on the "
              "book and gets no more wakes or income. When you see a brief narrowing into step-by-step instructions to the runtime, "
              "plant an agent whose goal is that the capability holds without those instructions (held-out variants with the "
-             "instructions removed). Write these as proposals in queue/proposed/ with the exact commands; the session runs them.")
+             "instructions removed). An agent may retire itself when it judges its goal met "
+             "(`q agent retire <self> --reason 'goal met: …' --as <self>`). A retirement with a reason is an invitation "
+             "to plant the next direction.")
 # codex exec: no git-repo check (the state root may be any dir), commands sandboxed to the root + add_dirs with no
 # network (the model call itself is outside the sandbox), never ask for approval (nobody is there to answer)
 CODEX_ARGS = ["--skip-git-repo-check", "--sandbox", "workspace-write", "-c", 'approval_policy="never"']
@@ -182,9 +182,8 @@ class Autopilot:
         if sub_cap is not None:
             self.c["max_subagent_runs_per_hour"] = sub_cap
         self.dir = self.root / "autopilot"
-        self.notify = REPO / "scripts" / "notify.sh"
         self.runs: dict[str, tuple] = {}     # job -> (lane, Popen)
-        self.subs: dict[str, tuple] = {}     # wallet agent -> (sub id, Popen, proposed-before or None)
+        self.subs: dict[str, tuple] = {}     # wallet agent -> (sub id, Popen, reflection record or None)
         self.seen: dict[str, int] = {}       # wallet agent -> ledger row index it has processed up to
         self.base: int | None = None         # first tick: agents with no wake on the tape start here, not at row 0
         self.mcur: int | None = None         # row index up to which new posts have been turned into market wakes
@@ -599,9 +598,8 @@ class Autopilot:
         if not why:
             self.echo("reflection: not due")
             return
-        if B.REFLECT in self.subs or any(r["t"] == "auto" and r["type"] == "reflect" for r in reflect.since_last(rows)):
-            self.echo(f"reflection: due ({why}); this cycle's pass already ran: the session reviews queue/proposed/ "
-                      f"and runs `q reflect --record --as reflect`")
+        if B.REFLECT in self.subs:
+            self.echo(f"reflection: due ({why}); {self.subs[B.REFLECT][0]} is still running")
             return
         if len(self.subs) >= self.max_subs():
             self.echo(f"reflection: due ({why}); REFUSED, subagents at cap")
@@ -615,23 +613,21 @@ class Autopilot:
                 (self.root / "agents" / "reflect.toml").write_text(
                     'id = "reflect"\nkind = "persistent"\nbrief = "reflection passes: patterns across jobs and findings"\n')
         sub = self.register(B.REFLECT, f"autopilot reflection pass ({why})", now)
-        book = B.Book(self.lg.rows())
+        rows = self.lg.rows()
         rc = self.c["reflect"]
-        who = {"runtime": rc.get("runtime", "claude"), "model": rc.get("model") or ("opus" if rc.get("runtime", "claude") == "claude" else None)}
-        self.echo(f"reflection: due ({why}); spawn {sub} ({self.label(who)}); proposals go to queue/proposed/, never added")
+        rt = rc.get("runtime", "claude")
+        who = {"runtime": rt, "model": rc.get("model") or ("opus" if rt == "claude" else self.model({"runtime": rt})[1])}
+        self.echo(f"reflection: due ({why}); spawn {sub} ({self.label(who)})")
         self.auto("reflect", why, agent=sub)
         text = "\n\n".join([skill("reflect"), "Standing rules (verbatim): " + RULES,
-                            f"You are the ONE Opus subagent of step 2, acting as {sub} (a sub of reflect: `--as {sub}`). "
-                            f"The CLI is {REPO}/bin/q (PIT_ROOT is set). Do step 2's brief: write proposals to "
-                            f"{self.root}/queue/proposed/<id>.toml. Never run q add, q post or q reflect --record: "
-                            f"steps 3 and 4 are the session's. Bet as `reflect` against every open run whose proposer you think is "
-                            f"overconfident; say why in one line each (`q bet … --why '<one line>'`).",
-                            STRUCTURE, "Agents on the book: " + json.dumps({a: {"brief": r["brief"], "retired": a in book.retired}
-                                                                            for a, r in book.agents.items() if r["kind"] == "persistent"}),
+                            f"You are {sub}, a sub of reflect (`--as {sub}` books to reflect). "
+                            f"The CLI is {REPO}/bin/q (PIT_ROOT is set). The loop records this pass when you exit, "
+                            "covering the rows in this digest; if you record it yourself, the loop keeps your record.",
+                            STRUCTURE, "Agents on the book: " + json.dumps(reflect.agent_facts(rows)),
                             BOOTSTRAP_LOOP, "agents/BOOTSTRAP.md now:\n" + bootstrap(self.root),
                             "Newcomer (most recently registered agent) bootstrap cost: " + json.dumps(B.newcomer_cost(rows)),
                             "Digest (q reflect --since-last):\n" + reflect.digest(rows)])
-        self.subs[B.REFLECT] = (sub, self.spawn(sub, who, text), self.proposed())
+        self.subs[B.REFLECT] = (sub, self.spawn(sub, who, text), reflect.record_row(rows, agent=sub))
 
     # ---- children -----------------------------------------------------------------------------------
     def register(self, agent: str, brief: str, now: datetime) -> str:
@@ -780,28 +776,29 @@ class Autopilot:
             return subprocess.Popen(self.argv(exe, rt, model, workspace), stdin=stdin, stdout=out, stderr=subprocess.STDOUT,
                                     cwd=self.root, env=self.env(), start_new_session=True)
 
-    def proposed(self) -> set[str]:
-        return {p.name for p in (self.root / "queue" / "proposed").glob("*.toml")}
-
     def reap(self):
         for j, (lane, p) in list(self.runs.items()):
             if p is None or p.poll() is not None:
                 self.echo(f"run {j} on {lane} exited {p.returncode if p else 'dry'}")
                 del self.runs[j]
-        for agent, (sub, p, before) in list(self.subs.items()):
+        for agent, (sub, p, record) in list(self.subs.items()):
             if p is not None and p.poll() is None:
                 continue
             del self.subs[agent]
             self.echo(f"{sub} finished (exit {p.returncode if p else '-'}): autopilot/logs/{sub}.log")
-            if before is None and p is not None:
+            if record is None and p is not None:
                 self.ensure_sleep(agent, sub)
-            if before is not None:
-                new = sorted(self.proposed() - before)
-                for name in new:
-                    self.echo(f"proposed by {sub}: queue/proposed/{name}\n" + (self.root / "queue" / "proposed" / name).read_text())
-                if p is not None:
-                    subprocess.run([str(self.notify), f"Pit reflection {sub}: {len(new)} proposed "
-                                    f"({', '.join(new) or 'none'}); review queue/proposed/, then q reflect --record"])
+            if record is not None:
+                rows = self.lg.rows()
+                start = next(i for i, r in enumerate(rows) if r["t"] == "agent" and r["id"] == sub)
+                log = self.dir / "logs" / f"{sub}.log"
+                if not log.exists() or not log.stat().st_size:
+                    self.auto("note", "reflection ended without output", agent=sub, exit_code=p.returncode if p else None)
+                elif p is not None and p.returncode:
+                    self.auto("note", "reflection failed", agent=sub, exit_code=p.returncode)
+                if not any(r["t"] == "reflect" and r.get("agent") in (sub, B.REFLECT) for r in rows[start:]):
+                    self.lg.append(record)
+                    self.echo(f"reflection recorded: {sub}, {record['rows_covered']} rows covered")
 
     def ensure_sleep(self, agent: str, sub: str):
         """An agent never just ends: a sub that left no sleep row gets `sleep until-event`."""

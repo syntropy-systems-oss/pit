@@ -517,7 +517,9 @@ class Reflect(unittest.TestCase):
     def test_counter_resets_and_fold_ignores(self):
         before = L.fold(self.lg.rows())
         self.assertEqual(len(reflect.since_last(self.lg.rows())), 5)
-        self.lg.append({"t": "reflect", "note": "n", "rows_covered": 5})
+        record = reflect.record_row(self.lg.rows(), "n", "reflect-turn")
+        self.assertEqual(record, {"t": "reflect", "note": "n", "rows_covered": 5, "agent": "reflect-turn"})
+        self.lg.append(record)
         rows = self.lg.rows()
         self.assertEqual(reflect.since_last(rows), [])
         self.assertEqual(sorted(L.fold(rows).jobs), sorted(before.jobs))

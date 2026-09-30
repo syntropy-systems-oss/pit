@@ -475,10 +475,9 @@ def cmd_reflect(a):
     root, lg, cfg = ctx()
     rows = lg.rows()
     if a.record:
-        n = len(reflect.since_last(rows))
-        lg.append({"t": "reflect", "note": a.note or "", "rows_covered": n, **({"agent": a.agent} if a.agent else {})})
+        row = lg.append(reflect.record_row(rows, a.note or "", a.agent))
         sync(root, lg, "reflect")
-        print(f"reflect recorded: {n} rows covered")
+        print(f"reflect recorded: {row['rows_covered']} rows covered")
     elif a.why:
         print(reflect.why(rows, datetime.now(timezone.utc), cfg))
     else:
@@ -616,7 +615,7 @@ def main(argv=None):
                                      "q agent set <id> --runtime ... --model ... | q agent retire <id> --reason ...")
     p.add_argument("verb", choices=("add", "set", "retire")); p.add_argument("id"); p.add_argument("--brief"); p.add_argument("--parent")
     p.add_argument("--runtime", help="what its turns run on: claude (default) or codex"); p.add_argument("--model", help="default: [autopilot] runtimes.<runtime>.model")
-    p.add_argument("--reason"); p.add_argument("--as", dest="by", help="who adds or retires it (reflect, when it plants or retires)")
+    p.add_argument("--reason"); p.add_argument("--as", dest="by", help="who adds or retires it (the agent itself may retire)")
     p.set_defaults(f=cmd_agent)
     p = sub.add_parser("tick", help="pay the income since the last tick; print balances")
     p.add_argument("--since", help="ISO time the first tick counts from"); p.set_defaults(f=cmd_tick)

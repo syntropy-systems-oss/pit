@@ -1,8 +1,8 @@
-"""`q reflect`: a plain-text digest of the ledger since the last `reflect` row, for an Opus pass to read."""
+"""`q reflect`: a plain-text digest of the ledger since the last `reflect` row and a record of each pass."""
 import json
 from datetime import datetime
 
-from . import ledger as L
+from . import book as B, ledger as L
 from .metrics import metrics, table
 
 MAX_LINES = 400
@@ -13,6 +13,27 @@ def since_last(rows: list[dict]) -> list[dict]:
     """Rows after the last reflect row (reflect rows themselves never count)."""
     last = max((i for i, r in enumerate(rows) if r["t"] == "reflect"), default=-1)
     return rows[last + 1:]
+
+
+def record_row(rows: list[dict], note: str = "", agent: str | None = None) -> dict:
+    """Record the ledger snapshot a pass read; appending it restarts the reflection counter."""
+    return {"t": "reflect", "note": note, "rows_covered": len(since_last(rows)), **({"agent": agent} if agent else {})}
+
+
+def agent_facts(rows: list[dict]) -> dict:
+    """Every persistent agent's brief, settled record, balance and retirement, including its own decision to stop."""
+    book = B.Book(rows)
+    records, out = B.records(book), {}
+    for a, r in book.agents.items():
+        if r["kind"] != "persistent":
+            continue
+        retired = book.retired.get(a, {})
+        out[a] = {"brief": r["brief"],
+                  "record": dict(zip(("posts_won", "posts_lost", "bets_won", "bets_lost"), records.get(a, [0, 0, 0, 0]))),
+                  "balance": book.balance(a), "retired": bool(retired),
+                  "self_retired": bool(retired) and book.wallet(retired.get("by")) == a,
+                  "retired_by": retired.get("by"), "retirement_reason": retired.get("reason")}
+    return out
 
 
 # A predicate reads (rows since the last reflect, metrics(all rows), now, its config value) and returns (reason if it fired else None, reading).

@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import tempfile
@@ -35,7 +36,7 @@ idle_wake_gap_s = 1e9      # the re-wake tests set 90; everything else sees no g
 """
 STUB = """#!/bin/sh
 { echo "ARGV: $*"; echo "ROOT: $PIT_ROOT"; cat; } > "$STUB_OUT/$$.txt"
-[ -n "$STUB_PROPOSE" ] && mkdir -p "$PIT_ROOT/queue/proposed" && echo 'id = "p1"' > "$PIT_ROOT/queue/proposed/p1.toml"
+echo "turn complete"
 exit 0
 """
 
@@ -54,12 +55,10 @@ class Autopilot(unittest.TestCase):
         self.stub.mkdir()
         (self.stub / "claude").write_text(STUB)
         (self.stub / "claude").chmod(0o755)
-        (self.root / "notify.sh").write_text('#!/bin/sh\necho "$1" > "$STUB_OUT/notified"\n')
-        (self.root / "notify.sh").chmod(0o755)
         self.out = self.root / "stubout"
         self.out.mkdir()
         env = {"PATH": f"{self.stub}:{os.environ['PATH']}", "STUB_OUT": str(self.out), "PIT_HOST": "t"}
-        self.old = {k: os.environ.get(k) for k in (*env, "STUB_PROPOSE")}
+        self.old = {k: os.environ.get(k) for k in env}
         os.environ.update(env)
         self.addCleanup(self.restore)
         self.cfg = lanes.load(self.root)
@@ -81,7 +80,6 @@ class Autopilot(unittest.TestCase):
 
     def ap(self, **kw):
         ap = A.Autopilot(self.root, self.lg, self.cfg, echo=lambda *_: None, **kw)
-        ap.notify = self.root / "notify.sh"
         return ap
 
     def auto(self, type=None):
@@ -558,26 +556,125 @@ class Autopilot(unittest.TestCase):
         m = market.market_json(self.lg.rows(), self.cfg)["autopilot"]
         self.assertEqual((m["running"], m["stopped"], m["cap"]), (False, True, 0))
 
-    def test_reflect_due_spawns_opus_sub_and_adds_nothing(self):
+    def test_reflect_records_on_handback_and_runs_next_cycle(self):
         self.cfg["reflect"] = {"rows": 1}
-        self.lg.append({"t": "node", "kind": "finding", "id": "F0", "text": "one work row to reflect on"})   # agent/drip rows do not count
-        os.environ["STUB_PROPOSE"] = "1"
-        jobs = len(L.fold(self.lg.rows()).jobs)
-        ap = self.ap()
-        ap.tick()
+        self.lg.append({"t": "node", "kind": "finding", "id": "F0", "text": "one work row to reflect on"})
+        covered = len(reflect.since_last(self.lg.rows())) + 2     # reflect and its sub are registered before the digest
+        ap, now = self.ap(), datetime.now(timezone.utc)
+        ap.reflection(now)
+        sub = ap.subs[B.REFLECT][0]
+        ap.reflection(now)                         # a live pass holds its slot
+        self.assertEqual(len(self.auto("reflect")), 1)
+        self.lg.append({"t": "node", "kind": "finding", "id": "F1", "text": "arrived during the pass"})
         ap.wait()
         (call,) = self.stub_calls()
         self.assertIn("--model opus", call)
         self.assertIn("reflect digest:", call)
-        (r,) = self.auto("reflect")
+        (record,) = [r for r in self.lg.rows() if r["t"] == "reflect"]
+        self.assertEqual((record["agent"], record["rows_covered"]), (sub, covered))
+        self.assertEqual(reflect.since_last(self.lg.rows()), [])
+        self.assertIsNone(reflect.due(self.lg.rows(), now, self.cfg))
+        self.assertEqual(self.auto("note"), [])
+        self.assertNotIn(B.REFLECT, ap.subs)
         book = B.Book(self.lg.rows())
-        self.assertEqual((book.agents["reflect"]["kind"], book.agents[r["agent"]]["parent"]), ("persistent", "reflect"))
-        self.assertTrue(r["agent"].startswith("reflect-"))
-        self.assertEqual(len(L.fold(self.lg.rows()).jobs), jobs)                  # proposals are never added
-        self.assertTrue((self.root / "queue" / "proposed" / "p1.toml").exists())
-        self.assertIn("p1.toml", (self.out / "notified").read_text())             # the session is woken
-        ap.tick()
-        self.assertEqual(len(self.auto("reflect")), 1)                            # one pass per reflect cycle
+        self.assertEqual((book.agents["reflect"]["kind"], book.agents[sub]["parent"]), ("persistent", "reflect"))
+        lines = []
+        ap.echo = lines.append
+        ap.reflection(now)
+        self.assertEqual(lines, ["reflection: not due"])
+        self.lg.append({"t": "node", "kind": "finding", "id": "F2", "text": "next cycle"})
+        ap.reflection(now)
+        ap.wait()
+        self.assertEqual(len(self.auto("reflect")), 2)
+        self.assertEqual(len([r for r in self.lg.rows() if r["t"] == "reflect"]), 2)
+
+    def test_reflect_keeps_the_pass_own_record(self):
+        from argparse import Namespace as N
+        self.cfg["reflect"] = {"rows": 1}
+        self.lg.append({"t": "node", "kind": "finding", "id": "F0", "text": "evidence"})
+        ap = self.ap()
+        ap.reflection(datetime.now(timezone.utc))
+        sub = ap.subs[B.REFLECT][0]
+        self.cli_patch().cmd_reflect(N(record=True, note="planted the next direction", agent=sub))
+        recorded = [r for r in self.lg.rows() if r["t"] == "reflect"]
+        ap.wait()
+        ap.reap()
+        self.assertEqual([r for r in self.lg.rows() if r["t"] == "reflect"], recorded)
+        self.assertEqual(recorded[0]["note"], "planted the next direction")
+        self.assertIsNone(reflect.due(self.lg.rows(), datetime.now(timezone.utc), self.cfg))
+
+    def test_dead_reflect_records_and_notes_no_output(self):
+        (self.stub / "claude").write_text("#!/bin/sh\nexit 7\n")
+        self.cfg["reflect"] = {"rows": 1}
+        self.lg.append({"t": "node", "kind": "finding", "id": "F0", "text": "evidence"})
+        ap = self.ap()
+        ap.reflection(datetime.now(timezone.utc))
+        sub = ap.subs[B.REFLECT][0]
+        ap.wait()
+        (record,) = [r for r in self.lg.rows() if r["t"] == "reflect"]
+        self.assertEqual(record["agent"], sub)
+        (note,) = self.auto("note")
+        self.assertEqual((note["agent"], note["reason"], note["exit_code"]), (sub, "reflection ended without output", 7))
+        self.assertIsNone(reflect.due(self.lg.rows(), datetime.now(timezone.utc), self.cfg))
+
+    def test_reflect_failure_with_error_output_still_records(self):
+        (self.stub / "claude").write_text("#!/bin/sh\necho failed >&2\nexit 1\n")
+        self.cfg["reflect"] = {"rows": 1}
+        self.lg.append({"t": "node", "kind": "finding", "id": "F0", "text": "evidence"})
+        ap = self.ap()
+        ap.reflection(datetime.now(timezone.utc))
+        ap.wait()
+        self.assertEqual(len([r for r in self.lg.rows() if r["t"] == "reflect"]), 1)
+        self.assertEqual(self.auto("note")[0]["reason"], "reflection failed")
+
+    def test_reflect_can_run_after_an_unrecorded_old_spawn(self):
+        self.cfg["reflect"] = {"rows": 1}
+        self.lg.append({"t": "node", "kind": "finding", "id": "F0", "text": "evidence"})
+        ap = self.ap()
+        ap.auto("reflect", "rows 1", agent="old-pass")
+        ap.reflection(datetime.now(timezone.utc))
+        ap.wait()
+        self.assertEqual(len(self.auto("reflect")), 2)
+        self.assertEqual(len([r for r in self.lg.rows() if r["t"] == "reflect"]), 1)
+
+    def test_reflect_prompt_has_agents_facts_and_direct_authority(self):
+        self.cfg["reflect"] = {"rows": 1}
+        self.post(job("won"), "a")
+        self.post(job("lost"), "a")
+        for jid, side in (("won", "pass"), ("lost", "pass")):
+            self.lg.append(B.bet_row(B.Book(self.lg.rows()), L.fold(self.lg.rows()), jid, "main", side, 1, "b"))
+        for jid, verdict in (("won", "pass"), ("lost", "fail")):
+            self.lg.append({"t": "result", "job": jid, "verdict": verdict, "cost": lanes.cost_line(self.cfg, "gpu-small", wall_s=30)})
+        B.settle_due(self.lg, self.cfg)
+        self.lg.append(B.retire_row(B.Book(self.lg.rows()), "b", "goal met: evidence holds", "b"))
+        (self.root / "agents").mkdir(exist_ok=True)
+        (self.root / "agents" / "BOOTSTRAP.md").write_text("Use the evidence in your next post.")
+        before = self.lg.rows()
+        ap = self.ap()
+        ap.reflection(datetime.now(timezone.utc))
+        sub = ap.subs[B.REFLECT][0]
+        ap.wait()
+        prompt = (self.root / "autopilot" / "logs" / f"{sub}.prompt").read_text()
+        facts = json.loads(prompt.split("Agents on the book: ", 1)[1].split("\n\n", 1)[0])
+        self.assertEqual(set(facts), {"a", "b", B.REFLECT})
+        self.assertEqual(facts["a"]["record"], {"posts_won": 1, "posts_lost": 1, "bets_won": 0, "bets_lost": 0})
+        self.assertEqual(facts["b"]["record"], {"posts_won": 0, "posts_lost": 0, "bets_won": 1, "bets_lost": 1})
+        self.assertEqual(facts["a"]["brief"], B.Book(before).agents["a"]["brief"])
+        self.assertEqual(facts["b"]["balance"], B.Book(before).balance("b"))
+        self.assertFalse(facts["a"]["self_retired"])
+        self.assertTrue(facts["b"]["retired"] and facts["b"]["self_retired"])
+        self.assertEqual(facts["b"]["retirement_reason"], "goal met: evidence holds")
+        self.assertIn(A.RULES, prompt)
+        self.assertIn(A.STRUCTURE, prompt)
+        self.assertIn("q agent add", prompt)
+        self.assertIn("q agent retire", prompt)
+        self.assertIn("q post <spec> --as reflect", prompt)
+        self.assertIn("Use the evidence in your next post.", prompt)
+        self.assertIn(json.dumps(B.newcomer_cost(before)), prompt)
+        self.assertIn("does won hold?", prompt)
+        self.assertIn("does lost hold?", prompt)
+        self.assertNotIn("queue/proposed", prompt)
+        self.assertNotIn("the session", prompt)
 
     def test_dry_run_writes_nothing(self):
         self.post(slow("p1"), "a")
@@ -736,6 +833,32 @@ class Retire(unittest.TestCase):
         self.assertEqual((m["b"]["retired"]["reason"], m["a"]["retired"]), ("capability proven", None))   # on the book, dimmed
         self.assertAlmostEqual(B.Book(self.lg.rows()).balance("b"), book.balance("b"))
 
+    def test_self_retired_agent_gets_no_wake_and_no_drip(self):
+        from argparse import Namespace as N
+        from unittest import mock
+        from pit import cli
+        with mock.patch.object(cli, "ctx", lambda: (self.root, self.lg, self.cfg)), mock.patch.object(cli, "sync", lambda *a: None):
+            cli.main(["agent", "retire", "b", "--reason", "goal met: capability proven", "--as", "b"])
+            with self.assertRaises(SystemExit):
+                cli.cmd_agent(N(verb="retire", id="b", brief=None, parent=None, reason="again", by=None))
+        book = B.Book(self.lg.rows())
+        self.assertEqual((book.retired["b"]["reason"], book.active()), ("goal met: capability proven", ["a"]))
+        self.assertEqual(book.retired["b"]["by"], "b")
+        ap = self.ap()
+        ap.c = {**ap.c, "idle_wake_gap_s": 0, "heartbeat_minutes": 0}
+        ap.tick()
+        ap.wait()
+        woken = {r["agent"] for r in self.lg.rows() if r["t"] == "wake"} | {r.get("agent") for r in self.auto("wake")}
+        subs_of = {r["parent"] for r in self.lg.rows() if r["t"] == "agent" and r.get("parent")}
+        self.assertNotIn("b", woken | subs_of)
+        self.assertIn("a", subs_of)                                                  # the live agent still gets its turn
+        later = (datetime.now(timezone.utc) + timedelta(minutes=10))
+        drip = B.tick(self.lg, self.cfg, later)
+        self.assertEqual(list(drip["to"]), ["a"])
+        m = {x["id"]: x for x in market.market_json(self.lg.rows(), self.cfg)["agents"]}
+        self.assertEqual((m["b"]["retired"]["reason"], m["a"]["retired"]), ("goal met: capability proven", None))   # on the book, dimmed
+        self.assertAlmostEqual(B.Book(self.lg.rows()).balance("b"), book.balance("b"))
+
 
 class Bootstrap(unittest.TestCase):
     setUp, restore, post, ap = Autopilot.setUp, Autopilot.restore, Autopilot.post, Autopilot.ap
@@ -849,6 +972,22 @@ runtimes.codex.model = "gpt-x"
         self.assertEqual(self.argv({"id": "a", "brief": "b", "runtime": "codex"})[2:4], ["-m", "gpt-x"])   # runtimes.codex.model
         (self.root / ".git").mkdir()
         self.assertEqual(self.argv({"id": "a", "runtime": "codex"})[-5:-3], ["--add-dir", str(self.root / ".git")])   # q commits
+
+    def test_reflection_runtime_and_model(self):
+        from unittest import mock
+        self.ap.cfg["reflect"] = {"rows": 1}
+        self.ap.lg.append({"t": "node", "kind": "finding", "id": "F0", "text": "evidence"})
+        for settings, runtime, model in (({}, "claude", "opus"),
+                                         ({"runtime": "codex"}, "codex", "gpt-x"),
+                                         ({"runtime": "codex", "model": "gpt-y"}, "codex", "gpt-y")):
+            with self.subTest(settings=settings):
+                self.ap.c["reflect"] = settings
+                self.ap.subs.clear()
+                with mock.patch.object(A.shutil, "which", lambda n: f"/bin/{n}"), mock.patch.object(A.subprocess, "Popen") as popen:
+                    self.ap.reflection(datetime.now(timezone.utc))
+                (cmd,), _ = popen.call_args
+                self.assertEqual(cmd[:4], [f"/bin/{runtime}", "exec" if runtime == "codex" else "-p",
+                                          "-m" if runtime == "codex" else "--model", model])
 
     def test_agent_add_set_and_unknown_runtime(self):
         book = B.Book([])
