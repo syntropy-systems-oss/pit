@@ -507,6 +507,17 @@ class Autopilot(unittest.TestCase):
         self.assertGreaterEqual(lane["idle_s"], 360)
         self.assertIn("Lane gpu-small has been idle 6 min. Idle compute is a bug.", ap.prompt("a-x", "a", []))
 
+    def test_lane_whose_device_is_held_by_another_lane_is_not_idle(self):
+        t = (datetime.now(timezone.utc) - timedelta(minutes=6)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.lg.append({"t": "auto", "type": "start", "lane": None, "job": None, "agent": None, "reason": "test"}, t)
+        self.cfg["lanes"]["gpu-small"]["device"] = "gpu0"
+        self.cfg["lanes"]["lens"] = {"usd_per_h": 2, "slots": 1, "gate": "true", "device": "gpu0"}
+        self.post(slow("r1", lane="lens"), "b")
+        self.lg.append({"t": "claim", "job": "r1", "lane": "lens", "cid": "c-r1"})
+        ap = self.ap()
+        self.assertNotIn("gpu-small", ap.idle_lanes(datetime.now(timezone.utc)))
+        self.assertEqual([r for r in self.auto("idle") if r["lane"] == "gpu-small"], [])
+
     def test_for_ends_the_loop_with_a_stop_row(self):
         self.post(slow("p1"), "a")
         t0 = time.monotonic()

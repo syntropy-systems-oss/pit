@@ -310,9 +310,10 @@ class Autopilot:
         time a stretch crosses 5 min it writes one `auto idle` row with `seconds` (the tape and reflection see it)."""
         rows = self.lg.rows()
         st, out = L.fold(rows), {}
+        on = {j: st.jobs[j]["claim"]["lane"] for j in st.running()} | {j: l for j, (l, _) in self.runs.items()}
         for lane in (n for n in self.cfg["lanes"] if n != "any"):
             s = None if any(l == lane for l, _ in self.runs.values()) else lane_idle(rows, st, lane, now)
-            if s is None:
+            if s is None or (lanes.busy(self.cfg, lane, on) or "").startswith("device"):   # its device is in use: not idle
                 continue
             if s >= 300 and not any(r["t"] == "auto" and r["type"] == "idle" and r.get("lane") == lane
                                     and r["ts"] >= B.iso(now - timedelta(seconds=s)) for r in rows):
