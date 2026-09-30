@@ -706,7 +706,8 @@ class Pit(unittest.TestCase):
         for k in ("PASS $", "pays", "held-out input", "book PASS"):
             self.assertIn(k, full)
         self.assertEqual(B.board(rows, blind), B.board(rows, seen))                  # the human board is unchanged
-        self.assertEqual(market.market_json(rows, blind, self.T0), market.market_json(rows, seen, self.T0))
+        strip = lambda m: {k: v for k, v in m.items() if k != "generated_at"}      # wall-clock stamp differs between the two calls
+        self.assertEqual(strip(market.market_json(rows, blind, self.T0)), strip(market.market_json(rows, seen, self.T0)))
 
     def test_bet_escrow_sub_booking_self_tag(self):
         self.post(job("x", arms=["V1", "V2"]), "a")
