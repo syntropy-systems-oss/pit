@@ -655,6 +655,19 @@ class Autopilot(unittest.TestCase):
         self.assertIn("lane lens: device gpu0 busy (g1 running on gpu-small)", said)
         ap.wait()
 
+    def test_device_lanes_take_turns(self):
+        """gpu-small claimed last, so with both free the lens lane goes first this tick."""
+        ap, said = self.device_ap()
+        self.post(slow("g0"), "a")
+        self.lg.append({"t": "claim", "job": "g0", "lane": "gpu-small", "cid": "c-g0"})
+        self.lg.append({"t": "result", "job": "g0", "verdict": "pass", "cost": {"usd": 0.1}, "result": {}})
+        self.post(slow("g1"), "a")
+        self.post(slow("r1", lane="lens"), "b")
+        ap.dispatch(self.lg.rows(), datetime.now(timezone.utc))
+        self.assertEqual([r["job"] for r in self.auto("dispatch")], ["r1"])
+        self.assertIn("lane gpu-small: device gpu0 busy (r1 running on lens)", said)
+        ap.wait()
+
     def test_lanes_without_a_device_are_unaffected(self):
         self.cfg["lanes"]["lens"] = {"usd_per_h": 2, "slots": 1, "gate": "true", "device": "gpu0"}
         ap = self.ap()

@@ -254,7 +254,12 @@ class Autopilot:
         runnable = [j for j in st.frontier() if self.driven(st.jobs[j]["spec"])]
         order, fb = B.order(st, rows, self.cfg, runnable)
         spent, cap = hour_spend(rows, now), self.c["max_usd_per_hour"]
-        for lane in [n for n in self.cfg["lanes"] if n != "any"] + ["any"]:
+        last = {}                                              # lane -> ts of its latest claim (all rows: done or running)
+        for r in rows:
+            if r["t"] == "claim":
+                last[r["lane"]] = r["ts"]
+        # least recently claimed first, so lanes sharing a device take turns instead of the first in the file always winning
+        for lane in sorted((n for n in self.cfg["lanes"] if n != "any"), key=lambda n: last.get(n, "")) + ["any"]:
             slots = self.c["any_workers"] if lane == "any" else self.cfg["lanes"][lane].get("slots", 1)
             busy = {j for j in st.running() if st.jobs[j]["claim"]["lane"] == lane} | \
                    {j for j, (l, _) in self.runs.items() if l == lane}
