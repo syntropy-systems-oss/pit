@@ -713,22 +713,33 @@ class Pit(unittest.TestCase):
 
     def test_retirement_moves_the_balance_to_the_house_and_a_pass_endows_the_planted(self):
         vig = self.house_with_vig()                                              # 0.20 on the book
+        self.post(job("y"), "a")
+        self.bet("y", "pass", 0.5, "b")                                           # b's stake is out of its wallet before it retires
         before = self.book().balance("b")
-        start = len(self.lg.rows())
         self.lg.append(B.retire_row(self.book(), "b", "goal met", "reflect"))
         book = self.book()
         self.assertAlmostEqual(book.balance("b"), 0.0)
         self.assertAlmostEqual(book.balances()["house"], vig + before)
-        self.assertIsNone(B.endow_row(self.lg.rows(), 0, "pass-1"))               # nobody planted: the house keeps it
+        self.assertIsNone(B.endow_row(self.lg.rows(), 0, "pass-1"))               # nobody planted, nothing to sweep: no row
+        self.settle("y", "pass")                                                  # the stake settles after retirement and lands in b
+        self.assertGreater(self.book().balance("b"), 0)
+        sweep = B.endow_row(self.lg.rows(), 0, "pass-1")
+        self.assertEqual(list(sweep["from"]), ["b"])
+        self.assertEqual(sweep["to"], {"house": sweep["from"]["b"]})
+        self.lg.append(sweep)
+        self.assertAlmostEqual(self.book().balance("b"), 0.0)
+        before, vig = self.book().balances()["house"] - vig, vig                 # the pool now: what the house holds beyond its earlier float
         for aid in ("n1", "n2"):
             book = self.book()
             book.agents[aid] = self.lg.append({**B.agent_row(book, aid, f"{aid} holds", None), "by": "reflect-pass-1"})
         row = B.endow_row(self.lg.rows(), 0, "pass-1")
-        self.assertEqual(row["to"], {"n1": round((before + vig) / 2, 4), "n2": round((before + vig) / 2, 4)})
-        self.assertEqual(row["from"], {"house": round(2 * round((before + vig) / 2, 4), 4)})
+        retired_usd = next(r["usd"] for r in self.lg.rows() if r["t"] == "retire")
+        vig_all = sum(r.get("vig", 0) for r in self.lg.rows() if r["t"] == "settle")
+        share = round((retired_usd + vig_all) / 2, 4)
+        self.assertEqual(row["to"], {"n1": share, "n2": share})
+        self.assertEqual(row["from"], {"house": round(2 * share, 4)})
         self.lg.append(row)
-        self.assertAlmostEqual(self.book().balance("n1"), (before + vig) / 2, places=3)
-        self.assertAlmostEqual(self.book().balances()["house"], 0.0, places=3)
+        self.assertAlmostEqual(self.book().balance("n1"), share, places=3)
 
     def test_house_pool_grows_by_vig(self):
         self.assertNotIn("house", self.book().balances())

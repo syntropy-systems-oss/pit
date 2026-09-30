@@ -249,14 +249,19 @@ def retire_row(book: Book, aid: str, reason: str, by: str | None = None) -> dict
 def endow_row(rows: list[dict], start: int, by: str) -> dict | None:
     """What a reflection pass leaves the agents it planted: the balances of the agents it retired plus the vig on every
     bet settled since the previous pass, split equally, paid by the house. None when it planted nobody or there is nothing."""
-    window = rows[start:]
+    window, book = rows[start:], Book(rows)
     planted = [r["id"] for r in window if r["t"] == "agent" and r["kind"] == "persistent" and str(r.get("by", "")).startswith(REFLECT)]
+    # stakes placed before a retirement settle after it: sweep whatever a retired wallet holds now, into the same pool
+    swept = {a: round(book.balance(a), 4) for a in book.retired if book.balance(a) > 0}
     pool = round(sum(r.get("usd", 0) for r in window if r["t"] == "retire")
-                 + sum(r.get("vig", 0) for r in window if r["t"] == "settle"), 4)
-    if not planted or pool <= 0:
+                 + sum(r.get("vig", 0) for r in window if r["t"] == "settle") + sum(swept.values()), 4)
+    if pool <= 0 or (not planted and not swept):
         return None
+    if not planted:                                        # nobody to endow: the sweep still leaves the house holding it
+        return {"t": "endow", "from": swept, "to": {HOUSE: round(sum(swept.values()), 4)}, "by": by}
     share = round(pool / len(planted), 4)
-    return {"t": "endow", "from": {HOUSE: round(share * len(planted), 4)}, "to": {a: share for a in planted}, "by": by}
+    return {"t": "endow", "from": {**swept, HOUSE: round(share * len(planted) - sum(swept.values()), 4)},
+            "to": {a: share for a in planted}, "by": by}
 
 
 def tick(ledger: L.Ledger, cfg: dict, now: datetime | None = None, since: str | None = None) -> dict | None:
