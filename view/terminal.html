@@ -315,12 +315,12 @@ function renderLanes(m) {
     const r = l.running, pct = r ? Math.min(100, 100 * r.burned_usd / Math.max(0.01, r.budget_usd)) : 0, q = l.queue.slice(0, 8);   // money burned (elapsed x rate) of the funding
     return `<div class="lane" title="${esc(l.box || "")}"><div class="top"><span class="name">${esc(l.lane)}</span><span class="dim">${usd(l.price)}/h</span><span class="num fg2" title="spent today">${usd(l.spend_today)}</span></div>` +
       (l.bag ? `<div class="dim">bag: ${l.bag.n}/${l.bag.max} today</div>` : "") +
-      (r ? `<div class="st"><span class="b acc">run</span><span class="chip" data-task="${esc(r.job)}">${esc(r.job)}</span>${r.fallback ? '<span class="b q">fbk</span>' : ""}</div>` +
+      (r ? `<div class="st"><span class="b acc">run</span><span class="chip" data-task="${esc(r.job)}">${esc(r.job)}</span>${r.fallback ? '<span class="b q" title="fallback: nothing in this lane has matched stakes, so the cheapest runnable job runs">fbk</span>' : ""}</div>` +
         `<div class="pr"><div class="prog" role="progressbar" aria-label="${esc(r.job)} funding burned" aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100"><i class="${r.burned_usd > r.budget_usd ? "over" : ""}" style="width:${pct}%"></i></div>` +
         `<span class="num" title="${mmss(r.elapsed_s)} of ${mmss(r.funded_s)}">${usd(r.burned_usd)}<span class="dim"> / ${usd(r.budget_usd)}</span></span></div>`
         : `<div class="st"><span class="b ${l.idle_s > 120 ? "F" : "q"}">idle${l.idle_s != null ? " " + Math.floor(l.idle_s / 60) + "m" : ""}</span></div>`) +
       `<div class="qh"><span>Queue ${l.depth}</span><span class="num">score</span></div>` +
-      (q.map((x, i) => `<div class="qr" data-task="${esc(x.task)}"><span class="dim num">${i + 1}</span><span class="t">${esc(x.task)}</span><span>${x.fallback ? '<span class="b q">fbk</span>' : ""}</span><span class="num">${x.score.toFixed(2)}</span></div>`).join("") ||
+      (q.map((x, i) => `<div class="qr" data-task="${esc(x.task)}"><span class="dim num">${i + 1}</span><span class="t">${esc(x.task)}</span><span>${x.fallback ? '<span class="b q" title="fallback: nothing in this lane has matched stakes, so the cheapest runnable job runs">fbk</span>' : ""}</span><span class="num">${x.score.toFixed(2)}</span></div>`).join("") ||
         `<div class="dim" style="line-height:20px">empty</div>`) +
       (l.depth > q.length ? `<div class="dim" style="line-height:20px">+ ${l.depth - q.length} more</div>` : "") + "</div>";
   }).join(""));
