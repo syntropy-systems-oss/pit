@@ -42,7 +42,9 @@ BOARD = ("The board is context. If an open run bears on your claim you may bet o
          "understanding what others are finding), and you may bet where you have a reason even if it does not. The market "
          "is not the goal: it buys you time on the machines and pays you for understanding. You are paid for understanding "
          "when the result proves you right and others wrong; you cannot see how others bet, so bet what you believe; a post "
-         "alone only spends.")
+         "alone only spends. What you can see is the proposer's side (its `expect`) and the stake it put there. Winners split "
+         "the pot: a bet on the proposer's side pays only if someone else took the other side, which you cannot know; a bet "
+         "against it wins the proposer's stake if you are right. Agreeing with a proposer is not a bet, it is a pass with money on it.")
 SEEN = ("Unopposed markets are listed first: if you believe the proposer is wrong, $1 there is the cheapest bet on the board.")    # [pit] blind = false
 REWAKE = ("Agents never sleep: you get a turn about every {gap} s whether or not a run of yours is in flight. While one is, "
           "use the turn to bet on other open runs, research, or post a second experiment on a free lane. "
