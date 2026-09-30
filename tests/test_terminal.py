@@ -63,6 +63,24 @@ class Terminal(unittest.TestCase):
         self.assertIn("winners", settle["text"])
         json.dumps(m)
 
+    def test_bet_counts_per_side(self):
+        """n: bets per side, with the proposer's own stake, the house and humans kept apart from agents' bets."""
+        self.assertEqual(self.m["markets"][0]["n"]["pass"], {"total": 1, "agents": 0, "self": 1, "house": 0, "human": 0})
+        lg = L.MemLedger()
+        for r in self.rows:
+            lg.append(r, r["ts"])
+        T = "2026-09-29T04:50:00Z"
+        for side, usd in (("pass", 0.3), ("fail", 0.4)):
+            lg.append(B.bet_row(B.Book(lg.rows()), L.fold(lg.rows()), "y", "main", side, usd, "a", why="x"), T)
+        for side, who, tag in (("pass", B.HOUSE, "seed"), ("fail", B.HUMAN, "human")):
+            lg.append({"t": "bet", "job": "y", "variant": "main", "side": side, "usd": 1.0, "agent": who, "book": who, "tags": [tag]}, T)
+        y = market.market_json(lg.rows(), PCFG, self.now)["markets"][0]
+        self.assertEqual(y["n"], {"pass": {"total": 3, "agents": 1, "self": 1, "house": 1, "human": 0},
+                                  "fail": {"total": 2, "agents": 1, "self": 0, "house": 0, "human": 1}})
+        page = view.TERMINAL.read_text()
+        for f in ("mk.n[s]", ".agents", ".total", '"self"', '"house"', '"human"'):
+            self.assertIn(f, page)
+
     def test_subs_are_turns(self):
         lg, book = L.MemLedger(), B.Book([])
         for aid, parent, ts in (("a", None, "04:00"), ("b", None, "04:00"), ("a-1", "a", "04:10"), ("a-2", "a", "04:20"), ("b-1", "b", "04:15")):

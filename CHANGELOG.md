@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Bet counts per side: `/market.json` markets carry `n` (per side: `total`, `agents`, `self`, `house`, `human`); the terminal shows agents/all under each PASS and FAIL stake and the split in the tooltip and the open market.
 - Posts require a `claim` string, supplied in the spec or with `q post --claim`; reads and house bag draws are exempt. Claims appear before questions in blind views, the board, lists, threads, wake prompts and the terminal, and are included in `/market.json`.
 - `q claims` prints every posted claim and its latest outcome, oldest first, with optional `--agent` and `--since`. Wake prompts point to the record.
 - Runs at a ref: local lanes with `repo` and `base` (default `HEAD`) execute in disposable detached worktrees, with cwd at the tree, `{tree}`, `PIT_TREE` and `PIT_REF`. Cleanup covers timeout, stop rules and termination. Remote repo lanes share the tree environment and ref metadata; the lane key `ref` is renamed `base`.

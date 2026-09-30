@@ -105,7 +105,15 @@ def market_json(rows: list[dict], cfg: dict, now: datetime | None = None) -> dic
                        "pass_by": sorted({b["agent"] for b in bets if b["side"] == "pass"}),
                        "fail_by": sorted({b["agent"] for b in bets if b["side"] == "fail"}),
                        "settled": (book.settled.get((jid, v)) or {}).get("outcome")})
-        return {"task": jid, "variants": vs, "pass": round(sum(v["pass"] for v in vs), 4), "fail": round(sum(v["fail"] for v in vs), 4),
+        n = {side: {"total": 0, "agents": 0, "self": 0, "house": 0, "human": 0} for side in ("pass", "fail")}
+        for b in book.bets:       # the bets behind the pools (late ones are out, as in the money); agents = genuine, not self/seed/bag/human
+            if b["job"] == jid:
+                tags = set(b.get("tags", []))
+                k = ("house" if tags & {"seed", "bag"} or b["agent"] == B.HOUSE else "self" if "self" in tags
+                     else "human" if "human" in tags or b["agent"] == B.HUMAN else "agents")
+                n[b["side"]]["total"] += 1
+                n[b["side"]][k] += 1
+        return {"task": jid, "variants": vs, "pass": round(sum(v["pass"] for v in vs), 4), "fail": round(sum(v["fail"] for v in vs), 4), "n": n,
                 "matched": round(m, 4), "budget": budget, "score": round(m / max(budget, 0.01), 4), "lane": s["lane"],
                 "proposer": book.proposers.get(jid), "fallback": jid in fb, "state": j["state"], "runnable": jid in frontier,
                 "rank": order.index(jid) if jid in order else None, "added": j["added"], "age_s": _age(born.get(jid), now),
