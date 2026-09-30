@@ -1160,6 +1160,20 @@ class RefRuns(unittest.TestCase):
             self.cli.main(['list', *args])
         return out.getvalue()
 
+    def test_prepare_runs_in_the_tree_before_the_job_and_a_failing_prepare_is_invalid(self):
+        self.lane['prepare'] = 'echo "$PIT_REF" > prepared.txt'
+        self.lane['runner'] = 'cat prepared.txt; echo "pit: verdict=pass"'
+        self.post()
+        r = self.run_job()
+        self.assertEqual(r['verdict'], 'pass')
+        self.assertIn(self.sha, (self.root / r['log']).read_text())
+        self.assertEqual(self.git('worktree', 'list', '--porcelain').count('worktree '), 1)
+        self.lane['prepare'] = 'echo "inputs missing: skills"; exit 3'
+        self.post('change2')
+        r = self.run_job('change2')
+        self.assertEqual((r['verdict'], r['note']), ('invalid', 'prepare: inputs missing: skills'))
+        self.assertEqual(self.git('worktree', 'list', '--porcelain').count('worktree '), 1)
+
     def test_post_pins_sha_and_name_and_runner_runs_at_ref_then_removes_tree(self):
         s = self.post()
         self.assertEqual((s['ref'], s['ref_name'], s['base_ref']), (self.sha, 'feature', self.base))

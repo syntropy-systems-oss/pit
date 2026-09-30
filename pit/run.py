@@ -203,9 +203,14 @@ def run_job(root, ledger: L.Ledger, cfg: dict, jid: str, lane: str | None = None
             meta = trees.metadata(l["repo"], s.get("ref") or l.get("base", "HEAD"),
                                   s.get("base_ref") or l.get("base", "HEAD"))
             with trees.worktree(l["repo"], meta["ref"]) as tree:
-                setup = time.monotonic() - t0       # the checkout is billed; the tree's removal is not
-                r = execute(trees.command(cmd, tree), max(0, funded - setup), s["fail_on"],
-                            cwd=tree, echo=echo, env={**env, **trees.environment(tree, meta["ref"])})
+                tenv = {**env, **trees.environment(tree, meta["ref"])}
+                pre = prepare(l.get("prepare"), tree, tenv, echo)
+                setup = time.monotonic() - t0       # the checkout and the prepare are billed; the tree's removal is not
+                if pre:
+                    r = {"rc": pre["rc"], "wall_s": 0.0, "output": pre["output"],
+                         "report": {"verdict": "invalid", "note": f"prepare: {pre['last']}"}}
+                else:
+                    r = execute(trees.command(cmd, tree), max(0, funded - setup), s["fail_on"], cwd=tree, echo=echo, env=tenv)
             r.update(meta, wall_s=r["wall_s"] + setup)
         except (trees.GitError, OSError) as e:
             r = {"rc": None, "wall_s": time.monotonic() - t0, "output": str(e),
@@ -221,6 +226,20 @@ def run_job(root, ledger: L.Ledger, cfg: dict, jid: str, lane: str | None = None
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(r.get("output", ""))
     return record(ledger, cfg, s, lane, r)
+
+
+def prepare(cmd: str | None, tree, env: dict, echo=print) -> dict | None:
+    """The lane's `prepare` command, run inside the tree before the job (ignored inputs, dependencies). None when it
+    passed or there is none; else {rc, output, last} and the run is INVALID: a tree that could not be prepared proves nothing."""
+    if not cmd:
+        return None
+    p = subprocess.run(["sh", "-c", cmd], cwd=tree, env={**os.environ, **env}, capture_output=True, text=True, timeout=600)
+    out = (p.stdout + p.stderr).strip()
+    for line in out.splitlines():
+        echo("  | " + line)
+    if p.returncode == 0:
+        return None
+    return {"rc": p.returncode, "output": out + "\n", "last": (out.splitlines() or [f"exit {p.returncode}"])[-1][:200]}
 
 
 def record(ledger: L.Ledger, cfg: dict, s: dict, lane: str, r: dict, ts: str | None = None, agent: str | None = None) -> dict:
