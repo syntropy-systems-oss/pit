@@ -637,6 +637,22 @@ class Autopilot(unittest.TestCase):
         self.assertEqual(len(self.auto("reflect")), 2)
         self.assertEqual(len([r for r in self.lg.rows() if r["t"] == "reflect"]), 1)
 
+    def test_pass_end_endows_planted_agents_from_retired_balances(self):
+        self.cfg["reflect"] = {"rows": 1}
+        self.lg.append({"t": "node", "kind": "finding", "id": "F0", "text": "evidence"})
+        ap = self.ap()
+        ap.reflection(datetime.now(timezone.utc))
+        sub = ap.subs[B.REFLECT][0]
+        b_had = B.Book(self.lg.rows()).balance("b")
+        self.lg.append(B.retire_row(B.Book(self.lg.rows()), "b", "goal met", sub))          # what the pass did
+        self.lg.append({**B.agent_row(B.Book(self.lg.rows()), "n1", "n1 holds", None), "by": sub})
+        ap.wait()
+        rows = self.lg.rows()
+        endow = [r for r in rows if r["t"] == "endow"]
+        self.assertEqual(len(endow), 1)
+        self.assertEqual(endow[0]["to"], {"n1": round(b_had, 4)})
+        self.assertAlmostEqual(B.Book(rows).balance("n1"), b_had, places=3)
+
     def test_reflect_prompt_has_agents_facts_and_direct_authority(self):
         self.cfg["reflect"] = {"rows": 1}
         self.post(job("won"), "a")

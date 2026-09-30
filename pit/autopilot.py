@@ -801,6 +801,10 @@ class Autopilot:
                 if not any(r["t"] == "reflect" and r.get("agent") in (sub, B.REFLECT) for r in rows[start:]):
                     self.lg.append(record)
                     self.echo(f"reflection recorded: {sub}, {record['rows_covered']} rows covered")
+                since = max((i for i, r in enumerate(rows[:start]) if r["t"] == "reflect"), default=-1) + 1
+                if endow := B.endow_row(self.lg.rows(), since, sub):
+                    self.lg.append(endow)
+                    self.echo(f"endowed {', '.join(endow['to'])} with ${sum(endow['to'].values()):.2f} from retired balances and vig")
 
     def ensure_sleep(self, agent: str, sub: str):
         """An agent never just ends: a sub that left no sleep row gets `sleep until-event`."""

@@ -119,6 +119,14 @@ class Book:
                 self.agents[r["id"]] = r
             elif t == "retire":
                 self.retired[r["agent"]] = r
+                if r.get("usd"):                         # its balance goes to the house; a reflection pass endows newcomers from it
+                    self._add(r["agent"], -r["usd"])
+                    self._add(HOUSE, r["usd"])
+            elif t == "endow":
+                for w, usd in r["from"].items():
+                    self._add(w, -usd)
+                for w, usd in r["to"].items():
+                    self._add(w, usd)
             elif t == "drip":
                 self.last_drip = r
                 for a, usd in r["to"].items():
@@ -234,7 +242,21 @@ def retire_row(book: Book, aid: str, reason: str, by: str | None = None) -> dict
         raise SystemExit(f"no persistent agent {aid}")
     if aid in book.retired or aid == REFLECT:
         raise SystemExit(f"{aid} is already retired" if aid in book.retired else "reflect is structural: it is never retired")
-    return {"t": "retire", "agent": aid, "reason": reason, **({"by": by} if by else {})}
+    usd = round(max(book.balance(aid), 0.0), 4)
+    return {"t": "retire", "agent": aid, "reason": reason, **({"usd": usd} if usd else {}), **({"by": by} if by else {})}
+
+
+def endow_row(rows: list[dict], start: int, by: str) -> dict | None:
+    """What a reflection pass leaves the agents it planted: the balances of the agents it retired plus the vig on every
+    bet settled since the previous pass, split equally, paid by the house. None when it planted nobody or there is nothing."""
+    window = rows[start:]
+    planted = [r["id"] for r in window if r["t"] == "agent" and r["kind"] == "persistent" and str(r.get("by", "")).startswith(REFLECT)]
+    pool = round(sum(r.get("usd", 0) for r in window if r["t"] == "retire")
+                 + sum(r.get("vig", 0) for r in window if r["t"] == "settle"), 4)
+    if not planted or pool <= 0:
+        return None
+    share = round(pool / len(planted), 4)
+    return {"t": "endow", "from": {HOUSE: round(share * len(planted), 4)}, "to": {a: share for a in planted}, "by": by}
 
 
 def tick(ledger: L.Ledger, cfg: dict, now: datetime | None = None, since: str | None = None) -> dict | None:
