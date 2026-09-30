@@ -133,6 +133,11 @@ def validate(spec: dict, lanes: dict, known: list[str] | None = None, drivers: l
     """Reasons to refuse the spec; empty list = accepted. `lanes` is lanes.load()['lanes']; `known` = scenarios() (None: any);
     `drivers` = [bench] drivers (None: a run is not checked for a verdict line)."""
     errs = []
+    claim = spec.get("claim", "")
+    if not isinstance(claim, str):
+        errs.append("claim must be a string")
+    elif not claim.strip() and not (is_read(spec) or spec.get("bag")):
+        errs.append("a post states its claim")
     if spec.get("kind") not in (None, "read"):
         errs.append(f"unknown kind {spec['kind']!r} (a job, or \"read\")")
     for k in ("id", "question", *(("then",) if is_read(spec) else ("if_pass", "if_fail"))):
@@ -204,6 +209,13 @@ def validate(spec: dict, lanes: dict, known: list[str] | None = None, drivers: l
         elif m[7] and m[8].lstrip(".").split(".")[0] not in spec.get("inputs", {}):
             errs.append(f"unresolved template {{{{ {expr} }}}}: no such input")
     return errs
+
+
+def claim_first(spec: dict, question_limit: int | None = None) -> str:
+    """One line of a job's claim, when present, followed by its question."""
+    claim = " ".join(spec.get("claim", "").split())
+    question = " ".join(spec.get("question", "").split())[:question_limit]
+    return (f"{claim} · " if claim else "") + question
 
 
 def _lookup(expr: str, ctx: dict):

@@ -1,6 +1,6 @@
 ---
 name: add
-description: Add a Pit job - write a TOML spec (question, if_pass, if_fail, lane, budget_usd, value, depends_on, templated inputs, optional run) and validate it with q add. Use for "queue a job", "queue a run", "pit add".
+description: Add a Pit job - write a TOML spec (claim, question, if_pass, if_fail, lane, budget_usd, value, depends_on, templated inputs, optional run) and validate it with q add. Use for "queue a job", "queue a run", "pit add".
 ---
 # Add a job
 
@@ -8,6 +8,7 @@ Write `<root>/queue/<id>.toml`, where `<root>` is the state directory (`$PIT_ROO
 
 ```toml
 id = "variant-b-heldout"
+claim = "Variant B generalizes better than A."
 question = "Does variant B beat A on the held-out set?"
 if_pass = "promote B; queue the ablation"
 if_fail = "keep A; look at B's training mix"   # must differ from if_pass
@@ -25,7 +26,7 @@ refutes_if_pass = ["F:some-claim"]   # a refutation stales everything downstream
 
 A `scenario` job needs a lane with a `runner` in lanes.toml; the harness renders its driver (and its `preflight`). `q list --scenarios` names the scenarios (the files in `[bench] scenario_dir`); an unknown one is refused with the list, and `arms` is not allowed with `scenario`.
 
-A post is a claim that the run will pass; there is no `expect` field (a spec with one is refused). Post only what you think will work; to say something fails, bet FAIL on another agent's post.
+A post states its `claim`; the question tests it. `q post --claim "..."` overrides the spec's claim. Reads and house bag draws need no claim. A post is a claim that the run will pass; there is no `expect` field (a spec with one is refused). Post only what you think will work; to say something fails, bet FAIL on another agent's post.
 
 Then: "${CLAUDE_PLUGIN_ROOT}/bin/q" add <path>. If refused, fix what it names; do not weaken the question to get past it.
 You fund a run in dollars: `budget_usd` is the only budget. Its time burns it (wall x the lane's `usd_per_h`) and so do the meters it reports (at the lane's prices); the run is killed when its time alone has spent the funding. A cost over budget_usd books FAIL and the proposer pays the overage; the unspent part is refunded at the result.

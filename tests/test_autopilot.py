@@ -320,7 +320,7 @@ class Autopilot(unittest.TestCase):
         calls = self.stub_calls()
         self.assertEqual(len(calls), 2)
         for c in calls:
-            self.assertIn("Since you last looked:\nnew market n1/main funded $1 (257s) gpu-small · is n1 true?", c)
+            self.assertIn("Since you last looked:\nnew market n1/main funded $1 (257s) gpu-small · n1 holds · is n1 true?", c)
             self.assertNotIn("PASS $", c)                          # [pit] blind (default): no pools anywhere in the prompt
             self.assertIn("You MUST end your turn by saying what you are waiting on", c)
         self.assertEqual({r["note"] for r in self.lg.rows() if r["t"] == "sleep" and not r["note"].startswith("fixture")},
@@ -341,6 +341,22 @@ class Autopilot(unittest.TestCase):
             self.assertIn("Your brief is a capability or research goal to prove or refute; it is your goal.", c)
             self.assertIn("--until-result <job>", c)
             self.assertIn("Every turn must leave the market changed", c)
+
+    def test_prompt_shows_post_claim_and_claim_record_once(self):
+        ap = self.ap()
+        ap.seen["a"] = len(self.lg.rows())
+        self.post(job("new", claim="The mechanism holds.", question="Does the test pass?"), "b")
+        sentence = "The record of every claim and its outcome: `q claims` (grep it as you see fit)."
+        for market_wake in (False, True):
+            text = ap.prompt("a-turn", "a", [], market=market_wake)
+            new = text.split("New markets since your last turn:\n", 1)[1].split(B.NEW_RULE)[0]
+            self.assertIn("The mechanism holds. · Does the test pass?", new)
+            self.assertEqual(text.count(sentence), 1)
+            self.assertNotIn("PASS $", text)
+        ap.seen["a"] = len(self.lg.rows())
+        text = ap.prompt("a-next", "a", [])
+        self.assertNotIn("New markets since your last turn:", text)
+        self.assertEqual(text.count(sentence), 1)
 
     def test_heartbeat_wakes_an_idle_funded_agent_once_per_window(self):
         ap = self.ap()
@@ -626,7 +642,7 @@ class Autopilot(unittest.TestCase):
         text = ap.prompt("b-2", "b", [])
         self.assertIn('j1 main: you had FAIL $0.10 (you said: "the small model drops multi-step tasks") — lost $0.10', text)
         self.assertIn(B.LOSS_RULE, text)
-        self.assertIn("New markets since your last turn:\nj2 [ci] does j2 hold?", text)
+        self.assertIn("New markets since your last turn:\nj2 [ci] j2 holds · does j2 hold?", text)
         self.assertNotIn(A.DIFF, text)          # no market carries a change
         self.assertNotIn(A.CHANGE, text)        # no workspace configured
         self.assertLess(text.index("Since you last looked:"), text.index("Your stakes that settled since your last turn:"))

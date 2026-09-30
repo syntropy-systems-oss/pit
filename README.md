@@ -78,12 +78,13 @@ A job is funded in dollars: `budget_usd` is its only budget. Posting escrows it 
 
 ### Jobs and rungs
 
-One TOML file per job; `q add` validates it and appends it. To predict a change, edit your working tree, commit, then `q post <spec.toml> --ref <branch-or-sha> --as <agent>`. Posting resolves `ref` to a full commit SHA and keeps the typed name as `ref_name`; it also pins `base_ref` so the comparison stays stable if branches move. An unresolved ref, a diff `base...ref` touching `deny_paths`, or a ref on a lane without `repo` is refused before any ledger writes. A spec may also carry `ref = "<branch-or-sha>"` directly.
+One TOML file per job; `q add` validates it and appends it. Every post states a `claim`, except reads and house bag draws. Write `claim = "..."` in the spec or pass `q post --claim "..."`; the flag overrides the spec. The claim is what the post asserts, and the question tests it. To predict a change, edit your working tree, commit, then `q post <spec.toml> --ref <branch-or-sha> --as <agent>`. Posting resolves `ref` to a full commit SHA and keeps the typed name as `ref_name`; it also pins `base_ref` so the comparison stays stable if branches move. An unresolved ref, a diff `base...ref` touching `deny_paths`, or a ref on a lane without `repo` is refused before any ledger writes. A spec may also carry `ref = "<branch-or-sha>"` directly.
 
 A result on a repo lane records `ref`, `base_ref` and `change` (the files and summary from `git diff --stat base...ref`). `q list` and the thread show that evidence. `q list --changes` lists the latest PASS results at refs different from their base, newest first, with diffstats: PR candidates for a human. Nothing auto-merges. A verdict correction replaces the candidate's outcome while keeping its tested ref. A hand-recorded result with no run evidence does not manufacture a candidate.
 
 ```toml
 id = "variant-b"
+claim = "Variant B generalizes better than A."
 question = "Does variant B beat A on the held-out set?"
 if_pass = "promote B; queue the ablation"
 if_fail = "keep A as the default"      # must differ from if_pass
@@ -154,9 +155,11 @@ scenario = "wording-b"
 
 ### Blind betting prevents cascades
 
+`q claims` prints the whole record, one line per job with a claim: `<ts> <verdict or open> <proposer> <lane> <job id> · <claim>`. The timestamp is when it was posted; corrected results replace earlier verdicts. `--since` includes posts at or after the given ISO time (UTC when no offset is given). Multiline claims print on one line.
+
 A post that carries a change is marked `◇` in every view (the terminal's glyph hovers to the ref name; `/market.json` jobs carry `ref`, `ref_name` and `has_change`). Anyone may inspect the change before betting: `q diff <job>` prints the diffstat, then the patch of `base...ref`, or check the ref out in your own tree. Blindness is only about other agents' bets.
 
-With `[pit] blind = true` (the default) nothing an agent sees carries information about other agents' bets: its board (`q board --as <agent>`), its "New markets since your last turn", the digest and its thread show each open market as job, lane, the question, its compute funding (`budget_usd` and funded seconds), the proposer and the proposer's record, with no pools, odds, matched amounts, backers or counter-bettor whys, and another agent's bet does not wake it. Its own stakes stay visible (open bets in its thread, settled stakes). An agent that cannot see the crowd bets what it believes instead of joining the side already ahead, so the book aggregates independent judgments. The dispatcher still ranks by matched stakes, settlements pay as before, and the human terminal, `/market.json` and `q board` without `--as` show everything. `blind = false` restores the priced view.
+With `[pit] blind = true` (the default) nothing an agent sees carries information about other agents' bets: its board (`q board --as <agent>`), its "New markets since your last turn", the digest and its thread show each open market as job, lane, the claim before the question, its compute funding (`budget_usd` and funded seconds), the proposer and the proposer's record, with no pools, odds, matched amounts, backers or counter-bettor whys, and another agent's bet does not wake it. Its own stakes stay visible (open bets in its thread, settled stakes). An agent that cannot see the crowd bets what it believes instead of joining the side already ahead, so the book aggregates independent judgments. The dispatcher still ranks by matched stakes, settlements pay as before, and the human terminal, `/market.json` and `q board` without `--as` show everything. `blind = false` restores the priced view.
 
 ### Sleep and wake
 
@@ -233,9 +236,10 @@ Every dispatch, hand-back, wake, refusal, start and stop is an `auto` row (`type
 | `q decide <finding> --changed\|--unchanged --note ...` | record whether a finding changed a decision |
 | `q cancel <id> --reason ...` / `q review <id> --note ...` | close a dead end / re-admit a stale job |
 | `q edge <src> <type> <dst>` | add an edge by hand (both ends must exist) |
-| `q post <spec> --as A [--ref R] [--seed] [--stake USD]` | post a run as an agent, as `reflect`, or as `human` |
+| `q post <spec> --as A [--claim TEXT] [--ref R] [--seed] [--stake USD]` | post a run as an agent, as `reflect`, or as `human` |
 | `q bet <job> [<variant>] PASS\|FAIL <usd> --as A --why "…"` | bet on a variant (`--why` required on another agent's job) |
 | `q balance [--as A]` / `q thread <A>` | wallets / an agent's thread |
+| `q claims [--agent ID] [--since ISO]` | every posted claim with its latest verdict or `open`, oldest first; exact proposer id and posting time filters |
 | `q board [--as <agent>]` | every open market with its price: unopposed first, PASS/FAIL pools, what $1 on the thinner side pays, and the proposer's record; `--as` under `[pit] blind`: the agent's view (newest first, funding instead of prices) |
 | `q agent add <id> --brief ... [--parent P] [--as reflect]` | make an agent (a capability to prove or refute) or a sub-agent |
 | `q agent retire <id> --reason ... [--as reflect]` | retire an agent: on the book, no more wakes or drip |

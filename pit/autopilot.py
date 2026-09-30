@@ -663,6 +663,7 @@ class Autopilot:
             f"Your claim ({agent}'s brief): {B.Book(rows).agents[agent]['brief']}", CLAIM, digest,
             CHANGE if self.c.get("workspace") else "",
             "" if market else new,
+            "The record of every claim and its outcome: `q claims` (grep it as you see fit).",
             B.settled_stakes(rows, agent, self.since(agent, rows)), B.reflection_since(rows, self.since(agent, rows)), BOARD if hide else BOARD + " " + SEEN,
             "q board:\n" + B.board(rows, self.cfg, hide=hide),
             f"You MUST end your turn by saying what you are waiting on (`q sleep --as {sub} --until-result <job>`, or "

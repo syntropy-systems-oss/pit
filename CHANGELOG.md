@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Posts require a `claim` string, supplied in the spec or with `q post --claim`; reads and house bag draws are exempt. Claims appear before questions in blind views, the board, lists, threads, wake prompts and the terminal, and are included in `/market.json`.
+- `q claims` prints every posted claim and its latest outcome, oldest first, with optional `--agent` and `--since`. Wake prompts point to the record.
+
 - Runs at a ref: local lanes with `repo` and `base` (default `HEAD`) execute in disposable detached worktrees, with cwd at the tree, `{tree}`, `PIT_TREE` and `PIT_REF`. Cleanup covers timeout, stop rules and termination. Remote repo lanes share the tree environment and ref metadata; the lane key `ref` is renamed `base`.
 - `q post --ref` pins a commit and its comparison base, retaining `ref_name`; bad refs and `deny_paths` changes are refused. Scenario validation reads the proposed tree so a change can register a new case.
 - Results retain the tested ref and diffstat. `q list --changes` lists PASS PR candidates, newest first; nothing auto-merges. Views mark a post that carries a change (the terminal's glyph hovers to the ref name); `q diff <job>` prints its diffstat and patch so bettors can inspect it.

@@ -21,7 +21,7 @@ CFG = tomllib.loads((ROOT / "lanes.example.toml").read_text())
 
 
 def job(id, **kw):
-    s = {"id": id, "question": f"does {id} hold?", "if_pass": "go", "if_fail": "stop",
+    s = {"id": id, "claim": f"{id} holds", "question": f"does {id} hold?", "if_pass": "go", "if_fail": "stop",
          "lane": "gpu-small", "budget_usd": 1}
     s.update(kw)
     return specmod.normalize(s)
@@ -59,6 +59,136 @@ class Validator(unittest.TestCase):
         self.assertTrue(any("not in depends_on" in e for e in self.errs(inputs={"x": "{{ jobs.b.result.k }}"})))
         self.assertTrue(any("unresolved" in e for e in self.errs(inputs={"x": "{{ nonsense }}"})))
         self.assertEqual(self.errs(depends_on=["b"], inputs={"x": "{{ jobs.b.result.k }}"}), [])
+
+
+class PostedClaims(unittest.TestCase):
+    def setUp(self):
+        from pit import cli
+        self.cli = cli
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.lg = L.MemLedger()
+        self.cfg = Pit.PCFG
+        for aid in ("a", "b"):
+            self.lg.append(B.agent_row(B.Book(self.lg.rows()), aid, f"{aid} brief"), "2026-09-28T00:00:00Z")
+        self.lg.append({"t": "drip", "to": {"a": 100, "b": 100}, "usd": 200, "minutes": 60}, "2026-09-28T00:00:00Z")
+
+    def q(self, *args):
+        out = io.StringIO()
+        with mock.patch.object(self.cli, "ctx", return_value=(self.root, self.lg, self.cfg)), \
+             mock.patch.object(self.cli, "sync"), contextlib.redirect_stdout(out):
+            self.cli.main(list(args))
+        return out.getvalue()
+
+    def specfile(self, jid="x", **kw):
+        s = {"id": jid, "question": "Does it hold?", "if_pass": "go", "if_fail": "stop",
+             "lane": "gpu-small", "budget_usd": 1, **kw}
+        p = self.root / f"{jid}.toml"
+        p.write_text("\n".join(f"{k} = {json.dumps(v)}" for k, v in s.items()))
+        return str(p)
+
+    def test_post_requires_claim_and_cli_overrides_spec(self):
+        for kw in ({}, {"claim": ""}, {"claim": " \n\t"}):
+            with self.subTest(kw=kw):
+                path = self.specfile(**kw)
+                before = self.lg.rows()
+                with self.assertRaises(SystemExit) as e:
+                    self.q("post", path, "--as", "a")
+                self.assertEqual(str(e.exception), f"refused {path}: a post states its claim")
+                self.assertEqual(self.lg.rows(), before)
+                self.assertFalse((self.root / "queue").exists())
+        path = self.specfile(claim="from the spec")
+        self.q("post", path, "--as", "a", "--claim", "from the flag")
+        self.q("post", self.specfile("y", claim="from the spec"), "--as", "b")
+        specs = L.fold(self.lg.rows()).jobs
+        self.assertEqual(specs["x"]["spec"]["claim"], "from the flag")
+        self.assertEqual(specs["y"]["spec"]["claim"], "from the spec")
+        with self.assertRaisesRegex(SystemExit, "a post states its claim"):
+            self.q("post", self.specfile("z", claim="in file"), "--as", "a", "--claim", "")
+
+    def test_claim_is_only_a_nonempty_string_and_reads_and_bag_are_exempt(self):
+        s = job("x")
+        s.pop("claim")
+        self.assertEqual(specmod.validate(s, CFG["lanes"]), ["a post states its claim"])
+        for value in ("x", "\nFAIL <>& mechanism? " * 1000):
+            claimed = specmod.normalize({**s, "claim": value})
+            self.assertEqual(claimed["claim"], value)
+            self.assertEqual(specmod.validate(claimed, CFG["lanes"]), [])
+        for value in (None, 42, [], {}):
+            self.assertEqual(specmod.validate({**s, "claim": value}, CFG["lanes"]), ["claim must be a string"])
+        self.assertEqual(specmod.validate({**s, "bag": True, "proposer": "house"}, CFG["lanes"]), [])
+        path = self.specfile(kind="read", then="use the reading")
+        self.q("post", path, "--as", "a")
+        self.assertFalse(any(r["t"] == "bet" for r in self.lg.rows()))
+        self.assertEqual(self.q("claims"), "")
+
+    def test_claim_visible_before_question_in_cli_blind_views_and_market_json(self):
+        self.q("post", self.specfile(claim="The mechanism holds."), "--as", "a")
+        self.assertIn("The mechanism holds. · Does it hold?", self.q("thread", "b"))
+        self.q("bet", "x", "FAIL", "2", "--as", "b", "--why", "private reason")
+        for args in (("board",), ("board", "--as", "b"), ("list",), ("thread", "a")):
+            with self.subTest(args=args):
+                text = self.q(*args)
+                self.assertLess(text.index("The mechanism holds."), text.index("Does it hold?"))
+                if "--as" in args or args[0] == "thread":
+                    self.assertNotIn("private reason", text)
+                    self.assertNotIn("book PASS", text)
+        blind = self.q("board", "--as", "b")
+        for hidden in ("PASS $", "FAIL $", "pays"):
+            self.assertNotIn(hidden, blind)
+        rows = self.lg.rows()
+        new = B.new_markets(rows, self.cfg, "someone", 0)
+        self.assertIn("The mechanism holds. · Does it hold?", new)
+        m = market.market_json(rows, self.cfg)
+        self.assertEqual(m["markets"][0]["claim"], "The mechanism holds.")
+        self.assertEqual(m["threads"]["a"]["nodes"][0]["claim"], "The mechanism holds.")
+        old = job("legacy")
+        old.pop("claim")
+        add(self.lg, old)
+        self.assertEqual(next(x for x in market.market_json(self.lg.rows(), self.cfg)["markets"] if x["task"] == "legacy")["claim"], "")
+        self.assertNotIn("legacy", self.q("claims"))
+
+    def test_claims_shape_order_latest_verdict_and_filters(self):
+        for jid, ts, proposer, claim in (("new", "2026-09-30T12:00:00Z", "b", "new claim"),
+                                         ("old", "2026-09-29T12:00:00Z", "a", "old\nclaim"),
+                                         ("bad", "2026-09-30T12:00:00Z", "a.sub", "bad claim"),
+                                         ("lost", "2026-09-30T13:00:00Z", "a", "lost claim")):
+            add(self.lg, job(jid, proposer=proposer, claim=claim), ts=ts)
+        for jid, verdict, ts in (("old", "fail", "2026-09-30T14:00:00Z"),
+                                 ("bad", "invalid", "2026-09-30T15:00:00Z"),
+                                 ("old", "pass", "2026-09-30T16:00:00Z"),
+                                 ("lost", "fail", "2026-09-30T17:00:00Z")):
+            self.lg.append({"t": "result", "job": jid, "verdict": verdict}, ts)
+        self.lg.append({"t": "cancel", "id": "new", "reason": "cancelled without a result"})
+        expected = ["2026-09-29T12:00:00Z pass a gpu-small old · old claim",
+                    "2026-09-30T12:00:00Z open b gpu-small new · new claim",
+                    "2026-09-30T12:00:00Z invalid a.sub gpu-small bad · bad claim",
+                    "2026-09-30T13:00:00Z fail a gpu-small lost · lost claim"]
+        self.assertEqual(self.q("claims"), "\n".join(expected) + "\n")
+        self.assertEqual(self.q("claims", "--agent", "a").splitlines(), [expected[0], expected[3]])
+        self.assertEqual(self.q("claims", "--agent", "a.sub").splitlines(), [expected[2]])
+        for cutoff in ("2026-09-30T12:00:00Z", "2026-09-30T08:00:00-04:00", "2026-09-30T12:00:00", "2026-09-30"):
+            self.assertEqual(self.q("claims", "--since", cutoff).splitlines(), expected[1:])
+        self.assertEqual(self.q("claims", "--agent", "a", "--since", "2026-09-30").splitlines(), [expected[3]])
+        self.assertEqual(self.q("claims", "--agent", "nobody"), "")
+        with self.assertRaisesRegex(SystemExit, "--since needs an ISO timestamp"):
+            self.q("claims", "--since", "yesterday")
+
+    def test_claims_folds_ten_thousand_rows_once(self):
+        class Rows(list):
+            def __iter__(self):
+                self.passes = getattr(self, "passes", 0) + 1
+                return super().__iter__()
+        rows = Rows()
+        for i in range(5000):
+            rows.append({"t": "node", "kind": "job", "id": f"j{i}", "ts": "2026-09-30T12:00:00Z",
+                         "spec": {"claim": f"claim {i}", "lane": "any", "proposer": "a"}})
+            rows.append({"t": "result", "job": f"j{i}", "verdict": "pass"})
+        lines = B.claims(rows).splitlines()
+        self.assertEqual((rows.passes, len(lines)), (1, 5000))
+        self.assertTrue(lines[0].endswith("j0 · claim 0"))
+        self.assertTrue(lines[-1].endswith("j4999 · claim 4999"))
 
 
 class Templates(unittest.TestCase):
@@ -717,7 +847,7 @@ class Pit(unittest.TestCase):
         self.bet("done", "fail", 0.5, "a.sub")                                   # already bet on by a: not listed
         seen = {**self.PCFG, "pit": {**self.PCFG["pit"], "blind": False}}
         text = B.new_markets(self.lg.rows(), seen, "a", since)
-        self.assertIn("x [ci] does the small model pass multi-step tasks? · funded $1 (36s) · PASS $0.25 / FAIL $0.00 · $1 on FAIL pays $1.23 · "
+        self.assertIn("x [ci] x holds · does the small model pass multi-step tasks? · funded $1 (36s) · PASS $0.25 / FAIL $0.00 · $1 on FAIL pays $1.23 · "
                       "proposer b (0-0 on posts, 0-0 on bets)", text)
         self.assertTrue(text.startswith("New markets since your last turn:\n") and text.endswith(B.NEW_RULE))
         for jid in ("old", "mine", "done"):
@@ -742,7 +872,7 @@ class Pit(unittest.TestCase):
         for text in views(blind, True)[:3]:
             self.assertFalse([k for k in leaks if k in text], text)
         self.assertNotIn("book PASS", views(blind, True)[3])                           # the thread keeps only its own stakes
-        self.assertIn("x [gpu-small] does x hold? · funded $1 (257s) · proposer b (0-0 on posts, 0-0 on bets)", B.board(rows, blind, hide=True))
+        self.assertIn("x [gpu-small] x holds · does x hold? · funded $1 (257s) · proposer b (0-0 on posts, 0-0 on bets)", B.board(rows, blind, hide=True))
         self.assertIn("x/main FAIL $1.00", B.thread(rows, "a", True))                # its own stake stays visible
         full = "\n".join(views(seen, False))
         for k in ("PASS $", "pays", "held-out input", "book PASS"):
@@ -774,7 +904,7 @@ class Pit(unittest.TestCase):
 
     def test_read_is_funded_with_no_market(self):
         from pit import autopilot as A
-        rd = job("rd", kind="read", then="post the rollout the reading points at", if_pass="", if_fail="")
+        rd = job("rd", kind="read", claim="", then="post the rollout the reading points at", if_pass="", if_fail="")
         self.assertEqual(specmod.validate(rd, CFG["lanes"]), [])                          # `then`, not if_pass/if_fail
         self.assertIn("missing then: what you will do with the reading", specmod.validate({**rd, "then": ""}, CFG["lanes"]))
         self.post(job("x"), "a")
@@ -959,7 +1089,7 @@ class Pit(unittest.TestCase):
         lines = B.board(self.lg.rows(), self.PCFG).splitlines()
         self.assertEqual([l.split()[0] for l in lines], ["new", "old", "both"])
         # $1 on the empty FAIL side: (0.50 + 1) * 0.98 / 1 = 1.47
-        self.assertEqual(lines[1], "old [gpu-small, $2] PASS $0.50 / FAIL $0.00 · FAIL pays 1.5:1 · proposer a "
+        self.assertEqual(lines[1], "old [gpu-small, $2] old holds · does old hold? · PASS $0.50 / FAIL $0.00 · FAIL pays 1.5:1 · proposer a "
                                    "(0-0 on posts, 0-0 on bets)")
         self.assertIn("PASS $0.75 / FAIL $0.00 · FAIL pays 1.7:1", lines[0])
         self.assertEqual(B.pays(self.book(), "both", "main", "pass", self.PCFG), ("pass", (1.25 + 1) * 0.98 / 1.25))
@@ -1105,7 +1235,7 @@ class TypicalCost(unittest.TestCase):
     def test_post_warns_below_typical_not_above(self):
         for jid, usd in (("low", 0.5), ("ok", 1.4)):
             p = self.root / f"{jid}.toml"
-            p.write_text(f'id = "{jid}"\nquestion = "q?"\nif_pass = "go"\nif_fail = "stop"\nlane = "gpu-small"\n'
+            p.write_text(f'id = "{jid}"\nclaim = "it holds"\nquestion = "q?"\nif_pass = "go"\nif_fail = "stop"\nlane = "gpu-small"\n'
                          f'scenario = "s1"\nbudget_usd = {usd}\n')
             out = self.q(self.cli.cmd_post, spec=str(p), agent="human", seed=False, stake=0.0)
             self.assertEqual("warning: typical cost on gpu-small is $0.80 (200s); $0.5 buys 128s and will likely be killed" in out,

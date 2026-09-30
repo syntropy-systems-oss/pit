@@ -34,7 +34,7 @@ def conf(cfg: dict) -> dict:
 
 def blind(cfg: dict) -> bool:
     """[pit] blind (default true): what an agent sees carries nothing about others' bets (no pools, odds, backers or
-    whys), only job, lane, question, funding, proposer and record. The human terminal and ranking see everything."""
+    whys), only job, lane, claim, question, funding, proposer and record. The human terminal and ranking see everything."""
     return bool(conf(cfg)["blind"])
 
 
@@ -408,14 +408,14 @@ def digest(rows: list[dict], events: list[int], cfg: dict | None = None) -> str:
     for i in events:
         r = rows[i]
         if r["t"] == "node" and r.get("kind") == "job" and specmod.is_read(r["spec"]):
-            lines[f"m{r['id']}"] = f"new read {r['id']} {funded(r['spec'], cfg or {})} {r['spec'].get('lane')} · {r['spec'].get('question', '')[:60]}"
+            lines[f"m{r['id']}"] = f"new read {r['id']} {funded(r['spec'], cfg or {})} {r['spec'].get('lane')} · {specmod.claim_first(r['spec'], 60)}"
         elif r["t"] == "node" and r.get("kind") == "job":
             for v in variants(r["spec"]):
                 t = book.totals(r["id"], v)
                 lines[f"m{r['id']}/{v}"] = (f"new market {r['id']}/{v}{specmod.change_mark(r['spec'])}{' [bag]' if r['spec'].get('bag') else ''} "
                                             + (f"{funded(r['spec'], cfg)} {r['spec'].get('lane')}" if hide else
                                                f"PASS ${t['pass']:.2f} / FAIL ${t['fail']:.2f} · ${r['spec'].get('budget_usd', 0)} {r['spec'].get('lane')}")
-                                            + f" · {r['spec'].get('question', '')[:60]}")
+                                            + f" · {specmod.claim_first(r['spec'], 60)}")
         elif r["t"] == "node":
             lines[f"f{r['id']}"] = f"finding {r['id']}: {r.get('text', '')[:80]}"
         elif r["t"] == "result":
@@ -501,7 +501,7 @@ def new_markets(rows: list[dict], cfg: dict, agent: str, since: int, n: int = 10
                 continue
             t = book.totals(r["id"], v)
             side, x = pays(book, r["id"], v, "pass", cfg)
-            out.append(f"{r['id'] if v == 'main' else r['id'] + '/' + v}{specmod.change_mark(s)} [{s['lane']}] {' '.join(s['question'].split())[:100]} · "
+            out.append(f"{r['id'] if v == 'main' else r['id'] + '/' + v}{specmod.change_mark(s)} [{s['lane']}] {specmod.claim_first(s, 100)} · "
                        + f"{funded(s, cfg)}{typical_here(s, cfg, typ)} · "
                        + ("" if blind(cfg) else f"PASS ${t['pass']:.2f} / FAIL ${t['fail']:.2f} · $1 on {side.upper()} pays ${x:.2f} · ")
                        + f"proposer {prop} ({record(recs, prop)})")
@@ -629,6 +629,26 @@ def settle_due(ledger: L.Ledger, cfg: dict) -> list[dict]:
 
 # ---- reading ----------------------------------------------------------------------------------------
 
+def claims(rows: list[dict], agent: str | None = None, since: datetime | None = None) -> str:
+    """Every posted claim, oldest first, with its latest result. Fold once, without building the graph.
+    Filter by the literal proposer id and posting timestamp; ledger rows already arrive in time order."""
+    posts, verdicts = {}, {}
+    for r in rows:
+        if r["t"] == "node" and r.get("kind") == "job" and r["spec"].get("claim", "").strip():
+            posts[r["id"]] = r
+        elif r["t"] == "result":
+            verdicts[r["job"]] = r["verdict"]
+    out = []
+    for jid, r in posts.items():
+        s = r["spec"]
+        proposer = s.get("proposer") or HUMAN
+        if agent is not None and proposer != agent or since is not None and parse_t(r["ts"]) < since:
+            continue
+        out.append(f"{r['ts']} {verdicts.get(jid, 'open')} {proposer} {s['lane']} {jid} · "
+                   + " ".join(s["claim"].split()))
+    return "\n".join(out)
+
+
 def returned(bet: dict, s: dict) -> float:
     if s["outcome"] == "void" or (s.get("void_self") and "self" in bet["tags"]):
         return bet["usd"]
@@ -719,11 +739,11 @@ def board(rows: list[dict], cfg: dict, n: int = 20, hide: bool = False) -> str:
             ctr = next((b for b in reversed(book.bets) if (b["job"], b["variant"]) == (jid, v) and b.get("why")
                         and b["side"] != "pass"), None)      # the latest counter-bettor's reason
             if hide:
-                lines.append((0, f"{name} [{s['lane']}] {' '.join(s['question'].split())[:100]} · {funded(s, cfg)}{typical_here(s, cfg, typ)} · "
+                lines.append((0, f"{name} [{s['lane']}] {specmod.claim_first(s, 100)} · {funded(s, cfg)}{typical_here(s, cfg, typ)} · "
                                  f"proposer {prop} ({record(recs, prop)})"))
                 continue
             lines.append(((min(t.values()) > 0, 2 * min(t.values())),
-                          f"{name} [{s['lane']}, ${s.get('budget_usd', 0):g}] PASS ${t['pass']:.2f} / FAIL ${t['fail']:.2f} · "
+                          f"{name} [{s['lane']}, ${s.get('budget_usd', 0):g}] {specmod.claim_first(s, 100)} · PASS ${t['pass']:.2f} / FAIL ${t['fail']:.2f} · "
                           f"{side.upper()} pays {x:.1f}:1 · proposer {prop} ({record(recs, prop)})"
                           + (f' [{ctr["side"].upper()} {ctr["agent"]}: "{mark_refuted(ctr["why"][:80], refs)}"]' if ctr else "")))
     lines = [l for _, l in sorted(lines, key=lambda k: k[0])]
@@ -754,7 +774,7 @@ def thread(rows: list[dict], agent: str, hide: bool = False) -> str:
     for jid in sorted((j for j in st.jobs if book.proposers.get(j) in fam or j in claimed), key=lambda j: st.jobs[j]["added"]):
         j = st.jobs[jid]
         v = f" {j['result']['verdict']}" if j["result"] else ""
-        nodes.append(f"  {jid} [{j['state']}{v}] ${j['spec']['budget_usd']} {j['spec']['question'][:80]}")
+        nodes.append(f"  {jid} [{j['state']}{v}] ${j['spec']['budget_usd']} {specmod.claim_first(j['spec'], 80)}")
         if (j["result"] or {}).get("ref"):
             nodes.append(f"    ref: {j['spec'].get('ref_name', j['result']['ref'])} ({j['result']['ref']})")
             nodes.extend(f"    {line}" for line in j["result"].get("change", "").splitlines())
@@ -775,7 +795,7 @@ def thread(rows: list[dict], agent: str, hide: bool = False) -> str:
             if (jid, v) not in have:
                 t = book.totals(jid, v)
                 markets.append(f"  {jid}/{v}{specmod.change_mark(j['spec'])} " + ("" if hide else f"PASS ${t['pass']:.2f} / FAIL ${t['fail']:.2f} · ") + f"${j['spec']['budget_usd']} "
-                               f"{j['spec']['lane']} · {j['spec']['question'][:60]}")
+                               f"{j['spec']['lane']} · {specmod.claim_first(j['spec'], 60)}")
     out += ["open markets you have not bet on:"] + (_cap(markets, 20, "markets") or ["  none"])
     return "\n".join(out)
 

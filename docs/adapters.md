@@ -56,6 +56,8 @@ every ref carries the adapter that matches it. If the bench needs a build, the a
 
 ## Running a change
 
+Each post states a `claim` in its spec or through `q post --claim "..."`; the question tests it. Reads and house bag draws need no claim. Bettors see the claim before the question, including under blind betting. `q claims` lists every posted claim and its latest outcome, oldest first.
+
 On a local lane, `repo = "~/src/project"` and `base = "main"` mean every run gets a fresh detached worktree at the posted commit (or base when no ref is posted). `base` defaults to `HEAD`. The command runs with cwd at the tree even if the spec has `cwd`; `{tree}` in `runner` or `run` expands to its shell-quoted path. Use it unquoted in templates, or use `"$PIT_TREE"` in shell. `PIT_REF` is the resolved commit, and `PIT_REF_NAME` is the posted spelling, if any. `PIT_ROOT` still points to the state directory: an adapter kept there can be invoked as `bash "$PIT_ROOT/adapters/run.sh" {scenario}`. With no `repo`, cwd behavior is unchanged.
 
 Pit removes local trees after completion, timeout, stop rules, SIGINT, SIGTERM and SIGHUP. SIGKILL and host loss cannot run cleanup handlers. Put reusable build artifacts outside the disposable tree and key them by source fingerprints. The adapter owns preparation of ignored inputs and reports their provenance; they are not part of a commit. Never copy mutable inputs over files tracked at the proposed ref.

@@ -100,7 +100,7 @@ def draw(root, rows: list[dict], cfg: dict, lane: str, c: dict, now, echo=print)
     lane_inv = bo[1] if bo and bo[0] > now else 0                    # but only while its backoff runs, so an expired backoff lifts it
     for p in files(root, c):
         s = specmod.load(p)
-        errs = specmod.validate({**({"budget_usd": c["budget_usd"]} if "budget_usd" in c else {}), **s, "lane": lane, "id": s.get("id", p.stem)}, cfg["lanes"], known, cfg.get("bench", {}).get("drivers"))
+        errs = specmod.validate({**({"budget_usd": c["budget_usd"]} if "budget_usd" in c else {}), **s, "bag": True, "lane": lane, "id": s.get("id", p.stem)}, cfg["lanes"], known, cfg.get("bench", {}).get("drivers"))
         if errs:
             echo(f"bag {lane}: skip {p.name}: {'; '.join(errs)}")
         elif s.get("max_per_day") is not None and spec_today(rows, s["id"], now) >= s["max_per_day"]:

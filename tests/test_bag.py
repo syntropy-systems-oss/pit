@@ -67,6 +67,7 @@ class Bag(unittest.TestCase):
         self.tick()
         (n,) = self.nodes()
         s = n["spec"]
+        self.assertNotIn("claim", s)
         self.assertEqual((s["proposer"], s["bag"], s["bag_spec"], s["budget_usd"]), ("house", True, "a", 9))      # the spec's own budget beats the lane's fallback
         (b,) = [r for r in self.lg.rows() if r["t"] == "bet"]
         self.assertEqual((b["agent"], b["book"], b["side"], b["usd"], b["tags"], b["job"]), ("house", "house", "pass", 0.25, ["bag"], n["id"]))
@@ -266,7 +267,7 @@ class Examples(unittest.TestCase):
             self.assertEqual(len(fs), 2)
             for p in fs:
                 s = specmod.load(p)
-                self.assertEqual(specmod.validate({**s, "lane": lane}, cfg["lanes"]), [])
+                self.assertEqual(specmod.validate({**s, "bag": True, "lane": lane}, cfg["lanes"]), [])
 
 
 

@@ -344,6 +344,7 @@ function detail(mk, span) {
     mk.bets.map(b => `<span class="dim">${hms(b.ts)}</span><span>${chip(b.agent)}</span><span>${esc(b.variant)}</span><span class="${b.side === "pass" ? "P" : "F"}">${b.side.toUpperCase()}</span><span class="num">${usd(b.usd)}</span><span>${b.tags.map(t => `<span class="b q">${esc(t)}</span>`).join(" ")}</span>`).join("") + "</div>"
     : `<div class="dim" style="margin-top:8px">no bets yet: <code>q bet ${esc(mk.task)} PASS|FAIL &lt;usd&gt; --as &lt;agent&gt;</code></div>`;
   return `<tr class="detail"><td colspan="${span}"><div class="dgrid">` +
+    (mk.claim ? `<span class="k">claim</span><span>${esc(mk.claim)}</span>` : "") +
     `<span class="k">question</span><span>${esc(mk.question)}</span>` +
     (mk.read ? `<span class="k">then</span><span>${esc(mk.then)}</span>` : `<span class="k">if pass</span><span>${esc(mk.if_pass)}</span><span class="k">if fail</span><span>${esc(mk.if_fail)}</span>`) +
     `<span class="k">posted by</span><span>${mk.proposer ? chip(mk.proposer) : '<span class="dim">human</span>'} <span class="dim">on ${esc(mk.lane)}</span></span>` +
@@ -366,7 +367,7 @@ function renderMarkets(m) {
     const [st, sc] = stateOf(mk), multi = mk.variants.length > 1 || mk.variants[0].variant !== "main";
     const td = {
       state: `<td><span class="b ${sc}">${st}</span></td>`,
-      task: `<td title="${esc(mk.question)}">${esc(mk.task)}${mk.has_change ? `<span class="b acc" title="${esc(mk.ref_name || mk.ref)}" aria-label="carries a change">◇</span>` : ""}${multi ? `<span class="sub"> / ${esc(mk.variants.map(v => v.variant).join(" "))}</span>` : ""}</td>`,
+      task: `<td title="${esc((mk.claim ? mk.claim + " · " : "") + mk.question)}">${esc(mk.task)}${mk.has_change ? `<span class="b acc" title="${esc(mk.ref_name || mk.ref)}" aria-label="carries a change">◇</span>` : ""}${multi ? `<span class="sub"> / ${esc(mk.variants.map(v => v.variant).join(" "))}</span>` : ""}</td>`,
       lane: `<td class="fg2">${esc(mk.lane)}</td>`, odds: `<td>${mk.read ? '<span class="b q" title="a read: funded framing, no market and no odds">read</span>' : book(mk.pass, mk.fail)}</td>`,
       pass: `<td class="num">${mk.pass ? usd(mk.pass) : dash}</td>`, fail: `<td class="num">${mk.fail ? usd(mk.fail) : dash}</td>`,
       matched: `<td class="num">${mk.matched ? usd(mk.matched) : dash}</td>`, budget: `<td class="num">${usd(mk.budget)}</td>`,
@@ -383,7 +384,7 @@ function renderThread(m) {
   setHTML("mkt-h", `Thread <span class="n">${esc(a.id)}${a.parent ? " · sub of " + esc(a.parent) : ""}</span><span class="r">Esc closes</span>`);
   setHTML("mkt", `<div class="tn"><b>${esc(a.id)}</b> &nbsp; ${a.kind === "persistent" ? usd(a.balance) : ""} &nbsp; ${a.sleeping ? `<span class="b acc">sleep</span> <span class="fg2">until ${esc(a.sleep.until)}</span>` : '<span class="b q">awake</span>'}` +
     `<div class="q">${esc(a.brief)}</div>` + (cal ? `<div class="dim">bets ${cal.bets} · wins ${cal.wins} · brier ${cal.brier} · herding ${cal.herding} · self ${cal.self}</div>` : "") + "</div>" +
-    (t.nodes.map(n => `<div class="tn"><span class="b ${n.verdict === "pass" ? "P" : n.verdict === "fail" ? "F" : n.state === "running" ? "acc" : ""}">${esc(n.verdict || n.state)}</span> <b>${esc(n.id)}</b>${n.has_change ? `<span class="b acc" title="${esc(n.ref_name || n.ref)}" aria-label="carries a change">◇</span>` : ""} <span class="fg2">${usd(n.usd)} of ${usd(n.budget)}</span>${n.by && n.by !== S.agent ? ' <span class="dim">by ' + esc(n.by) + "</span>" : ""}<div class="q">${esc(n.question)}</div></div>` +
+    (t.nodes.map(n => `<div class="tn"><span class="b ${n.verdict === "pass" ? "P" : n.verdict === "fail" ? "F" : n.state === "running" ? "acc" : ""}">${esc(n.verdict || n.state)}</span> <b>${esc(n.id)}</b>${n.has_change ? `<span class="b acc" title="${esc(n.ref_name || n.ref)}" aria-label="carries a change">◇</span>` : ""} <span class="fg2">${usd(n.usd)} of ${usd(n.budget)}</span>${n.by && n.by !== S.agent ? ' <span class="dim">by ' + esc(n.by) + "</span>" : ""}${n.claim ? `<div class="q">${esc(n.claim)}</div>` : ""}<div class="q">${esc(n.question)}</div></div>` +
       n.findings.map(f => `<div class="tn d"><span class="b ${f.status === "refuted" ? "F" : "P"}">${esc(f.status === "open" ? "finding" : f.status)}</span> ${esc(f.id)} <span class="fg2">${esc(f.text)}</span></div>`).join("")).join("") ||
       `<div class="empty">no runs yet: <code>q post &lt;spec.toml&gt; --as ${esc(a.id)}</code></div>`) +
     `<div class="ph">Open bets <span class="n">${t.open_bets.length}</span></div>` +

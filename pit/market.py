@@ -109,7 +109,7 @@ def market_json(rows: list[dict], cfg: dict, now: datetime | None = None) -> dic
                 "matched": round(m, 4), "budget": budget, "score": round(m / max(budget, 0.01), 4), "lane": s["lane"],
                 "proposer": book.proposers.get(jid), "fallback": jid in fb, "state": j["state"], "runnable": jid in frontier,
                 "rank": order.index(jid) if jid in order else None, "added": j["added"], "age_s": _age(born.get(jid), now),
-                "question": s["question"], "if_pass": s.get("if_pass", ""), "if_fail": s.get("if_fail", ""),
+                "claim": s.get("claim", ""), "question": s["question"], "if_pass": s.get("if_pass", ""), "if_fail": s.get("if_fail", ""),
                 "read": specmod.is_read(s), "then": s.get("then", ""),
                 "ref": s.get("ref"), "ref_name": s.get("ref_name"), "has_change": specmod.carries_change(s),
                 "bets": [{"i": i, "ts": r["ts"], "agent": r["agent"], "variant": r["variant"], "side": r["side"], "usd": r["usd"], "tags": r.get("tags", [])}
@@ -165,7 +165,7 @@ def market_json(rows: list[dict], cfg: dict, now: datetime | None = None) -> dic
             res = j["result"]
             nodes.append({"id": jid, "state": j["state"], "verdict": res["verdict"] if res else None, "usd": (res or {}).get("cost", {}).get("usd", 0),
                           "ref": j["spec"].get("ref"), "ref_name": j["spec"].get("ref_name"), "has_change": specmod.carries_change(j["spec"]),
-                          "budget": j["spec"]["budget_usd"], "question": j["spec"]["question"], "by": book.proposers.get(jid),
+                          "budget": j["spec"]["budget_usd"], "claim": j["spec"].get("claim", ""), "question": j["spec"]["question"], "by": book.proposers.get(jid),
                           "findings": [{"id": f, "kind": x["kind"], "status": x["status"], "text": x["text"]} for f, x in st.findings.items() if x["from"] == jid]})
         threads[a] = {"nodes": nodes, "open_bets": [{"job": b["job"], "variant": b["variant"], "side": b["side"], "usd": b["usd"], "agent": b["agent"],
                                                        "self": "self" in b.get("tags", [])} for b in book.bets if b["agent"] in fam and (b["job"], b["variant"]) not in book.settled]}

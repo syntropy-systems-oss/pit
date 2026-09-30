@@ -69,7 +69,7 @@ def add_specs(root, lg, cfg, loaded):
         errs = specmod.validate(s, cfg["lanes"], known, cfg.get("bench", {}).get("drivers"))
         if s.get("id") in st.jobs or s.get("id") in [x["id"] for _, x in specs]:
             errs.append(f"{s['id']} is already in the ledger (cancel or supersede it)")
-        (bad.append(f"refused {path}:\n  " + "\n  ".join(errs)) if errs else specs.append((path, s)))
+        (bad.append(f"refused {path}: " + (errs[0] if len(errs) == 1 else "\n  " + "\n  ".join(errs))) if errs else specs.append((path, s)))
     if bad:
         sys.exit("\n".join(bad))
     for path, s in specs:
@@ -85,6 +85,8 @@ def cmd_post(a):
     """q add + the proposer pays the budget + an automatic stake on PASS, per variant."""
     root, lg, cfg = ctx()
     book, s = B.Book(lg.rows()), specmod.load(a.spec)
+    if getattr(a, "claim", None) is not None:
+        s["claim"] = a.claim
     if getattr(a, "ref", None) is not None:
         s["ref"] = a.ref
     mode = B.funding(book, s, a.agent, a.seed)
@@ -195,6 +197,18 @@ def cmd_board(a):
     print(B.board(lg.rows(), cfg, hide=bool(a.agent) and B.blind(cfg)))      # --as: the agent's (blind) view
 
 
+def cmd_claims(a):
+    try:
+        since = B.parse_t(a.since) if a.since else None
+    except ValueError:
+        sys.exit("--since needs an ISO timestamp")
+    if since and since.tzinfo is None:
+        since = since.replace(tzinfo=timezone.utc)
+    text = B.claims(ctx()[1].rows(), a.agent, since)
+    if text:
+        print(text)
+
+
 def cmd_pit(a):
     print(B.calibration(ctx()[1].rows()))
 
@@ -204,7 +218,7 @@ def row_line(st, jid, cfg):
     flag = " STALE" if jid in st.stale else ""
     v = f" {j['result']['verdict']}" if j["result"] else ""
     return f"{jid + specmod.change_mark(s):<24} {s['lane']:<11} {j['state'] + v + flag:<18} value {s['value']:<3} " \
-           f"funded ${s['budget_usd']:<6} ({specmod.funded_seconds(s, cfg['lanes']):>4}s) {s['question'][:70]}"
+           f"funded ${s['budget_usd']:<6} ({specmod.funded_seconds(s, cfg['lanes']):>4}s) {specmod.claim_first(s, 70)}"
 
 
 def cmd_list(a):
@@ -223,7 +237,7 @@ def cmd_list(a):
     if getattr(a, "changes", False):
         for r in change_results(lg.rows(), a.lane):
             s = st.jobs[r["job"]]["spec"]
-            print(f"{r['job']} PASS [{r['cost']['lane']}] {s.get('ref_name', r['ref'])} ({r['ref']}) · {s['question']}")
+            print(f"{r['job']} PASS [{r['cost']['lane']}] {s.get('ref_name', r['ref'])} ({r['ref']}) · {specmod.claim_first(s)}")
             print(r["change"] or "  (no file changes)")
         return
     ids, fallback = B.order(st, lg.rows(), cfg) if a.frontier else (list(st.jobs), set())
@@ -582,6 +596,7 @@ def main(argv=None):
     p = sub.add_parser("post", help="add a spec as an agent: it pays the budget and stakes PASS")
     p.add_argument("spec"); p.add_argument("--as", dest="agent", required=True, help="an agent, `reflect` or `human`")
     p.add_argument("--ref", help="commit or branch to test in the lane's repo (pinned to a commit when posted)")
+    p.add_argument("--claim", help="what the post claims (overrides the spec's claim)")
     p.add_argument("--seed", action="store_true", help="a root the house stakes from its vig pool")
     p.add_argument("--stake", type=float, default=0.0, help="--as human: the stake per variant on PASS")
     p.set_defaults(f=cmd_post)
@@ -608,6 +623,9 @@ def main(argv=None):
     p.add_argument("agent"); p.set_defaults(f=cmd_thread)
     p = sub.add_parser("board", help="every open market with its price, unopposed first; --as <agent>: the view agents see")
     p.add_argument("--as", dest="agent"); p.set_defaults(f=cmd_board)
+    p = sub.add_parser("claims", help="every posted claim and its latest outcome, oldest first")
+    p.add_argument("--agent", help="the exact proposer id"); p.add_argument("--since", help="posted at or after this ISO timestamp (UTC if no offset)")
+    p.set_defaults(f=cmd_claims)
     p = sub.add_parser("pit", help="q pit calibration"); p.add_argument("what", choices=("calibration",)); p.set_defaults(f=cmd_pit)
     p = sub.add_parser("graph"); p.set_defaults(f=cmd_graph)
     p = sub.add_parser("cost"); p.add_argument("--by", choices=("lane", "job"), default="lane"); p.set_defaults(f=cmd_cost)

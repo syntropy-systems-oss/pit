@@ -5,6 +5,7 @@
 # A run reports its meters on its report line: pit: verdict=pass wall_s=S meters={"tok_in": N, "tok_out": N} result={...}
 # A meter `tok_<x>` is priced by usd_per_mtok_<x> (per million), any other meter `<m>` by usd_per_<m> (per unit);
 # a meter with no price is recorded on the result and not charged.
+# A post states its claim: claim = "..." in the job spec, or q post --claim "...". Reads and house bag draws are exempt.
 # A job is funded in dollars (budget_usd): the run is killed when its time alone has spent the funding
 # (budget_usd / usd_per_h, at least 30 s, at most an hour), and a total cost over budget_usd books FAIL.
 
