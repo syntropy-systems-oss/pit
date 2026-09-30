@@ -46,6 +46,7 @@ BOARD = ("The board is context. If an open run bears on your claim you may bet o
 REWAKE = ("Agents never sleep: you get a turn about every {gap} s whether or not a run of yours is in flight. While one is, "
           "use the turn to bet on other open runs, research, or post a second experiment on a free lane. "
           "Every turn must leave the market changed: a post, a bet, or a finding.")
+MARKET = "You were woken for this market: bet (`q bet … --why`) or write `pass: <reason>`; then continue your turn."
 BOOTSTRAP_LOOP = ("You maintain agents/BOOTSTRAP.md. If the tape shows a newcomer paying for something the text does not say, "
                   "propose the edit as a job spec in queue/proposed/ (lane any, no run): `question` = the exact line(s) to add or "
                   "change, `expect = pass`, `if_pass` = 'the next newcomer's bootstrap cost over its first 20 posts is lower than "
@@ -67,7 +68,8 @@ CODEX_ARGS = ["--skip-git-repo-check", "--sandbox", "workspace-write", "-c", 'ap
 DEFAULTS = {"max_usd_per_hour": 0,       # 0 = no spend gate (an open market); hour spend is reported only
              "any_workers": 2, "permission_mode": "", "allowed_tools": [],
             "runtimes": {}, "reflect": {},
-            "max_subagent_runs_per_hour": 60, "heartbeat_minutes": 20, "heartbeat_min_usd": 1.0, "idle_wake_gap_s": 90}
+            "max_subagent_runs_per_hour": 60, "heartbeat_minutes": 20, "heartbeat_min_usd": 1.0, "idle_wake_gap_s": 90,
+            "market_wake_floor_s": 30}
 
 
 def conf(cfg: dict) -> dict:
@@ -174,6 +176,7 @@ class Autopilot:
         self.subs: dict[str, tuple] = {}     # wallet agent -> (sub id, Popen, proposed-before or None)
         self.seen: dict[str, int] = {}       # wallet agent -> ledger row index it has processed up to
         self.base: int | None = None         # first tick: agents with no wake on the tape start here, not at row 0
+        self.mcur: int | None = None         # row index up to which new posts have been turned into market wakes
 
     # ---- the tape -----------------------------------------------------------------------------------
     def auto(self, type: str, reason: str, lane=None, job=None, agent=None, **kw) -> None:
@@ -215,6 +218,7 @@ class Autopilot:
         self.desk(now)
         self.settled_by_analysis()
         self.rewake(now)
+        self.markets(now)
         self.handback(now)
         self.events(now)
         self.reflection(now)
@@ -403,6 +407,7 @@ class Autopilot:
         done = {x for r in rows if r["t"] == "auto" and r["type"] == "handback" for x in r.get("refs", [])}
         due: dict[str, list] = {}
         retry: dict[str, str] = {}
+        mkt: dict[str, str] = {}           # wallet -> its market wake's reason (the newest)
         for jid, j in st.jobs.items():
             res, who = j["result"], book.proposers.get(jid)
             if not res or who not in book.agents or j["spec"].get("bag"):     # a bag result goes to nobody: a FAIL's finding is the event
@@ -421,6 +426,8 @@ class Autopilot:
                     k = sum(1 for x in rows if x["t"] == "wake" and x["reason"] == r["reason"] and x["ts"] <= r["ts"])
                     if k > 1:
                         retry[f"wake:{r['agent']}:{r['ts']}"] = f"desk-retry:{k - 1}"
+                if r["reason"].startswith("market:"):
+                    mkt[book.wallet(r["agent"])] = r["reason"]
                 due.setdefault(book.wallet(r["agent"]), []).append((f"wake:{r['agent']}:{r['ts']}", jid, text))
         if not due:
             self.echo("hand-backs: none due")
@@ -438,8 +445,8 @@ class Autopilot:
                 self.echo(f"hand-back {agent}: spawn {sub} ({self.label(book.agents[agent])}) for {what}")
                 self.auto("handback", "; ".join(retry.get(ref, ref) for ref, _, _ in items), job=next((j for _, j, _ in items if j), None), agent=sub,
                           refs=[ref for ref, _, _ in items])
-                self.echo_wake(agent, f"handback:{next((j for _, j, _ in items if j), items[0][0])}")   # no job: name the wake/result ref
-                self.subs[agent] = (sub, self.spawn(sub, book.agents[agent], self.prompt(sub, agent, items)), None)
+                self.echo_wake(agent, mkt.get(agent) or f"handback:{next((j for _, j, _ in items if j), items[0][0])}")   # no job: name the wake/result ref
+                self.subs[agent] = (sub, self.spawn(sub, book.agents[agent], self.prompt(sub, agent, items, market=agent in mkt)), None)
                 self.seen[agent] = len(self.lg.rows())
 
     def echo_wake(self, agent: str, reason: str, **kw):
@@ -540,6 +547,31 @@ class Autopilot:
             self.echo(f"{head} -> wake ({why})")
             self.lg.append({"t": "wake", "agent": a, "reason": why}, B.iso(now))
 
+    def markets(self, now):
+        """A new market is a wake event: every job posted since the last tick by a persistent agent's wallet (not a seed, bag
+        draw or human post) wakes every OTHER active root now, past idle_wake_gap_s, with one `wake` row per agent
+        (reason market:<j1>,<j2>,<j3>+N). An agent market-woken less than market_wake_floor_s ago is skipped (the market still
+        shows in its next turn's new-markets list). handback spawns the wakes this same tick."""
+        rows = self.lg.rows()
+        if self.mcur is None:
+            self.mcur = len(rows)
+        book, new = B.Book(rows), []
+        for r in rows[self.mcur:]:
+            if r["t"] == "node" and r.get("kind") == "job" and book.payer(r["spec"]) in book.agents:
+                new.append((r["id"], book.payer(r["spec"])))
+        self.mcur = len(rows)
+        cut = B.iso(now - timedelta(seconds=self.c["market_wake_floor_s"]))
+        for a in book.active():
+            js = [j for j, w in new if w != a]
+            if a == B.REFLECT or not js:
+                continue
+            if any(r["t"] == "wake" and r["agent"] == a and r["reason"].startswith("market:") and r["ts"] > cut for r in rows):
+                self.echo(f"agent {a}: market wake for {', '.join(js)} held (floor {self.c['market_wake_floor_s']:.0f}s)")
+                continue
+            why = "market:" + ",".join(js[:3]) + (f"+{len(js) - 3}" if len(js) > 3 else "")
+            self.echo(f"agent {a} -> wake ({why})")
+            self.lg.append({"t": "wake", "agent": a, "reason": why}, B.iso(now))
+
     def reflection(self, now):
         rows = self.lg.rows()
         why = reflect.due(rows, now, self.cfg)
@@ -589,7 +621,7 @@ class Autopilot:
         self.lg.append(B.agent_row(book, sub, brief, agent))
         return sub
 
-    def prompt(self, sub: str, agent: str, items: list, digest: str = "") -> str:
+    def prompt(self, sub: str, agent: str, items: list, digest: str = "", market: bool = False) -> str:
         rows = self.lg.rows()
         if not digest:      # a hand-back also gets the digest of what else moved since its last look
             ev = B.board_events(rows, B.Book(rows), B.Book(rows).family(agent), self.seen.get(agent, len(rows)))
@@ -597,14 +629,16 @@ class Autopilot:
         idle = "\n".join(f"Lane {l} has been idle {s / 60:.0f} min. Idle compute is a bug. Post a runnable experiment on it "
                          f"this turn (`q list --scenarios`), or say in one line why nothing worth running exists."
                          for l, s in self.idle_lanes(datetime.now(timezone.utc), 120).items())
+        new = B.new_markets(rows, self.cfg, agent, self.since(agent, rows))
         return "\n\n".join(filter(None, [
+            "\n".join(filter(None, [new, MARKET])) if market else "",      # a market wake leads with the markets
             idle, skill("pit"), "Standing rules (verbatim): " + RULES, bootstrap(self.root),
             f"You are {sub}, a sub of {agent}: act `--as {sub}`; your bets and posts book to {agent}. "
             f"The CLI is {REPO}/bin/q (on PATH as q; PIT_ROOT is set).",
             f"q thread {agent}:\n" + B.thread(self.lg.rows(), agent),
             "\n".join(t for _, _, t in items),
             f"Your claim ({agent}'s brief): {B.Book(rows).agents[agent]['brief']}", CLAIM, digest,
-            B.new_markets(rows, self.cfg, agent, self.since(agent, rows)),
+            "" if market else new,
             B.settled_stakes(rows, agent, self.since(agent, rows)), B.reflection_since(rows, self.since(agent, rows)), BOARD, "q board:\n" + B.board(rows, self.cfg),
             f"You MUST end your turn by saying what you are waiting on (`q sleep --as {sub} --until-result <job>`, or "
             f"`q sleep --as {sub} --until-event --note '<what>'`), then stop; you will be woken again in about "

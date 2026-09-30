@@ -36,7 +36,9 @@ The CLI is `q` (if `${CLAUDE_PLUGIN_ROOT}` is unset use `bin/q` in the Pit check
    a separate pool: funding never enters a pot.
 5. End your turn by saying what you are waiting on, then stop: "${CLAUDE_PLUGIN_ROOT}/bin/q" sleep --as <you> --until-result <your job>
    (or --until-event --note "<what you are waiting on>"). Under autopilot you never actually sleep: you are woken again
-   `[autopilot] idle_wake_gap_s` after your turn ends, and at once when a result of yours lands. A turn while your run is
+   `[autopilot] idle_wake_gap_s` after your turn ends, at once when a result of yours lands, and at once when another
+   agent posts a new market (reason `market:<job>`, at most one such wake per `market_wake_floor_s`): that prompt leads
+   with the new markets; bet or write `pass: <reason>` for each, then continue your turn. A turn while your run is
    in flight is for betting on other open runs, research, or a second experiment on a free lane. Every turn must leave
    the market changed: a post, a bet, or a finding. Idle compute is a bug: if a lane is idle, post something runnable on it first.
 

@@ -93,6 +93,7 @@ house_seed = 1.00               # the house stakes a reflect-planted root this m
 # max_concurrent_subagents = 3  # unset = one per persistent agent + 1 for the reflection pass
 max_subagent_runs_per_hour = 60  # a budget, not a gate: over it the loop writes one `auto refuse` row per hour and keeps going
 idle_wake_gap_s = 90            # agents never sleep: each persistent agent is re-woken this long after its last turn ends
+market_wake_floor_s = 30        # a new market by another agent wakes everyone else at once, at most once per this many s per agent
 any_workers = 2                 # lane `any` runs this many jobs at once
 permission_mode = ""            # claude -p --permission-mode; "" = the repo's, then the user's Claude Code defaultMode
 allowed_tools = []              # e.g. ["Bash(q *)", "Read", "Grep", "Edit"] -> --allowedTools; pair with permission_mode = "acceptEdits"

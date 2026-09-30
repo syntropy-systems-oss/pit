@@ -299,7 +299,7 @@ class Autopilot(unittest.TestCase):
         self.post(job("d3"), "a")
         ap.tick()
         ap.wait()
-        self.assertEqual(len(self.auto("handback")), 3)          # nothing refused by the budget
+        self.assertEqual(len(self.auto("handback")), 4)          # nothing refused by the budget (d3 also market-wakes b)
         budget = [r for r in self.auto("refuse") if r["reason"].startswith("subagent budget")]
         self.assertEqual(len(budget), 1)                          # one row per hour
         m = A.status(self.lg.rows(), {"autopilot": {"max_subagent_runs_per_hour": 2}}, datetime.now(timezone.utc))
@@ -374,23 +374,24 @@ class Autopilot(unittest.TestCase):
         ap.tick()
         ap.wait()
         self.assertEqual(len(self.wakes()), n)                 # its own sleep/auto rows are not events
-        self.post(job("n2"), "a")                              # a's own post wakes only b
+        self.post(job("n2"), "a")                              # a's own post wakes only b, as a market wake
         ap.tick()
         ap.wait()
-        self.assertEqual(self.wakes()[n:], [("b", "event:2 rows")])
+        self.assertEqual(self.wakes()[n:], [])
+        self.assertIn(("b", "market:n2"), [(r["agent"], r["reason"]) for r in self.auto("wake")])
         self.assertEqual(A.awake(self.lg.rows()), [])        # both subs ended and slept
 
     def test_events_batch_while_the_sub_runs(self):
         ap = self.ap()
         ap.tick()
         self.post(job("n1"), "a")
-        ap.tick()                                              # b wakes (a's own post is not an event for a)
+        ap.tick()                                              # b wakes for the market (a's own post does not wake a)
         self.post(job("n2"), "a")
-        ap.tick()                                              # b's sub still running or reaped: at most one wake per tick
+        ap.tick()                                              # inside the market floor; sub running or reaped: at most one wake per tick
         ap.wait()
         ap.tick()
         ap.wait()
-        self.assertEqual([a for a, _ in self.wakes()], ["b", "b"])
+        self.assertEqual([r["reason"].split(":")[0] for r in self.auto("wake") if r["agent"] == "b"], ["market", "event"])
 
     def test_explicit_conditions_still_win(self):
         ap = self.ap()
@@ -445,6 +446,39 @@ class Autopilot(unittest.TestCase):
         self.assertIn("You were woken: rewake: in flight sc. Agents never sleep", c)
         ap.tick(datetime.now(timezone.utc) + timedelta(seconds=30))   # 30 s after their turns ended: not again yet
         self.assertEqual(len(self.rewakes()), 2)
+
+    # ---- a new market is a wake event --------------------------------------------------------------
+    def mwakes(self):
+        return [(r["agent"], r["reason"]) for r in self.lg.rows() if r["t"] == "wake" and r["reason"].startswith("market:")]
+
+    def test_new_market_wakes_every_other_agent_with_a_floor(self):
+        for x in ("c", "d"):
+            self.lg.append(B.agent_row(B.Book(self.lg.rows()), x, f"{x} brief"))
+            self.lg.append({"t": "sleep", "agent": x, "until": {"event": True}, "note": "fixture: last turn ended"})
+        self.lg.append({"t": "retire", "agent": "d", "reason": "done", "by": "reflect"})
+        ap = self.ap()
+        t0 = datetime.now(timezone.utc)
+        ap.tick(t0)                                              # baseline
+        self.post(job("m1"), "a")
+        ap.tick(t0 + timedelta(seconds=1))
+        ap.wait()
+        self.assertEqual(sorted(self.mwakes()), [("b", "market:m1"), ("c", "market:m1")])   # not a, not retired d
+        self.assertEqual(sorted(r["agent"] for r in self.auto("wake") if r["reason"] == "market:m1"), ["b", "c"])
+        c = next(c for c in self.stub_calls() if "You are b-" in c)
+        self.assertTrue(c.index("New markets since your last turn:\nm1 [") < c.index(A.MARKET) < c.index("Your claim ("))
+        self.assertLess(c.index(A.MARKET), c.index("Standing rules"))
+        self.post(job("m2"), "a")
+        ap.tick(t0 + timedelta(seconds=10))                      # inside the 30 s floor: nobody
+        self.assertEqual(len(self.mwakes()), 2)
+        self.post(job("m3"), "b")
+        self.post(job("m4"), "b")
+        ap.tick(t0 + timedelta(seconds=40))                      # past the floor: two posts coalesce into one wake
+        ap.wait()
+        self.assertEqual(self.mwakes()[2:], [("a", "market:m3,m4"), ("c", "market:m3,m4")])
+        for i in range(5):
+            self.post(job(f"n{i}"), "a")
+        ap.tick(t0 + timedelta(seconds=80))
+        self.assertIn(("b", "market:n0,n1,n2+2"), self.mwakes())
 
     def test_own_result_wakes_before_the_gap(self):
         self.post(slow("p1", s=0), "a")
