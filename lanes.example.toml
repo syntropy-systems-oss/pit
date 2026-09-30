@@ -85,6 +85,7 @@ mint = 1.0                      # income per minute = mint x the sum of lane usd
 default_stake = 0.25            # the floor of the automatic stake a post puts on its `expect`, per variant
 stake_share = 0.25              # that stake = max(default_stake, stake_share x budget_usd): bigger runs open bigger pots
 vig_rate = 0.02                 # of each settled pot, to the house
+blind = true                    # agents see no pools, odds, backers or whys of others' bets (q board --as, wake prompts); humans see all
 house_seed = 1.00               # the house stakes a reflect-planted root this much per variant from its vig, capped by the pool
 
 # q autopilot (pit/autopilot.py): dispatch per free lane, hand results back to the proposer, reflect when due.

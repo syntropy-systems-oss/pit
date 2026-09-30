@@ -41,8 +41,9 @@ DESK = ("This desk job is yours and stays on your plate until it has a result. D
 BOARD = ("The board is context. If an open run bears on your claim you may bet on it (that is how you get paid for "
          "understanding what others are finding), and you may bet where you have a reason even if it does not. The market "
          "is not the goal: it buys you time on the machines and pays you for understanding. You are paid for understanding "
-         "only when you take the other side of someone's stake; a post alone only spends. Unopposed markets are listed "
-         "first: if you believe the proposer is wrong, $1 there is the cheapest bet on the board.")
+         "when the result proves you right and others wrong; you cannot see how others bet, so bet what you believe; a post "
+         "alone only spends.")
+SEEN = ("Unopposed markets are listed first: if you believe the proposer is wrong, $1 there is the cheapest bet on the board.")    # [pit] blind = false
 REWAKE = ("Agents never sleep: you get a turn about every {gap} s whether or not a run of yours is in flight. While one is, "
           "use the turn to bet on other open runs, research, or post a second experiment on a free lane. "
           "Every turn must leave the market changed: a post, a bet, or a finding.")
@@ -469,7 +470,7 @@ class Autopilot:
             if a not in self.seen:
                 self.seen[a] = next((x["upto"] for x in reversed(rows) if x["t"] == "auto" and x["type"] == "wake"
                                      and x["agent"] == a and "upto" in x), self.base)
-            ev = B.board_events(rows, book, book.family(a), self.seen[a])
+            ev = B.board_events(rows, book, book.family(a), self.seen[a], bets=not B.blind(self.cfg))   # blind: another's bet is no event
             if ev:
                 due.append((ev[0], a, ev))
             elif self.idle(rows, book, a, now):
@@ -485,7 +486,7 @@ class Autopilot:
                 sub = self.register(a, f"autopilot wake: {why}", now)
                 self.echo(f"wake {a}: spawn {sub} ({self.label(book.agents[a])}) for {why}")
                 self.echo_wake(a, why)
-                text = "Since you last looked:\n" + B.digest(self.lg.rows(), ev) if ev else \
+                text = "Since you last looked:\n" + B.digest(self.lg.rows(), ev, self.cfg) if ev else \
                     f"Nothing on the board has moved for you in {self.c['heartbeat_minutes']} minutes."
                 self.subs[a] = (sub, self.spawn(sub, book.agents[a], self.prompt(sub, a, [], text)), None)
                 self.seen[a] = len(self.lg.rows())
@@ -622,10 +623,10 @@ class Autopilot:
         return sub
 
     def prompt(self, sub: str, agent: str, items: list, digest: str = "", market: bool = False) -> str:
-        rows = self.lg.rows()
+        rows, hide = self.lg.rows(), B.blind(self.cfg)
         if not digest:      # a hand-back also gets the digest of what else moved since its last look
-            ev = B.board_events(rows, B.Book(rows), B.Book(rows).family(agent), self.seen.get(agent, len(rows)))
-            digest = "Since you last looked:\n" + B.digest(rows, ev) if ev else ""
+            ev = B.board_events(rows, B.Book(rows), B.Book(rows).family(agent), self.seen.get(agent, len(rows)), bets=not hide)
+            digest = "Since you last looked:\n" + B.digest(rows, ev, self.cfg) if ev else ""
         idle = "\n".join(f"Lane {l} has been idle {s / 60:.0f} min. Idle compute is a bug. Post a runnable experiment on it "
                          f"this turn (`q list --scenarios`), or say in one line why nothing worth running exists."
                          for l, s in self.idle_lanes(datetime.now(timezone.utc), 120).items())
@@ -635,11 +636,12 @@ class Autopilot:
             idle, skill("pit"), "Standing rules (verbatim): " + RULES, bootstrap(self.root),
             f"You are {sub}, a sub of {agent}: act `--as {sub}`; your bets and posts book to {agent}. "
             f"The CLI is {REPO}/bin/q (on PATH as q; PIT_ROOT is set).",
-            f"q thread {agent}:\n" + B.thread(self.lg.rows(), agent),
+            f"q thread {agent}:\n" + B.thread(self.lg.rows(), agent, hide),
             "\n".join(t for _, _, t in items),
             f"Your claim ({agent}'s brief): {B.Book(rows).agents[agent]['brief']}", CLAIM, digest,
             "" if market else new,
-            B.settled_stakes(rows, agent, self.since(agent, rows)), B.reflection_since(rows, self.since(agent, rows)), BOARD, "q board:\n" + B.board(rows, self.cfg),
+            B.settled_stakes(rows, agent, self.since(agent, rows)), B.reflection_since(rows, self.since(agent, rows)), BOARD if hide else BOARD + " " + SEEN,
+            "q board:\n" + B.board(rows, self.cfg, hide=hide),
             f"You MUST end your turn by saying what you are waiting on (`q sleep --as {sub} --until-result <job>`, or "
             f"`q sleep --as {sub} --until-event --note '<what>'`), then stop; you will be woken again in about "
             f"{self.c['idle_wake_gap_s']:.0f} s (a result of yours wakes you at once). Every turn must leave the market changed: "

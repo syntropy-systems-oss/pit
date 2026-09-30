@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from pit.metrics import metrics, table
-from pit import hooks, view, reflect, lanes, ledger as L, book as B, replay, run as runmod, spec as specmod
+from pit import hooks, market, view, reflect, lanes, ledger as L, book as B, replay, run as runmod, spec as specmod
 
 ROOT = Path(__file__).resolve().parent.parent
 EXAMPLE = ROOT / "examples" / "replay-synthetic"
@@ -643,9 +643,9 @@ class Pit(unittest.TestCase):
         self.assertIn("sleeping until balance $99.00, x has a result (since 04:40Z): the run I want costs $99", out)
         self.assertNotIn("sleeping", B.thread(self.lg.rows(), "b"))
 
-    def bet(self, job, side, usd, agent, variant="main", ts="2026-09-29T04:32:00Z"):
+    def bet(self, job, side, usd, agent, variant="main", ts="2026-09-29T04:32:00Z", **kw):
         rows = self.lg.rows()
-        return self.lg.append(B.bet_row(B.Book(rows), L.fold(rows), job, variant, side, usd, agent), ts)
+        return self.lg.append(B.bet_row(B.Book(rows), L.fold(rows), job, variant, side, usd, agent, **kw), ts)
 
     def test_drip_split_and_idempotent(self):
         d = [r for r in self.lg.rows() if r["t"] == "drip"][0]
@@ -673,18 +673,40 @@ class Pit(unittest.TestCase):
         self.post(job("mine"), "a.sub")                                          # a's own post: not listed
         self.post(job("done"), "b")
         self.bet("done", "fail", 0.5, "a.sub")                                   # already bet on by a: not listed
-        text = B.new_markets(self.lg.rows(), self.PCFG, "a", since)
+        seen = {**self.PCFG, "pit": {**self.PCFG["pit"], "blind": False}}
+        text = B.new_markets(self.lg.rows(), seen, "a", since)
         self.assertIn("x [ci] does the small model pass multi-step tasks? · PASS $0.25 / FAIL $0.00 · $1 on FAIL pays $1.23 · "
                       "proposer b (0-0 on posts, 0-0 on bets)", text)
         self.assertTrue(text.startswith("New markets since your last turn:\n") and text.endswith(B.NEW_RULE))
         for jid in ("old", "mine", "done"):
             self.assertNotIn(f"\n{jid} [", text)
-        self.assertEqual(B.new_markets(self.lg.rows(), self.PCFG, "b", since).count("\nmine ["), 1)
+        self.assertEqual(B.new_markets(self.lg.rows(), seen, "b", since).count("\nmine ["), 1)
         for i in range(11):
             self.post(job(f"m{i}"), "b")
         more = B.new_markets(self.lg.rows(), self.PCFG, "a", since)
         self.assertIn("\nm10 [", more)
         self.assertIn("… 2 more: q board", more)                                  # 12 open (x + m0..m10), 10 shown
+
+    def test_blind_agent_views_carry_no_market_information(self):
+        self.post(job("x", question="does x hold?"), "b")
+        self.bet("x", "fail", 1, "a", why="x breaks on held-out input")
+        self.post(job("y"), "a")
+        self.bet("y", "pass", 0.5, "b", why="y looks fine")
+        rows, blind, seen = self.lg.rows(), self.PCFG, {**self.PCFG, "pit": {**self.PCFG["pit"], "blind": False}}
+        ev = list(range(len(rows)))
+        leaks = ("PASS $", "FAIL $", "pays", "market moved", "held-out input", "looks fine", "book PASS")
+        views = lambda cfg, hide: [B.board(rows, cfg, hide=hide), B.new_markets(rows, cfg, "a", 0),
+                                   B.digest(rows, ev, cfg), B.thread(rows, "a", hide)]
+        for text in views(blind, True)[:3]:
+            self.assertFalse([k for k in leaks if k in text], text)
+        self.assertNotIn("book PASS", views(blind, True)[3])                           # the thread keeps only its own stakes
+        self.assertIn("x [gpu-small] does x hold? · funded $1 (257s) · proposer b (0-0 on posts, 0-0 on bets)", B.board(rows, blind, hide=True))
+        self.assertIn("x/main FAIL $1.00", B.thread(rows, "a", True))                # its own stake stays visible
+        full = "\n".join(views(seen, False))
+        for k in ("PASS $", "pays", "held-out input", "book PASS"):
+            self.assertIn(k, full)
+        self.assertEqual(B.board(rows, blind), B.board(rows, seen))                  # the human board is unchanged
+        self.assertEqual(market.market_json(rows, blind, self.T0), market.market_json(rows, seen, self.T0))
 
     def test_bet_escrow_sub_booking_self_tag(self):
         self.post(job("x", arms=["V1", "V2"]), "a")

@@ -163,12 +163,13 @@ def cmd_balance(a):
 
 
 def cmd_thread(a):
-    print(B.thread(ctx()[1].rows(), a.agent))
+    root, lg, cfg = ctx()
+    print(B.thread(lg.rows(), a.agent, B.blind(cfg)))
 
 
 def cmd_board(a):
     root, lg, cfg = ctx()
-    print(B.board(lg.rows(), cfg))
+    print(B.board(lg.rows(), cfg, hide=bool(a.agent) and B.blind(cfg)))      # --as: the agent's (blind) view
 
 
 def cmd_pit(a):
@@ -538,8 +539,8 @@ def main(argv=None):
     p = sub.add_parser("balance"); p.add_argument("--as", dest="agent"); p.set_defaults(f=cmd_balance)
     p = sub.add_parser("thread", help="an agent's line: brief, balance, nodes, open bets, open markets")
     p.add_argument("agent"); p.set_defaults(f=cmd_thread)
-    p = sub.add_parser("board", help="every open market with its price, unopposed first (the board agents see)")
-    p.set_defaults(f=cmd_board)
+    p = sub.add_parser("board", help="every open market with its price, unopposed first; --as <agent>: the view agents see")
+    p.add_argument("--as", dest="agent"); p.set_defaults(f=cmd_board)
     p = sub.add_parser("pit", help="q pit calibration"); p.add_argument("what", choices=("calibration",)); p.set_defaults(f=cmd_pit)
     p = sub.add_parser("graph"); p.set_defaults(f=cmd_graph)
     p = sub.add_parser("cost"); p.add_argument("--by", choices=("lane", "job"), default="lane"); p.set_defaults(f=cmd_cost)

@@ -320,7 +320,8 @@ class Autopilot(unittest.TestCase):
         calls = self.stub_calls()
         self.assertEqual(len(calls), 2)
         for c in calls:
-            self.assertIn("Since you last looked:\nnew market n1/main PASS $0.00 / FAIL $0.00", c)
+            self.assertIn("Since you last looked:\nnew market n1/main funded $1 (257s) gpu-small · is n1 true?", c)
+            self.assertNotIn("PASS $", c)                          # [pit] blind (default): no pools anywhere in the prompt
             self.assertIn("You MUST end your turn by saying what you are waiting on", c)
         self.assertEqual({r["note"] for r in self.lg.rows() if r["t"] == "sleep" and not r["note"].startswith("fixture")},
                          {"auto: sub ended without sleeping"})
