@@ -677,7 +677,7 @@ class Pit(unittest.TestCase):
         self.bet("done", "fail", 0.5, "a.sub")                                   # already bet on by a: not listed
         seen = {**self.PCFG, "pit": {**self.PCFG["pit"], "blind": False}}
         text = B.new_markets(self.lg.rows(), seen, "a", since)
-        self.assertIn("x [ci] does the small model pass multi-step tasks? · PASS $0.25 / FAIL $0.00 · $1 on FAIL pays $1.23 · "
+        self.assertIn("x [ci] does the small model pass multi-step tasks? · funded $1 (36s) · PASS $0.25 / FAIL $0.00 · $1 on FAIL pays $1.23 · "
                       "proposer b (0-0 on posts, 0-0 on bets)", text)
         self.assertTrue(text.startswith("New markets since your last turn:\n") and text.endswith(B.NEW_RULE))
         for jid in ("old", "mine", "done"):
@@ -983,3 +983,57 @@ class ListScenarios(unittest.TestCase):
         (root / "elsewhere").mkdir()
         (root / "elsewhere" / "c_scn.sh").write_text("")
         self.assertEqual(specmod.scenarios(root, {"bench": {"scenario_dir": "elsewhere"}}), ["c_scn"])
+
+
+class TypicalCost(unittest.TestCase):
+    """What a scenario's run costs on a lane, from its settled results: shown where an agent decides funding."""
+    def setUp(self):
+        from pit import cli
+        self.cli, self.root = cli, Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root)
+        (self.root / "lanes.toml").write_text((ROOT / "lanes.example.toml").read_text().replace(
+            "[lanes.gpu-small]\n", '[lanes.gpu-small]\nrunner = "bench --scenario {scenario} --timeout {funded_s}"\n', 1))
+        (self.root / "ledger").mkdir()
+        (self.root / "scenarios").mkdir()
+        for n in ("s1", "s2"):
+            (self.root / "scenarios" / f"{n}.toml").write_text("")
+        self.lg = L.Ledger(self.root / "ledger", "h")
+        runs = [("a", "s1", "pass", 100, 0.40, ""), ("b", "s1", "fail", 300, 1.20, ""),
+                ("c", "s1", "fail", 257, 1.00, "over budget: killed at 257s: what the funding buys; partial trace kept"),
+                ("d", "s1", "invalid", 5, 0.02, "exit 1 with no verdict")]            # invalid: not a cost sample
+        for jid, sc, v, wall, usd, note in runs:
+            add(self.lg, job(jid, scenario=sc))
+            self.lg.append({"t": "result", "job": jid, "verdict": v, "note": note,
+                            "cost": {"wall_s": wall, "usd": usd, "lane": "gpu-small"}})
+        add(self.lg, job("e", run="bench --scenario 's1' --timeout 9"))              # no scenario field: read off the runner call
+        self.lg.append({"t": "result", "job": "e", "verdict": "pass", "note": "", "cost": {"wall_s": 200, "usd": 0.8, "lane": "gpu-small"}})
+        self.cfg = lanes.load(self.root)
+
+    def q(self, fn, **kw):
+        from argparse import Namespace as N
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"PIT_ROOT": str(self.root), "PIT_HOST": "h"}), contextlib.redirect_stdout(out):
+            fn(N(**kw))
+        return out.getvalue()
+
+    def test_medians_and_kill_share(self):
+        t = B.typical_cost(self.lg.rows(), "s1", "gpu-small", self.cfg)
+        self.assertEqual(t, {"n": 4, "wall_s": 228.5, "usd": 0.9, "kill": 0.25})
+        self.assertEqual(B.typical_cost(self.lg.rows(), "s1", "gpu-small")["n"], 3)        # no cfg: no runner template to read
+        self.assertIsNone(B.typical_cost(self.lg.rows(), "s2", "gpu-small", self.cfg))
+
+    def test_scenarios_listing_shows_typical_per_lane(self):
+        out = self.q(self.cli.cmd_list, scenarios=True, frontier=False, lane=None)
+        self.assertEqual(out, "s1 · gpu-small typical $0.90 (228s, n=4)\ns2\n")
+
+    def test_post_warns_below_typical_not_above(self):
+        for jid, usd in (("low", 0.5), ("ok", 1.4)):
+            p = self.root / f"{jid}.toml"
+            p.write_text(f'id = "{jid}"\nquestion = "q?"\nif_pass = "go"\nif_fail = "stop"\nlane = "gpu-small"\n'
+                         f'scenario = "s1"\nbudget_usd = {usd}\n')
+            out = self.q(self.cli.cmd_post, spec=str(p), agent="human", seed=False, stake=0.0)
+            self.assertEqual("warning: typical cost on gpu-small is $0.90 (228s); $0.5 buys 128s and will likely be killed" in out,
+                             jid == "low", out)
+        rows = self.lg.rows()
+        self.assertIn("typical here $0.90 (228s)", B.board(rows, self.cfg, hide=True))
+        self.assertIn("funded $1.4 (360s) · typical here $0.90 (228s)", B.new_markets(rows, self.cfg, "someone", 0))

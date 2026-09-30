@@ -14,6 +14,7 @@ tagged `seed`) and debits no budget; a post `--as human` debits nothing and carr
 any other agent pays its budget and the auto stake (max(default_stake, stake_share x budget_usd)) from its wallet.
 """
 import re
+import statistics
 from datetime import datetime, timedelta, timezone
 
 from . import ledger as L, spec as specmod
@@ -37,6 +38,43 @@ def blind(cfg: dict) -> bool:
 
 def funded(spec: dict, cfg: dict) -> str:
     return f"funded ${spec.get('budget_usd', 0):g} ({specmod.funded_seconds(spec, cfg.get('lanes', {}))}s)"
+
+
+def scenario_of(spec: dict, cfg: dict | None = None) -> str | None:
+    """The spec's scenario, else the {scenario} its run fills into its lane's runner template (a hand-written runner call)."""
+    if spec.get("scenario"):
+        return spec["scenario"]
+    tpl = ((cfg or {}).get("lanes", {}).get(spec.get("lane"), {})).get("runner")
+    if not tpl or "{scenario}" not in tpl or not spec.get("run"):
+        return None
+    pat = re.sub(r"\\\{(\w+)\\\}", lambda m: r"(?P<scenario>\S+)" if m[1] == "scenario" else r"\S+", re.escape(tpl))
+    m = re.search(pat, spec["run"])
+    return m["scenario"].strip("'\"") if m else None
+
+
+def typical_costs(rows: list[dict], cfg: dict | None = None) -> dict[tuple[str, str], dict]:
+    """(scenario, lane) -> {n, wall_s, usd, kill} from the settled result of every job with a scenario: medians of wall_s
+    and usd over its non-invalid results, kill = the share of those killed for funding (over budget)."""
+    specs = {r["id"]: r["spec"] for r in rows if r["t"] == "node" and r.get("kind") == "job"}
+    last = {r["job"]: r for r in rows if r["t"] == "result" and r["job"] in specs}      # a corrected result replaces the first
+    runs: dict[tuple[str, str], list[dict]] = {}
+    for jid, r in last.items():
+        sc = scenario_of(specs[jid], cfg)
+        if sc and r["verdict"] != "invalid":
+            runs.setdefault((sc, r["cost"].get("lane") or specs[jid]["lane"]), []).append(r)
+    return {k: {"n": len(rs), "wall_s": statistics.median(r["cost"]["wall_s"] for r in rs),
+                "usd": statistics.median(r["cost"]["usd"] for r in rs),
+                "kill": sum(r.get("note", "").startswith("over budget") for r in rs) / len(rs)} for k, rs in runs.items()}
+
+
+def typical_cost(rows: list[dict], scenario: str, lane: str, cfg: dict | None = None) -> dict | None:
+    return typical_costs(rows, cfg).get((scenario, lane))
+
+
+def typical_here(spec: dict, cfg: dict, typ: dict) -> str:
+    """' · typical here $Y (Ms)' for the spec's scenario on its lane, or '' when no run of it has settled there."""
+    t = typ.get((scenario_of(spec, cfg), spec.get("lane")))
+    return f" · typical here ${t['usd']:.2f} ({t['wall_s']:.0f}s)" if t else ""
 
 
 def enabled(cfg: dict) -> bool:
@@ -433,10 +471,10 @@ NEW_RULE = ("For each: bet (`q bet <job> PASS|FAIL <usd> --as <you> --why '…'`
 
 def new_markets(rows: list[dict], cfg: dict, agent: str, since: int, n: int = 10) -> str:
     """'New markets since your last turn': every open market (job x variant) posted at row >= since by another wallet
-    that the agent's family has not bet on, newest first, with its pools, what $1 on the thin side pays (blind: its
-    funding instead), and the proposer."""
+    that the agent's family has not bet on, newest first, with its funding and the typical cost of that scenario on that
+    lane, its pools and what $1 on the thin side pays (not under blind), and the proposer."""
     book, st = Book(rows), L.fold(rows)
-    fam, recs, out = book.family(agent), records(book), []
+    fam, recs, out, typ = book.family(agent), records(book), [], typical_costs(rows, cfg)
     have = {(b["job"], b["variant"]) for b in book.bets if b["agent"] in fam}
     for r in reversed(rows[since:]):
         j = st.jobs.get(r.get("id")) if r["t"] == "node" and r.get("kind") == "job" else None
@@ -452,8 +490,8 @@ def new_markets(rows: list[dict], cfg: dict, agent: str, since: int, n: int = 10
             t = book.totals(r["id"], v)
             side, x = pays(book, r["id"], v, "pass", cfg)
             out.append(f"{r['id'] if v == 'main' else r['id'] + '/' + v} [{s['lane']}] {' '.join(s['question'].split())[:100]} · "
-                       + (f"{funded(s, cfg)} · " if blind(cfg) else
-                          f"PASS ${t['pass']:.2f} / FAIL ${t['fail']:.2f} · $1 on {side.upper()} pays ${x:.2f} · ")
+                       + f"{funded(s, cfg)}{typical_here(s, cfg, typ)} · "
+                       + ("" if blind(cfg) else f"PASS ${t['pass']:.2f} / FAIL ${t['fail']:.2f} · $1 on {side.upper()} pays ${x:.2f} · ")
                        + f"proposer {prop} ({record(recs, prop)})")
     if not out:
         return ""
@@ -655,7 +693,7 @@ def board(rows: list[dict], cfg: dict, n: int = 20, hide: bool = False) -> str:
     """Every open market (queued job x variant), one line each: unopposed first, then smallest matched stake, then newest.
     hide (an agent's view under [pit] blind): newest first, funding in place of pools, odds and the counter-bettor."""
     book, st = Book(rows), L.fold(rows)
-    recs, lines, refs = records(book), [], refuters(rows)
+    recs, lines, refs, typ = records(book), [], refuters(rows), typical_costs(rows, cfg) if hide else {}
     for jid, j in sorted(st.jobs.items(), key=lambda kv: kv[1]["added"], reverse=True):      # newest first; sort below is stable
         if j["state"] != "queued":
             continue
@@ -668,7 +706,7 @@ def board(rows: list[dict], cfg: dict, n: int = 20, hide: bool = False) -> str:
             ctr = next((b for b in reversed(book.bets) if (b["job"], b["variant"]) == (jid, v) and b.get("why")
                         and b["side"] != "pass"), None)      # the latest counter-bettor's reason
             if hide:
-                lines.append((0, f"{name} [{s['lane']}] {' '.join(s['question'].split())[:100]} · {funded(s, cfg)} · "
+                lines.append((0, f"{name} [{s['lane']}] {' '.join(s['question'].split())[:100]} · {funded(s, cfg)}{typical_here(s, cfg, typ)} · "
                                  f"proposer {prop} ({record(recs, prop)})"))
                 continue
             lines.append(((min(t.values()) > 0, 2 * min(t.values())),

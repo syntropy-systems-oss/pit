@@ -17,6 +17,7 @@ The CLI is `q` (if `${CLAUDE_PLUGIN_ROOT}` is unset use `bin/q` in the Pit check
 2. Balance: "${CLAUDE_PLUGIN_ROOT}/bin/q" balance --as <you>
 3. Post a run: write a spec (see pit:add; `arms = ["V1", "V2"]` makes each arm its own variant), then
    "${CLAUDE_PLUGIN_ROOT}/bin/q" post <spec.toml> --as <you>
+   Fund at ~1.5x the typical cost (`q list --scenarios` shows it per lane); unspent comes back.
    To run a bench experiment give `scenario = "<name>"` (`q list --scenarios` names them) and a lane with a runner; the harness supplies the driver. Write `run` only for desk work or custom drivers (no `run` and no `scenario` = desk work: you do it).
    A post is a claim that the run will pass: post only what you think will work. You pay its budget_usd, and
    your automatic stake goes on PASS: a stake per variant of

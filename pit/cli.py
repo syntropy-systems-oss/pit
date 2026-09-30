@@ -73,6 +73,10 @@ def cmd_post(a):
     err = B.check_post(book, cfg, s, a.agent, lg.rows()) if mode == "agent" else None
     if err:
         sys.exit(f"refused {a.spec}: {err}")
+    t = B.typical_cost(lg.rows(), B.scenario_of(s, cfg), s.get("lane"), cfg)
+    if t and s.get("budget_usd", 0) < t["usd"]:
+        print(f"warning: typical cost on {s['lane']} is ${t['usd']:.2f} ({t['wall_s']:.0f}s); ${s.get('budget_usd', 0):g} buys "
+              f"{specmod.funded_seconds(s, cfg['lanes'])}s and will likely be killed")
     add_specs(root, lg, cfg, [(a.spec, {**s, "proposer": a.agent, **({"seed": True} if mode == "seed" else {})})])
     for row in B.stakes(lg.rows(), cfg, s, a.agent, mode, a.stake):
         lg.append(row)
@@ -190,7 +194,10 @@ def cmd_list(a):
         names = specmod.scenarios(root, cfg)
         if names is None:
             sys.exit(f"no scenario registry: set [bench] scenario_dir (default: scenarios/ in {root}) or scenario_cmd in lanes.toml")
-        print("\n".join(names))
+        typ = B.typical_costs(lg.rows(), cfg)
+        for n in names:
+            seen = [f"{l} typical ${t['usd']:.2f} ({t['wall_s']:.0f}s, n={t['n']})" for (sc, l), t in sorted(typ.items()) if sc == n]
+            print(n + (" · " + " · ".join(seen) if seen else ""))
         return
     st = L.fold(lg.rows())
     ids, fallback = B.order(st, lg.rows(), cfg) if a.frontier else (list(st.jobs), set())
@@ -488,7 +495,7 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("add", help="validate specs and add them"); p.add_argument("spec", nargs="+"); p.set_defaults(f=cmd_add)
     p = sub.add_parser("list"); p.add_argument("--lane"); p.add_argument("--frontier", action="store_true")
-    p.add_argument("--scenarios", action="store_true", help="the scenario names a job may run, one per line"); p.set_defaults(f=cmd_list)
+    p.add_argument("--scenarios", action="store_true", help="the scenario names a job may run, one per line, with what a run typically costs per lane"); p.set_defaults(f=cmd_list)
     for name in ("why-blocked", "why"):
         p = sub.add_parser(name); p.add_argument("id"); p.set_defaults(f=cmd_why)
     p = sub.add_parser("show", help="a node and its lineage"); p.add_argument("id"); p.set_defaults(f=cmd_show)

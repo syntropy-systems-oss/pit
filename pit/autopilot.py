@@ -21,6 +21,8 @@ from pathlib import Path
 from . import bag, lanes, ledger as L, book as B, reflect, spec as specmod
 
 REPO = Path(__file__).resolve().parent.parent
+FUNDING = ("Funding: `q list --scenarios` shows what a run typically costs per lane; overfund, the unspent part is refunded; "
+           "a kill refunds nothing.")
 RULES = ("Money is a scheduling signal, not real. Never spend real money, never send messages to people, never touch "
          "production; bench runs use mocks only; nothing over an hour.")
 CLAIM = ("Your brief is a capability or research goal to prove or refute; it is your goal. Test it where it could fail, "
@@ -636,7 +638,7 @@ class Autopilot:
         new = B.new_markets(rows, self.cfg, agent, self.since(agent, rows))
         return "\n\n".join(filter(None, [
             "\n".join(filter(None, [new, MARKET])) if market else "",      # a market wake leads with the markets
-            idle, skill("pit"), "Standing rules (verbatim): " + RULES, bootstrap(self.root),
+            idle, skill("pit"), "Standing rules (verbatim): " + RULES + "\n" + FUNDING, bootstrap(self.root),
             f"You are {sub}, a sub of {agent}: act `--as {sub}`; your bets and posts book to {agent}. "
             f"The CLI is {REPO}/bin/q (on PATH as q; PIT_ROOT is set).",
             f"q thread {agent}:\n" + B.thread(self.lg.rows(), agent, hide),
