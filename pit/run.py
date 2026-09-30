@@ -203,10 +203,10 @@ def run_job(root, ledger: L.Ledger, cfg: dict, jid: str, lane: str | None = None
             meta = trees.metadata(l["repo"], s.get("ref") or l.get("base", "HEAD"),
                                   s.get("base_ref") or l.get("base", "HEAD"))
             with trees.worktree(l["repo"], meta["ref"]) as tree:
-                r = execute(trees.command(cmd, tree), max(0, funded - (time.monotonic() - t0)), s["fail_on"],
+                setup = time.monotonic() - t0       # the checkout is billed; the tree's removal is not
+                r = execute(trees.command(cmd, tree), max(0, funded - setup), s["fail_on"],
                             cwd=tree, echo=echo, env={**env, **trees.environment(tree, meta["ref"])})
-            r.update(meta)
-            r["wall_s"] = time.monotonic() - t0
+            r.update(meta, wall_s=r["wall_s"] + setup)
         except (trees.GitError, OSError) as e:
             r = {"rc": None, "wall_s": time.monotonic() - t0, "output": str(e),
                  "report": {"verdict": "invalid", "note": f"worktree: {e}"}}

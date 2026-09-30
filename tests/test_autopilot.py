@@ -616,6 +616,8 @@ class Autopilot(unittest.TestCase):
         self.assertIn('j1 main: you had FAIL $0.10 (you said: "the small model drops multi-step tasks") — lost $0.10', text)
         self.assertIn(B.LOSS_RULE, text)
         self.assertIn("New markets since your last turn:\nj2 [ci] does j2 hold?", text)
+        self.assertNotIn(A.DIFF, text)          # no market carries a change
+        self.assertNotIn(A.CHANGE, text)        # no workspace configured
         self.assertLess(text.index("Since you last looked:"), text.index("Your stakes that settled since your last turn:"))
         self.assertIn("Reflection since your last turn:\nF:reflect-1: small-model runs are underfunded: fund 3x", text)
         self.assertIn("agents/BOOTSTRAP.md edited (bs1): + - fund small-model runs 3x; - - old line", text)
@@ -877,12 +879,22 @@ class Workspaces(unittest.TestCase):
             self.assertEqual(cmd[cmd.index(str(tree)) - 1], '--add-dir')
             text = (self.root / 'autopilot/logs/a-turn.prompt').read_text()
             self.assertIn(f'Your working tree: {tree}, branch test/a; commit there, then post with --ref', text)
-            self.assertIn('Bettors see the question, not the diff', text)
             self.assertIn('PR candidate for a human', text)
             if rt == 'codex':
                 for opt in ('--git-dir', '--git-common-dir'):
                     self.assertIn(self.trees.git(tree, 'rev-parse', '--path-format=absolute', opt).strip(), cmd)
         self.assertFalse((self.root / 'agent trees/a-turn').exists())
+
+    def test_change_market_tells_bettor_how_to_inspect_and_reflect_has_no_tree(self):
+        self.lg.append(B.agent_row(B.Book(self.lg.rows()), 'b', 'other'))
+        s = job('c1', proposer='b', ref='1' * 40, ref_name='feature', base_ref='2' * 40)
+        add(self.lg, s)
+        self.ap.seen['a'] = 0
+        text = self.ap.prompt('a-turn', 'a', [])
+        self.assertIn('New markets since your last turn:\nc1 ◇ [gpu-small]', text)
+        self.assertIn(A.DIFF, text)
+        self.assertIn(A.CHANGE, text)
+        self.assertIsNone(self.ap.workspace(B.REFLECT))
 
     def test_init_failure_prevents_spawn_and_dry_run_creates_nothing(self):
         self.ap.c['workspace_init'] = 'exit 4'

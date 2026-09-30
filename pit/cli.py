@@ -46,20 +46,23 @@ def cmd_add(a):
 
 def add_specs(root, lg, cfg, loaded):
     st = L.fold(lg.rows())
-    # Custom commands and desk jobs do not use the bench scenario registry.
-    specs, bad = [], []
+    specs, bad, registry = [], [], {}
     for path, s in loaded:        # validate all first: a batch goes in whole or not at all
         try:
             s = specmod.pin_ref(s, cfg["lanes"])
             known = None
-            if s.get("scenario") and not s.get("run"):
+            if s.get("scenario") and not s.get("run"):     # custom commands and desk jobs do not use the registry
                 lane = cfg["lanes"].get(s.get("lane"), {})
-                if lane.get("repo") and not lane.get("url"):
+                if lane.get("repo") and not lane.get("url"):     # the proposed tree may register a new scenario
                     sha = s.get("ref") or trees.resolve(lane["repo"], lane.get("base", "HEAD"))
-                    with trees.worktree(lane["repo"], sha) as tree:
-                        known = specmod.scenarios(root, cfg, tree, sha, s.get("ref_name", ""))
+                    if sha not in registry:
+                        with trees.worktree(lane["repo"], sha) as tree:
+                            registry[sha] = specmod.scenarios(root, cfg, tree, sha, s.get("ref_name", ""))
+                    known = registry[sha]
                 else:
-                    known = specmod.scenarios(root, cfg)
+                    if None not in registry:
+                        registry[None] = specmod.scenarios(root, cfg)
+                    known = registry[None]
         except (specmod.SpecError, trees.GitError) as e:
             bad.append(f"refused {path}: {e}")
             continue
@@ -243,6 +246,19 @@ def change_results(rows, lane=None):
     return [r for r in reversed(rows) if r["t"] == "result" and latest[r["job"]] is r
             and r["verdict"] == "pass" and r.get("ref") and r.get("base_ref") and r["ref"] != r["base_ref"]
             and (not lane or r["cost"]["lane"] == lane)]
+
+
+def cmd_diff(a):
+    """The change a post carries: diffstat, then the patch of base...ref."""
+    root, lg, cfg = ctx()
+    st = L.fold(lg.rows())
+    if a.id not in st.jobs:
+        sys.exit(f"no job {a.id}")
+    s = st.jobs[a.id]["spec"]
+    if not specmod.carries_change(s):
+        sys.exit(f"{a.id} carries no change")
+    with trees.repository(cfg["lanes"][s["lane"]]["repo"]) as repo:
+        print(trees.git(repo, "diff", "--patch-with-stat", "--no-color", "--no-ext-diff", f"{s['base_ref']}...{s['ref']}"), end="")
 
 
 def cmd_why(a):
@@ -538,6 +554,7 @@ def main(argv=None):
     p = sub.add_parser("list"); p.add_argument("--lane"); p.add_argument("--frontier", action="store_true")
     p.add_argument("--changes", action="store_true", help="PASS results at changed refs, newest first, with diffstats: PR candidates")
     p.add_argument("--scenarios", action="store_true", help="the scenario names a job may run, one per line, with what a run typically costs per lane"); p.set_defaults(f=cmd_list)
+    p = sub.add_parser("diff", help="the change a post carries: diffstat, then the patch"); p.add_argument("id"); p.set_defaults(f=cmd_diff)
     for name in ("why-blocked", "why"):
         p = sub.add_parser(name); p.add_argument("id"); p.set_defaults(f=cmd_why)
     p = sub.add_parser("show", help="a node and its lineage"); p.add_argument("id"); p.set_defaults(f=cmd_show)

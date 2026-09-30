@@ -2,9 +2,9 @@
 
 ## Unreleased
 
-- Runs at a ref: local lanes with `repo` and `base` (default `HEAD`) execute in disposable detached worktrees, with cwd at the tree, `{tree}`, `PIT_TREE` and `PIT_REF`. Cleanup covers timeout, stop rules and termination. Remote runs share the tree environment and ref metadata; their default is now `base` too.
-- `q post --ref` pins a commit and its comparison base, retaining `ref_name`; bad refs and `deny_paths` changes are refused. Ordered `!glob` exceptions allow editable subtrees. Scenario validation reads the proposed tree so a change can register a new case.
-- Results retain the tested ref and diffstat. `q list --changes` lists PASS PR candidates, newest first; nothing auto-merges. Blind views mark changes without showing diffs, and the terminal's change glyph hovers to the ref name.
+- Runs at a ref: local lanes with `repo` and `base` (default `HEAD`) execute in disposable detached worktrees, with cwd at the tree, `{tree}`, `PIT_TREE` and `PIT_REF`. Cleanup covers timeout, stop rules and termination. Remote repo lanes share the tree environment and ref metadata; the lane key `ref` is renamed `base`.
+- `q post --ref` pins a commit and its comparison base, retaining `ref_name`; bad refs and `deny_paths` changes are refused. Scenario validation reads the proposed tree so a change can register a new case.
+- Results retain the tested ref and diffstat. `q list --changes` lists PASS PR candidates, newest first; nothing auto-merges. Views mark a post that carries a change (the terminal's glyph hovers to the ref name); `q diff <job>` prints its diffstat and patch so bettors can inspect it.
 - Autopilot `workspace` / `workspace_init` creates a tree per wallet before its first turn, names the tree and branch in the prompt and adds the paths to both runtimes. The prompt describes making a change, committing and betting on its run.
 
 - `q run` refuses a lane whose slots are full or whose device is busy (`lane X: busy (...)` / `lane X: device D busy (...)`): the same guard autopilot uses, so a run started by hand or by an agent cannot bypass it. Lanes are tried least-recently-claimed first, so a device's lanes take turns.

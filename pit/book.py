@@ -756,8 +756,7 @@ def thread(rows: list[dict], agent: str, hide: bool = False) -> str:
         nodes.append(f"  {jid} [{j['state']}{v}] ${j['spec']['budget_usd']} {j['spec']['question'][:80]}")
         if (j["result"] or {}).get("ref"):
             nodes.append(f"    ref: {j['spec'].get('ref_name', j['result']['ref'])} ({j['result']['ref']})")
-            if book.proposers.get(jid) in fam:
-                nodes.extend(f"    {line}" for line in j["result"].get("change", "").splitlines())
+            nodes.extend(f"    {line}" for line in j["result"].get("change", "").splitlines())
         if (j["result"] or {}).get("log"):
             nodes.append(f"    log: {j['result']['log']}")
         nodes += [f"    -> {fid}: {f['text'][:90]}" for fid, f in st.findings.items() if f["from"] == jid]

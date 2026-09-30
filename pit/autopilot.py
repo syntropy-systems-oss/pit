@@ -26,7 +26,8 @@ FUNDING = ("Funding: `q list --scenarios` shows what a run typically costs per l
            "a kill refunds nothing.")
 CHANGE = ("Make a change in your working tree, commit it, and post the prediction with `q post <spec> --ref <ref> --as <you>`; "
           "fund the run with budget_usd. A PASS with a change is a PR candidate for a human; nothing auto-merges. "
-          "The proof is the run, not your description. Bettors see the question, not the diff.")
+          "The proof is the run, not your description.")
+DIFF = "A post marked ◇ carries a change: inspect it with `q diff <id>`, or check it out in your own tree, before you bet."
 RULES = ("Money is a scheduling signal, not real. Never spend real money, never send messages to people, never touch "
          "production; bench runs use mocks only; nothing over an hour.")
 CLAIM = ("Your brief is a capability or research goal to prove or refute; it is your goal. Test it where it could fail, "
@@ -649,6 +650,8 @@ class Autopilot:
                          f"this turn (`q list --scenarios`), or say in one line why nothing worth running exists."
                          for l, s in self.idle_lanes(datetime.now(timezone.utc), 120).items())
         new = B.new_markets(rows, self.cfg, agent, self.since(agent, rows))
+        if "◇" in new:
+            new += "\n" + DIFF
         return "\n\n".join(filter(None, [
             "\n".join(filter(None, [new, MARKET])) if market else "",      # a market wake leads with the markets
             idle, skill("pit"), "Standing rules (verbatim): " + RULES + "\n" + FUNDING, bootstrap(self.root),
@@ -657,7 +660,7 @@ class Autopilot:
             f"q thread {agent}:\n" + B.thread(self.lg.rows(), agent, hide),
             "\n".join(t for _, _, t in items),
             f"Your claim ({agent}'s brief): {B.Book(rows).agents[agent]['brief']}", CLAIM, digest,
-            CHANGE,
+            CHANGE if self.c.get("workspace") else "",
             "" if market else new,
             B.settled_stakes(rows, agent, self.since(agent, rows)), B.reflection_since(rows, self.since(agent, rows)), BOARD if hide else BOARD + " " + SEEN,
             "q board:\n" + B.board(rows, self.cfg, hide=hide),
@@ -717,8 +720,9 @@ class Autopilot:
         return f"{rt}/{model or 'default'}"
 
     def workspace(self, agent: str) -> Path | None:
+        """The wallet's working tree, created by workspace_init when missing; reflection has none."""
         template = self.c.get("workspace")
-        if not template:
+        if not template or agent == B.REFLECT:
             return None
         path = Path(template.format(agent=agent)).expanduser()
         path = (self.root / path).resolve()

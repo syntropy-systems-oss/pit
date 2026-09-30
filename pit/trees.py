@@ -31,17 +31,9 @@ def metadata(repo, ref: str, base: str = "HEAD") -> dict:
 
 
 def denied(repo, base: str, ref: str, patterns: list[str]) -> str | None:
-    # No rename detection: moving a protected file must check its old name as well as its new one.
+    """The first path the diff base...ref touches that matches a glob; no rename detection, so a move checks both names."""
     paths = git(repo, "diff", "--name-only", "-z", "--no-renames", f"{base}...{ref}").split("\0")
-    for path in filter(None, paths):
-        blocked = False
-        for pattern in patterns:       # ordered globs; !glob allows an exception to an earlier deny
-            allow = pattern.startswith("!")
-            if fnmatch.fnmatchcase(path, pattern[1:] if allow else pattern):
-                blocked = not allow
-        if blocked:
-            return path
-    return None
+    return next((p for p in paths if p and any(fnmatch.fnmatchcase(p, g) for g in patterns)), None)
 
 
 def command(cmd: str, tree) -> str:
@@ -69,22 +61,19 @@ def repository(repo):
 
 @contextmanager
 def worktree(repo, ref: str):
+    """A detached worktree at ref in a temp dir; the dir is deleted and git's record of it pruned on any exit but SIGKILL."""
     repo = Path(repo).expanduser().resolve()
-    with tempfile.TemporaryDirectory(prefix="pit-run-") as tmp:
-        tree = Path(tmp).resolve() / "tree"
-        old = {}
-        def interrupted(sig, frame):
-            raise SystemExit(128 + sig)
-        if threading.current_thread() is threading.main_thread():
-            old = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGTERM, signal.SIGHUP)}
-        try:
+    old = {}
+    def interrupted(sig, frame):
+        raise SystemExit(128 + sig)
+    if threading.current_thread() is threading.main_thread():
+        old = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGTERM, signal.SIGHUP)}
+    try:
+        with tempfile.TemporaryDirectory(prefix="pit-run-", ignore_cleanup_errors=True) as tmp:
+            tree = Path(tmp).resolve() / "tree"
             git(repo, "worktree", "add", "--detach", str(tree), ref)
             yield tree
-        finally:
-            try:
-                # --force also removes ignored build outputs.
-                if tree.exists():
-                    git(repo, "worktree", "remove", "--force", str(tree))
-            finally:
-                for sig, handler in old.items():
-                    signal.signal(sig, handler)
+    finally:
+        subprocess.run(["git", "-C", str(repo), "worktree", "prune"], capture_output=True)
+        for sig, handler in old.items():
+            signal.signal(sig, handler)

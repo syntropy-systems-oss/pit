@@ -145,11 +145,6 @@ def validate(spec: dict, lanes: dict, known: list[str] | None = None, drivers: l
     if not is_read(spec) and spec.get("if_pass") and str(spec["if_pass"]).strip() == str(spec.get("if_fail", "")).strip():
         errs.append("if_pass == if_fail: the run cannot change a decision")
     lane = spec.get("lane")
-    if "ref" in spec:
-        if not isinstance(spec["ref"], str) or not spec["ref"].strip():
-            errs.append("ref must be a nonempty string")
-        if not lanes.get(lane, {}).get("repo"):
-            errs.append("ref needs a lane with repo")
     if lane != "any" and lane not in lanes:
         errs.append(f"unknown lane {lane!r} (have: {', '.join([*lanes, 'any'])})")
     if "budget_s" in spec:

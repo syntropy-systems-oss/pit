@@ -1132,7 +1132,7 @@ class RefRuns(unittest.TestCase):
         self.git('add', '.')
         self.git('commit', '-qm', 'change')
         self.sha = self.git('rev-parse', 'HEAD').strip()
-        self.lane = {'repo': str(self.repo), 'base': 'main', 'deny_paths': ['harness/**', '!harness/skills/**'],
+        self.lane = {'repo': str(self.repo), 'base': 'main', 'deny_paths': ['harness/**'],
                      'usd_per_h': 14, 'gate': 'true',
                      'runner': 'git -C {tree} rev-parse HEAD; pwd; echo "$PIT_TREE $PIT_REF"; cat value.txt; echo "pit: verdict=pass"'}
         self.cfg = {'lanes': {'gpu-small': self.lane}, 'pit': {'enabled': True}}
@@ -1203,20 +1203,23 @@ class RefRuns(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, 'ref needs a lane with repo'):
             self.post()
         self.assertEqual(self.lg.rows(), [])
-        self.assertIn('ref must be a nonempty string', specmod.validate(job('x', ref=42), self.cfg['lanes']))
+        self.lane['repo'] = str(self.repo)
+        with self.assertRaisesRegex(specmod.SpecError, 'ref must be a nonempty string'):
+            specmod.pin_ref(job('x', ref=42), self.cfg['lanes'])
 
-    def test_deny_paths_checks_renames_and_allows_exceptions(self):
+    def test_deny_paths_checks_nested_paths_and_renames(self):
+        (self.repo / 'harness/deep').mkdir()
+        (self.repo / 'harness/deep/card.txt').write_text('protected too')
+        self.git('add', '.')
+        self.git('commit', '-qm', 'nested')
+        with self.assertRaisesRegex(SystemExit, 'denied path: harness/deep/card.txt'):
+            self.post()
+        self.git('reset', '--hard', self.sha)
         self.git('mv', 'harness/grade.py', 'grade.py')
         self.git('commit', '-qm', 'move grader')
         with self.assertRaisesRegex(SystemExit, 'denied path: harness/grade.py'):
             self.post()
         self.assertEqual(self.lg.rows(), [])
-        self.git('reset', '--hard', self.sha)
-        (self.repo / 'harness/skills').mkdir()
-        (self.repo / 'harness/skills/card.txt').write_text('allowed')
-        self.git('add', '.')
-        self.git('commit', '-qm', 'skill')
-        self.post()
 
     def test_timeout_and_stop_rule_remove_tree(self):
         for jid, command, patch in [('timeout', 'pwd; sleep 30', mock.patch.object(specmod, 'funded_seconds', return_value=0.2)),
@@ -1264,7 +1267,7 @@ with trees.worktree(sys.argv[1], 'feature') as tree:
         self.lg.append({**latest, 'verdict': 'fail'})
         self.assertNotIn('newer PASS', self.listing('--changes'))
 
-    def test_blind_views_only_mark_change_market_json_has_ref_name(self):
+    def test_blind_views_mark_change_market_json_has_ref_name(self):
         self.lg.append(B.agent_row(B.Book([]), 'a', 'a brief'))
         s = specmod.pin_ref(job('change', ref='feature', proposer='a'), self.cfg['lanes'])
         add(self.lg, s, ts=L.now())
@@ -1300,7 +1303,23 @@ with trees.worktree(sys.argv[1], 'feature') as tree:
         thread = B.thread(self.lg.rows(), 'a', hide=True)
         self.assertIn('value.txt', thread)
         self.assertIn(self.sha, thread)
+        self.lg.append(B.agent_row(B.Book(self.lg.rows()), 'b', 'other'))
+        self.lg.append({'t': 'claim', 'job': 'change', 'lane': 'gpu-small', 'cid': 'c-b', 'agent': 'b'})
+        self.assertIn('value.txt', B.thread(self.lg.rows(), 'b', hide=True))
         self.assertNotIn('change', market.market_json(self.lg.rows(), self.cfg)['threads']['a']['nodes'][0])
+
+    def test_diff_prints_stat_then_patch_and_refuses_without_change(self):
+        self.post()
+        out = io.StringIO()
+        with mock.patch.object(self.cli, 'ctx', return_value=(self.root, self.lg, self.cfg)), contextlib.redirect_stdout(out):
+            self.cli.main(['diff', 'change'])
+        text = out.getvalue()
+        self.assertLess(text.index('files changed'), text.index('-before'))
+        self.assertIn('+after', text)
+        self.post('baseline', ref='main', scenario='', run='echo "pit: verdict=pass"')
+        with mock.patch.object(self.cli, 'ctx', return_value=(self.root, self.lg, self.cfg)), \
+             self.assertRaisesRegex(SystemExit, 'baseline carries no change'):
+            self.cli.main(['diff', 'baseline'])
 
     def test_checkout_error_is_invalid_and_lane_without_repo_keeps_cwd(self):
         self.post(scenario='', run='echo "pit: verdict=pass"')

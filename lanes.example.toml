@@ -32,7 +32,7 @@ max_usd_per_value = 25          # cheap lane: q add refuses budget_usd > value x
 gate = "true"                   # a shell command; exit 0 = the lane is free
 # repo = "~/src/project"      # local lane: fresh detached worktree per run, cwd at the tree
 # base = "main"               # default HEAD; a spec's ref wins; no ref = baseline run
-# deny_paths = ["bench/driver/**", "bench/common/**", "!bench/common/skills/**"]  # ordered globs, ! = exception
+# deny_paths = ["bench/driver/**", "bench/grade.py"]  # globs: a post whose diff base...ref touches one is refused
 # {tree} in runner or run is shell-quoted; PIT_TREE / PIT_REF name the tree and commit; cleanup after every run
 # device = "gpu0"              # lanes that share a device declare it; they never run together (one job on the device at a time)
 # A spec with `scenario = "<name>"` and no `run` gets its driver from the lane: {scenario} {model} {funded_s} are filled in,

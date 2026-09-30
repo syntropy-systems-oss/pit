@@ -76,4 +76,4 @@ script knows what its build depends on. The pattern that keeps it cheap:
 A first build on a new box is slow and the ledger shows it: the wall is charged on the lane. The next run on the same
 sources reuses it.
 
-Repo runs also substitute `{tree}` in the script, set `PIT_TREE` and `PIT_REF`, and return the tested commit, comparison commit and diffstat as `tree={...}` on the final report line. The dispatcher records these on the result. `base` replaces the old lane-level `ref` default; spec and protocol `ref` still select the proposed commit.
+Repo runs also substitute `{tree}` in the script, set `PIT_TREE` and `PIT_REF`, and return the tested commit, comparison commit and diffstat as `tree={...}` on the final report line. The dispatcher records these on the result. The lane's `base` is the default ref; a spec's `ref` selects the proposed commit.

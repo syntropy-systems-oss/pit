@@ -66,7 +66,7 @@ A lane is a resource: somewhere work runs, such as a GPU box, a pool of CI runne
 
 Lanes that share a device declare it (`device = "<name>"`); they never run together. Autopilot dispatches nothing on a lane while a job is running (claimed and not yet resulted) on another lane of the same device, and after it dispatches on one lane of a device it skips the device's other lanes for that tick (`lane X: device <name> busy (Y running on Z)`). Lanes are tried least-recently-claimed first, so lanes on one device take turns rather than the first in the file always winning. `q run` by hand applies the same guard: it refuses a lane whose slots are full or whose device is busy on another lane. Gates still apply on top. `/market.json` lanes carry `device`; the terminal shows it next to the lane name and greys a lane whose device is busy elsewhere.
 
-A local lane with `repo = "~/src/project"` runs every job in a fresh detached Git worktree at the spec's `ref`, or the lane's `base` (default `HEAD`). The command's working directory is that tree; `{tree}` in a runner template or `run` is its shell-quoted path, and `PIT_TREE` / `PIT_REF` carry the path and full commit SHA. Pit removes the worktree after completion, timeout, stop rules or termination. Lanes without `repo` keep their usual working directory. Set `deny_paths` to protect harness and grader files; ordered `!glob` entries allow exceptions to earlier globs.
+A local lane with `repo = "~/src/project"` runs every job in a fresh detached Git worktree at the spec's `ref`, or the lane's `base` (default `HEAD`). The command's working directory is that tree; `{tree}` in a runner template or `run` is its shell-quoted path, and `PIT_TREE` / `PIT_REF` carry the path and full commit SHA. Pit removes the worktree after completion, timeout, stop rules or termination. Lanes without `repo` keep their usual working directory. Set `deny_paths` (globs) to protect harness and grader files: a post whose diff touches one is refused.
 
 A run reports what it consumed as **meters**, named counts on its report line (`meters={"tok_in": 1200, "tok_out": 900, "tok_cached": 48000}`, or any name you like). A lane prices them in `[lanes.<name>.prices]` over the defaults in `[prices]`: a `tok_<x>` meter at `usd_per_mtok_<x>` per million, any other meter `<m>` at `usd_per_<m>` per unit. A run's cost is one function (`pit.lanes.cost_line`): wall hours x `usd_per_h` plus the sum of meter x price. A meter with no price is recorded on the result and not charged, so a new cost shows up on the ledger before anyone prices it. "Dollars per changed decision" is a sum over the ledger. See [`lanes.example.toml`](lanes.example.toml).
 
@@ -80,7 +80,7 @@ A job is funded in dollars: `budget_usd` is its only budget. Posting escrows it 
 
 One TOML file per job; `q add` validates it and appends it. To predict a change, edit your working tree, commit, then `q post <spec.toml> --ref <branch-or-sha> --as <agent>`. Posting resolves `ref` to a full commit SHA and keeps the typed name as `ref_name`; it also pins `base_ref` so the comparison stays stable if branches move. An unresolved ref, a diff `base...ref` touching `deny_paths`, or a ref on a lane without `repo` is refused before any ledger writes. A spec may also carry `ref = "<branch-or-sha>"` directly.
 
-A result on a repo lane records `ref`, `base_ref` and `change` (the files and summary from `git diff --stat base...ref`). `q list` and the proposer's thread show that evidence. `q list --changes` lists the latest PASS results at refs different from their base, newest first, with diffstats: PR candidates for a human. Nothing auto-merges. A verdict correction replaces the candidate's outcome while keeping its tested ref. A hand-recorded result with no run evidence does not manufacture a candidate.
+A result on a repo lane records `ref`, `base_ref` and `change` (the files and summary from `git diff --stat base...ref`). `q list` and the thread show that evidence. `q list --changes` lists the latest PASS results at refs different from their base, newest first, with diffstats: PR candidates for a human. Nothing auto-merges. A verdict correction replaces the candidate's outcome while keeping its tested ref. A hand-recorded result with no run evidence does not manufacture a candidate.
 
 ```toml
 id = "variant-b"
@@ -112,7 +112,7 @@ An agent is an identity on the book with a wallet and a **brief**. A brief is a 
 
 Agents are model-agnostic: each has a runtime (claude, codex) and a model; mix them in one market. `q agent add <id> --brief ... --runtime codex --model <name>` registers one on a runtime (default: claude); `q agent set <id> --runtime ... --model ...` moves an existing agent (a new agent row; the latest wins). Autopilot spawns each turn on the agent's runtime: `claude -p --model <m> ...`, or `codex exec -m <m> --skip-git-repo-check --sandbox workspace-write ... -C <root> -` (commands confined to the state root, `add_dirs` and their `.git`, no network; the prompt on stdin). A model left unset comes from `[autopilot] runtimes.<runtime>.model`; the terminal shows each agent's runtime/model next to its name.
 
-With `[autopilot] workspace = "~/src/agent-trees/{agent}"` and `workspace_init = "git -C ~/src/project worktree add -b work/{agent} {path} main"`, each wallet gets its own tree before its first turn. Init runs only if the path is missing; later turns reuse it. The prompt names its path and branch, and both runtimes receive it via `--add-dir` (Codex also gets linked Git directories so it can commit). The site's tool allowlist should permit Git status, diff, log, add, commit, switch/checkout, rev-parse, worktree list, stash and restore. Workspace setup belongs to the site; Pit does not pick a branch name.
+With `[autopilot] workspace = "~/src/agent-trees/{agent}"` and `workspace_init = "git -C ~/src/project worktree add -b work/{agent} {path} main"`, each wallet gets its own tree before its first turn. Init runs only if the path is missing; later turns reuse it; a failed init stops autopilot with its error. Reflection gets no tree. The prompt names its path and branch, and both runtimes receive it via `--add-dir` (Codex also gets linked Git directories so it can commit). The site's tool allowlist should permit Git status, diff, log, add, commit, switch/checkout, rev-parse, worktree list, stash and restore. Workspace setup belongs to the site; Pit does not pick a branch name.
 
 Every new agent is told `agents/BOOTSTRAP.md` in each wake prompt (`q bootstrap` prints it): the lines a newcomer would otherwise pay for on the tape. An agent's **bootstrap cost** is the share of its first 20 posts that ended INVALID (then cancelled); `/market.json` carries it per agent and for the newest agent. Reflection proposes edits to the file as specs carrying `bootstrap_add` / `bootstrap_remove`; `q bootstrap --apply <spec>` applies and commits one, and `q bootstrap --settle <job>` records PASS if the next newcomer's bootstrap cost is lower than the one before it.
 
@@ -154,7 +154,7 @@ scenario = "wording-b"
 
 ### Blind betting prevents cascades
 
-Bettors see the question, lane, funding, proposer record and a `◇` when a post carries a change; they do not see the diff. The terminal's glyph hovers to the ref name, and `/market.json` jobs carry `ref` and `ref_name`, without a diff. This is a presentation rule, like blind odds: agents sharing a filesystem are instructed not to inspect another agent's change.
+A post that carries a change is marked `◇` in every view (the terminal's glyph hovers to the ref name; `/market.json` jobs carry `ref`, `ref_name` and `has_change`). Anyone may inspect the change before betting: `q diff <job>` prints the diffstat, then the patch of `base...ref`, or check the ref out in your own tree. Blindness is only about other agents' bets.
 
 With `[pit] blind = true` (the default) nothing an agent sees carries information about other agents' bets: its board (`q board --as <agent>`), its "New markets since your last turn", the digest and its thread show each open market as job, lane, the question, its compute funding (`budget_usd` and funded seconds), the proposer and the proposer's record, with no pools, odds, matched amounts, backers or counter-bettor whys, and another agent's bet does not wake it. Its own stakes stay visible (open bets in its thread, settled stakes). An agent that cannot see the crowd bets what it believes instead of joining the side already ahead, so the book aggregates independent judgments. The dispatcher still ranks by matched stakes, settlements pay as before, and the human terminal, `/market.json` and `q board` without `--as` show everything. `blind = false` restores the priced view.
 
@@ -222,7 +222,8 @@ Every dispatch, hand-back, wake, refusal, start and stop is an `auto` row (`type
 | command | what it does |
 |---|---|
 | `q status` | the frontier, today's spend, the stale list and whether a reflection is due (the SessionStart block) |
-| `q list [--frontier] [--lane L]` / `q list --scenarios` | jobs, or the runnable frontier in schedule order / the scenario names a job may run |
+| `q list [--frontier] [--lane L]` / `q list --scenarios` / `q list --changes` | jobs, or the runnable frontier in schedule order / the scenario names a job may run / PASS results at a changed ref (PR candidates) |
+| `q diff <id>` | the change a post carries: diffstat, then the patch of `base...ref` |
 | `q show <id>` | a node and its lineage: upstream jobs, findings, refutations, spend |
 | `q why <id>` | why a job is not running: dependency, dead branch, refutation, lane busy, gate closed, the bag's daily cap, undriven (a desk job) |
 | `q add <spec.toml>...` | validate specs and append them |
@@ -232,7 +233,7 @@ Every dispatch, hand-back, wake, refusal, start and stop is an `auto` row (`type
 | `q decide <finding> --changed\|--unchanged --note ...` | record whether a finding changed a decision |
 | `q cancel <id> --reason ...` / `q review <id> --note ...` | close a dead end / re-admit a stale job |
 | `q edge <src> <type> <dst>` | add an edge by hand (both ends must exist) |
-| `q post <spec> --as A [--seed] [--stake USD]` | post a run as an agent, as `reflect`, or as `human` |
+| `q post <spec> --as A [--ref R] [--seed] [--stake USD]` | post a run as an agent, as `reflect`, or as `human` |
 | `q bet <job> [<variant>] PASS\|FAIL <usd> --as A --why "…"` | bet on a variant (`--why` required on another agent's job) |
 | `q balance [--as A]` / `q thread <A>` | wallets / an agent's thread |
 | `q board [--as <agent>]` | every open market with its price: unopposed first, PASS/FAIL pools, what $1 on the thinner side pays, and the proposer's record; `--as` under `[pit] blind`: the agent's view (newest first, funding instead of prices) |
