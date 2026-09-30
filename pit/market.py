@@ -111,6 +111,7 @@ def market_json(rows: list[dict], cfg: dict, now: datetime | None = None) -> dic
                 "rank": order.index(jid) if jid in order else None, "added": j["added"], "age_s": _age(born.get(jid), now),
                 "question": s["question"], "if_pass": s.get("if_pass", ""), "if_fail": s.get("if_fail", ""),
                 "read": specmod.is_read(s), "then": s.get("then", ""),
+                "ref": s.get("ref"), "ref_name": s.get("ref_name"), "has_change": specmod.carries_change(s),
                 "bets": [{"i": i, "ts": r["ts"], "agent": r["agent"], "variant": r["variant"], "side": r["side"], "usd": r["usd"], "tags": r.get("tags", [])}
                          for i, r in enumerate(rows) if r["t"] == "bet" and r["job"] == jid]}
     markets = [market(j) for j, v in st.jobs.items() if v["state"] in ("queued", "running")]
@@ -163,6 +164,7 @@ def market_json(rows: list[dict], cfg: dict, now: datetime | None = None) -> dic
             j = st.jobs[jid]
             res = j["result"]
             nodes.append({"id": jid, "state": j["state"], "verdict": res["verdict"] if res else None, "usd": (res or {}).get("cost", {}).get("usd", 0),
+                          "ref": j["spec"].get("ref"), "ref_name": j["spec"].get("ref_name"), "has_change": specmod.carries_change(j["spec"]),
                           "budget": j["spec"]["budget_usd"], "question": j["spec"]["question"], "by": book.proposers.get(jid),
                           "findings": [{"id": f, "kind": x["kind"], "status": x["status"], "text": x["text"]} for f, x in st.findings.items() if x["from"] == jid]})
         threads[a] = {"nodes": nodes, "open_bets": [{"job": b["job"], "variant": b["variant"], "side": b["side"], "usd": b["usd"], "agent": b["agent"],

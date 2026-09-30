@@ -30,6 +30,10 @@ usd_per_h = 14
 slots = 1                       # GPU-exclusive
 max_usd_per_value = 25          # cheap lane: q add refuses budget_usd > value x this
 gate = "true"                   # a shell command; exit 0 = the lane is free
+# repo = "~/src/project"      # local lane: fresh detached worktree per run, cwd at the tree
+# base = "main"               # default HEAD; a spec's ref wins; no ref = baseline run
+# deny_paths = ["bench/driver/**", "bench/common/**", "!bench/common/skills/**"]  # ordered globs, ! = exception
+# {tree} in runner or run is shell-quoted; PIT_TREE / PIT_REF name the tree and commit; cleanup after every run
 # device = "gpu0"              # lanes that share a device declare it; they never run together (one job on the device at a time)
 # A spec with `scenario = "<name>"` and no `run` gets its driver from the lane: {scenario} {model} {funded_s} are filled in,
 # and `preflight` (optional) must exit 0 before the job is dispatched; it may also prepare the box (pull an image, warm a
@@ -55,12 +59,12 @@ usd_per_h = 100                 # a 17-min rehearsal = $28
 slots = 1
 gate = "true"
 # A lane with `url` runs its jobs on a runner service on that box (`q runner`, docs/runner.md) instead of forking them
-# here. With `repo`, the runner keeps a checkout of it, moves it to the spec's `ref` (else this lane's `ref`, else HEAD)
+# here. With `repo`, the runner keeps a checkout of it, moves it to the spec's `ref` (else this lane's `base`, else HEAD)
 # and runs the job's command there; without, it runs the command in its own working directory. The runner kills the run
 # when the funding runs out and reports the whole request's wall. Point the gate at its health check.
 # url = "http://ci-box:8791"
 # repo = "https://example.com/you/project.git"
-# ref = "main"
+# base = "main"
 # gate = "curl -sf -m 3 http://ci-box:8791/health"
 
 # A lane for reads (kind = "read": a funded run with no market; it buys framing, not a verdict). Uncomment to use; it is
@@ -78,7 +82,8 @@ gate = "true"
 # The scenario registry: `q list --scenarios` prints the entries of this directory (relative to the state root; one file
 # or directory per scenario, named by its stem), and `q add` refuses a scenario not in it. No directory = any name.
 # scenario_cmd, when set, replaces the directory: a shell command run in the state root whose last stdout line is a JSON
-# list of scenario names (anything printed before it, such as warnings, is ignored).
+# list of scenario names (anything printed before it, such as warnings, is ignored). At post time on local repo lanes,
+# it runs inside the proposed tree with PIT_TREE / PIT_REF and {tree}; otherwise it runs in the state root.
 # drivers, when set, turns on the verdict-line rule: a hand-written `run` must print `pit: verdict=...` itself (contain
 # `verdict=`) or start with one of these commands, which print the report line for it.
 [bench]
@@ -109,6 +114,10 @@ market_wake_floor_s = 30        # a new market by another agent wakes everyone e
 any_workers = 2                 # lane `any` runs this many jobs at once
 permission_mode = ""            # claude -p --permission-mode; "" = the repo's, then the user's Claude Code defaultMode
 allowed_tools = []              # e.g. ["Bash(q *)", "Read", "Grep", "Edit"] -> --allowedTools; pair with permission_mode = "acceptEdits"
+# workspace = "~/src/agent-trees/{agent}"    # a wallet's tree, shared by its successive turns
+# workspace_init = "git -C ~/src/project worktree add -b work/{agent} {path} main"  # only when missing
+# Init receives shell-quoted {agent} and {path}; both runtimes get the tree via --add-dir.
+# Permit Git status, diff, log, add, commit, switch/checkout, rev-parse, worktree list, stash and restore in allowed_tools.
 add_dirs = []                   # directories a desk job may touch (each -> --add-dir), e.g. ["~/src/my-project"]
 heartbeat_minutes = 20          # an idle, funded agent asleep until-event is woken after this long without acting (reason `heartbeat`)
 heartbeat_min_usd = 1.0         # ...if its balance is at least this (the cheapest lane's minimum post)

@@ -1,10 +1,13 @@
 """Job spec: one TOML file per job. Parse, validate, render templated inputs."""
 import json
+import os
 import re
 import shlex
 import subprocess
 import tomllib
 from pathlib import Path
+
+from . import trees
 
 ID_RE = re.compile(r"^[A-Za-z0-9_.:\-]+$")
 TEMPLATE = re.compile(r"\{\{\s*(.*?)\s*\}\}")
@@ -58,19 +61,22 @@ def refs(value):
             yield from refs(v)
 
 
-def scenarios(root, cfg: dict) -> list[str] | None:
+def scenarios(root, cfg: dict, tree=None, ref: str = "", ref_name: str = "") -> list[str] | None:
     """The scenario names a job may run. `[bench] scenario_cmd`, when set, is a shell command run in the state root whose
     last stdout line is a JSON list of names (earlier lines, e.g. warnings, are ignored). Otherwise the entries of
     `[bench] scenario_dir` (relative to the state root, default `scenarios/`), one file or directory per scenario, named
-    by its stem. None = no registry: accept anything."""
+    by its stem. With tree, query that proposed checkout instead, with PIT_TREE / PIT_REF.
+    None = no registry: accept anything."""
     b = cfg.get("bench", {})
     if b.get("scenario_cmd"):
-        p = subprocess.run(["sh", "-c", b["scenario_cmd"]], cwd=root, capture_output=True, text=True, timeout=60)
+        cmd = trees.command(b["scenario_cmd"], tree) if tree else b["scenario_cmd"]
+        p = subprocess.run(["sh", "-c", cmd], cwd=tree or root, capture_output=True, text=True, timeout=60,
+                           env={**os.environ, **({**trees.environment(tree, ref), "PIT_REF_NAME": ref_name} if tree else {})})
         lines = p.stdout.strip().splitlines()
         if p.returncode or not lines:
             raise SystemExit(f"[bench] scenario_cmd exited {p.returncode} with no list: {p.stderr.strip()[-200:]}")
         return sorted(json.loads(lines[-1]))
-    d = Path(root) / Path(b.get("scenario_dir", "scenarios")).expanduser()
+    d = Path(tree or root) / Path(b.get("scenario_dir", "scenarios")).expanduser()
     if not d.is_dir():
         return None
     return sorted({p.stem for p in d.iterdir() if not p.name.startswith(".")})
@@ -82,8 +88,38 @@ def synth(spec: dict, cfg: dict) -> tuple[str, str | None] | None:
     l = cfg["lanes"].get(spec.get("lane"), {})
     if spec.get("run") or not spec.get("scenario") or "runner" not in l:
         return None
-    f = dict(scenario=shlex.quote(spec["scenario"]), model=shlex.quote(l.get("model", "")), funded_s=funded_seconds(spec, cfg["lanes"]))
+    f = dict(scenario=shlex.quote(spec["scenario"]), model=shlex.quote(l.get("model", "")),
+             funded_s=funded_seconds(spec, cfg["lanes"]), tree="{tree}")
     return l["runner"].format(**f), (l["preflight"].format(**f) if l.get("preflight") else None)
+
+
+def pin_ref(spec: dict, lanes: dict) -> dict:
+    """Resolve a posted ref before any ledger writes; keep its spelling and its comparison base."""
+    if "ref" not in spec:
+        return {k: v for k, v in spec.items() if k not in ("ref_name", "base_ref")}
+    ref, lane = spec["ref"], lanes.get(spec.get("lane"), {})
+    if not isinstance(ref, str) or not ref.strip():
+        raise SpecError("ref must be a nonempty string")
+    if not lane.get("repo"):
+        raise SpecError("ref needs a lane with repo")
+    try:
+        with trees.repository(lane["repo"]) as repo:
+            sha = trees.resolve(repo, ref)
+            base = trees.resolve(repo, lane.get("base", "HEAD"))
+            path = trees.denied(repo, base, sha, lane.get("deny_paths", []))
+    except trees.GitError as e:
+        raise SpecError(f"ref {ref!r}: {e}") from e
+    if path:
+        raise SpecError(f"ref {ref!r} changes denied path: {path}")
+    return {**spec, "ref": sha, "ref_name": ref, "base_ref": base}
+
+
+def carries_change(spec: dict) -> bool:
+    return bool(spec.get("ref") and spec["ref"] != spec.get("base_ref"))
+
+
+def change_mark(spec: dict) -> str:
+    return " ◇" if carries_change(spec) else ""
 
 
 def funded_seconds(spec: dict, lanes: dict) -> int:
@@ -109,6 +145,11 @@ def validate(spec: dict, lanes: dict, known: list[str] | None = None, drivers: l
     if not is_read(spec) and spec.get("if_pass") and str(spec["if_pass"]).strip() == str(spec.get("if_fail", "")).strip():
         errs.append("if_pass == if_fail: the run cannot change a decision")
     lane = spec.get("lane")
+    if "ref" in spec:
+        if not isinstance(spec["ref"], str) or not spec["ref"].strip():
+            errs.append("ref must be a nonempty string")
+        if not lanes.get(lane, {}).get("repo"):
+            errs.append("ref needs a lane with repo")
     if lane != "any" and lane not in lanes:
         errs.append(f"unknown lane {lane!r} (have: {', '.join([*lanes, 'any'])})")
     if "budget_s" in spec:

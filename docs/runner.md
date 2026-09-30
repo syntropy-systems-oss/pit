@@ -31,7 +31,7 @@ usd_per_h = 100
 url = "http://ci-box:8791"
 gate = "curl -sf -m 3 http://ci-box:8791/health"      # 200 while a slot is free
 repo = "https://example.com/you/project.git"          # optional: run jobs at a git ref of this repo
-ref = "main"                                          # the default ref; a spec's own `ref` wins
+base = "main"                                         # the default ref; a spec's own `ref` wins
 ```
 
 ## The protocol
@@ -44,6 +44,7 @@ ref = "main"                                          # the default ref; a spec'
 | `command` | a shell command, run with `sh -c` in the runner's own working directory for that slot; or instead |
 | `repo`, `ref`, `script` | a repository, a ref (a branch, a tag, a sha, or `refs/pull/N/head`) and a shell command to run in a checkout of it at that ref |
 | `funded_s` | seconds the funding buys: the run is killed at this many seconds after the request arrived |
+| `base` | comparison ref for the diffstat (defaults to `ref` for direct protocol callers) |
 | `env` | extra environment: the dispatcher sends `PIT_JOB`, `PIT_LANE`, `PIT_FUNDED_S` |
 
 The reply is `text/plain`, streamed line by line as the command prints (stdout and stderr merged). The dispatcher reads
@@ -74,3 +75,5 @@ script knows what its build depends on. The pattern that keeps it cheap:
 
 A first build on a new box is slow and the ledger shows it: the wall is charged on the lane. The next run on the same
 sources reuses it.
+
+Repo runs also substitute `{tree}` in the script, set `PIT_TREE` and `PIT_REF`, and return the tested commit, comparison commit and diffstat as `tree={...}` on the final report line. The dispatcher records these on the result. `base` replaces the old lane-level `ref` default; spec and protocol `ref` still select the proposed commit.

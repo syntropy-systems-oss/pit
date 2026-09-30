@@ -11,6 +11,7 @@ All state is the ledger plus the child processes of this loop, so a restart resu
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -18,11 +19,14 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import bag, lanes, ledger as L, book as B, reflect, spec as specmod
+from . import bag, lanes, ledger as L, book as B, reflect, spec as specmod, trees
 
 REPO = Path(__file__).resolve().parent.parent
 FUNDING = ("Funding: `q list --scenarios` shows what a run typically costs per lane; overfund, the unspent part is refunded; "
            "a kill refunds nothing.")
+CHANGE = ("Make a change in your working tree, commit it, and post the prediction with `q post <spec> --ref <ref> --as <you>`; "
+          "fund the run with budget_usd. A PASS with a change is a PR candidate for a human; nothing auto-merges. "
+          "The proof is the run, not your description. Bettors see the question, not the diff.")
 RULES = ("Money is a scheduling signal, not real. Never spend real money, never send messages to people, never touch "
          "production; bench runs use mocks only; nothing over an hour.")
 CLAIM = ("Your brief is a capability or research goal to prove or refute; it is your goal. Test it where it could fail, "
@@ -653,6 +657,7 @@ class Autopilot:
             f"q thread {agent}:\n" + B.thread(self.lg.rows(), agent, hide),
             "\n".join(t for _, _, t in items),
             f"Your claim ({agent}'s brief): {B.Book(rows).agents[agent]['brief']}", CLAIM, digest,
+            CHANGE,
             "" if market else new,
             B.settled_stakes(rows, agent, self.since(agent, rows)), B.reflection_since(rows, self.since(agent, rows)), BOARD if hide else BOARD + " " + SEEN,
             "q board:\n" + B.board(rows, self.cfg, hide=hide),
@@ -711,12 +716,36 @@ class Autopilot:
         rt, model = self.model(row)
         return f"{rt}/{model or 'default'}"
 
-    def argv(self, exe: str, rt: str, model: str | None) -> list[str]:
+    def workspace(self, agent: str) -> Path | None:
+        template = self.c.get("workspace")
+        if not template:
+            return None
+        path = Path(template.format(agent=agent)).expanduser()
+        path = (self.root / path).resolve()
+        if not path.exists() and not self.dry:
+            init = self.c.get("workspace_init")
+            if not init:
+                raise SystemExit(f"workspace {path} missing: set [autopilot] workspace_init")
+            p = subprocess.run(["sh", "-c", init.format(agent=shlex.quote(agent), path=shlex.quote(str(path)))],
+                               cwd=self.root, env=self.env(), capture_output=True, text=True)
+            if p.returncode or not path.is_dir():
+                raise SystemExit(f"workspace_init for {agent} failed: {p.stderr.strip() or p.stdout.strip()}")
+        return path
+
+    def argv(self, exe: str, rt: str, model: str | None, workspace: Path | None = None) -> list[str]:
         """The command a turn runs; the prompt goes on stdin for both runtimes. Extra args: runtimes.<rt>.args."""
-        dirs = [x for d in self.c.get("add_dirs", []) for x in ("--add-dir", os.path.expanduser(d))]   # repos a desk job may touch
+        paths = [*map(os.path.expanduser, self.c.get("add_dirs", [])), *([str(workspace)] if workspace else [])]
+        dirs = [x for d in dict.fromkeys(paths) for x in ("--add-dir", d)]
         if rt == "codex":      # its workspace-write sandbox keeps .git read-only: q commits the ledger, so .git dirs are added
-            gits = [x for d in (self.root, *map(os.path.expanduser, self.c.get("add_dirs", [])))
-                    if (Path(d) / ".git").is_dir() for x in ("--add-dir", str(Path(d) / ".git"))]
+            git_dirs = []
+            for d in (self.root, *paths):
+                if (Path(d) / ".git").is_dir():
+                    git_dirs.append(str(Path(d) / ".git"))
+                elif (Path(d) / ".git").is_file():
+                    # Linked worktrees keep their index and common objects outside the tree.
+                    for option in ("--git-dir", "--git-common-dir"):
+                        git_dirs.append(trees.git(d, "rev-parse", "--path-format=absolute", option).strip())
+            gits = [x for d in dict.fromkeys(git_dirs) for x in ("--add-dir", d)]
             args = self.c["runtimes"].get("codex", {}).get("args", CODEX_ARGS)
             return [exe, "exec", *(["-m", model] if model else []), *args, *dirs, *gits, "-C", str(self.root), "-"]
         cmd = [exe, "-p", "--model", model, "--permission-mode", self.permission_mode(), "--output-format", "text"]
@@ -729,6 +758,11 @@ class Autopilot:
         rt, model = self.model(row)
         if rt not in B.RUNTIMES:
             raise SystemExit(f"unknown runtime {rt}")
+        agent = B.Book(self.lg.rows()).wallet(sub)
+        workspace = self.workspace(agent)
+        if workspace:
+            branch = trees.git(workspace, "rev-parse", "--abbrev-ref", "HEAD").strip() if workspace.exists() else "(initialized on first turn)"
+            prompt += f"\n\nYour working tree: {workspace}, branch {branch}; commit there, then post with --ref"
         exe = shutil.which(rt)
         if self.dry or not exe:
             self.echo(f"--- prompt for {sub} ({rt}/{model or 'default'}){'' if exe else f': {rt} is not on PATH'} ---\n"
@@ -737,7 +771,7 @@ class Autopilot:
         p = self.log(f"{sub}.prompt")
         p.write_text(prompt)
         with p.open() as stdin, self.log(f"{sub}.log").open("w") as out:
-            return subprocess.Popen(self.argv(exe, rt, model), stdin=stdin, stdout=out, stderr=subprocess.STDOUT,
+            return subprocess.Popen(self.argv(exe, rt, model, workspace), stdin=stdin, stdout=out, stderr=subprocess.STDOUT,
                                     cwd=self.root, env=self.env(), start_new_session=True)
 
     def proposed(self) -> set[str]:

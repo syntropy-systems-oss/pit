@@ -7,7 +7,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import NAME, __version__, bag, lanes, ledger as L, book as B, spec as specmod
+from . import NAME, __version__, bag, lanes, ledger as L, book as B, spec as specmod, trees
 
 
 REPO = Path(__file__).resolve().parent.parent
@@ -47,9 +47,22 @@ def cmd_add(a):
 def add_specs(root, lg, cfg, loaded):
     st = L.fold(lg.rows())
     # Custom commands and desk jobs do not use the bench scenario registry.
-    known = specmod.scenarios(root, cfg) if any(s.get("scenario") for _, s in loaded) else None
     specs, bad = [], []
     for path, s in loaded:        # validate all first: a batch goes in whole or not at all
+        try:
+            s = specmod.pin_ref(s, cfg["lanes"])
+            known = None
+            if s.get("scenario") and not s.get("run"):
+                lane = cfg["lanes"].get(s.get("lane"), {})
+                if lane.get("repo") and not lane.get("url"):
+                    sha = s.get("ref") or trees.resolve(lane["repo"], lane.get("base", "HEAD"))
+                    with trees.worktree(lane["repo"], sha) as tree:
+                        known = specmod.scenarios(root, cfg, tree, sha, s.get("ref_name", ""))
+                else:
+                    known = specmod.scenarios(root, cfg)
+        except (specmod.SpecError, trees.GitError) as e:
+            bad.append(f"refused {path}: {e}")
+            continue
         errs = specmod.validate(s, cfg["lanes"], known, cfg.get("bench", {}).get("drivers"))
         if s.get("id") in st.jobs or s.get("id") in [x["id"] for _, x in specs]:
             errs.append(f"{s['id']} is already in the ledger (cancel or supersede it)")
@@ -69,6 +82,8 @@ def cmd_post(a):
     """q add + the proposer pays the budget + an automatic stake on PASS, per variant."""
     root, lg, cfg = ctx()
     book, s = B.Book(lg.rows()), specmod.load(a.spec)
+    if getattr(a, "ref", None) is not None:
+        s["ref"] = a.ref
     mode = B.funding(book, s, a.agent, a.seed)
     err = B.check_post(book, cfg, s, a.agent, lg.rows()) if mode == "agent" else None
     if err:
@@ -185,7 +200,7 @@ def row_line(st, jid, cfg):
     j, s = st.jobs[jid], st.jobs[jid]["spec"]
     flag = " STALE" if jid in st.stale else ""
     v = f" {j['result']['verdict']}" if j["result"] else ""
-    return f"{jid:<24} {s['lane']:<11} {j['state'] + v + flag:<18} value {s['value']:<3} " \
+    return f"{jid + specmod.change_mark(s):<24} {s['lane']:<11} {j['state'] + v + flag:<18} value {s['value']:<3} " \
            f"funded ${s['budget_usd']:<6} ({specmod.funded_seconds(s, cfg['lanes']):>4}s) {s['question'][:70]}"
 
 
@@ -202,6 +217,12 @@ def cmd_list(a):
             print(n + (" · " + " · ".join(seen) if seen else ""))
         return
     st = L.fold(lg.rows())
+    if getattr(a, "changes", False):
+        for r in change_results(lg.rows(), a.lane):
+            s = st.jobs[r["job"]]["spec"]
+            print(f"{r['job']} PASS [{r['cost']['lane']}] {s.get('ref_name', r['ref'])} ({r['ref']}) · {s['question']}")
+            print(r["change"] or "  (no file changes)")
+        return
     ids, fallback = B.order(st, lg.rows(), cfg) if a.frontier else (list(st.jobs), set())
     ids = [i for i in ids if not a.lane or st.jobs[i]["spec"]["lane"] in (a.lane, "any")]
     if a.frontier:
@@ -209,6 +230,19 @@ def cmd_list(a):
                                              "in the default order (priority, critical path, value per $):"))
     for jid in ids:
         print(row_line(st, jid, cfg) + (" [fallback]" if jid in fallback else ""))
+        r = st.jobs[jid]["result"] or {}
+        if r.get("ref"):
+            print(f"  ref {r['ref']}")
+            if r.get("change"):
+                print(r["change"])
+
+
+def change_results(rows, lane=None):
+    """Latest PASS results at a commit different from their recorded base, newest first."""
+    latest = {r["job"]: r for r in rows if r["t"] == "result"}
+    return [r for r in reversed(rows) if r["t"] == "result" and latest[r["job"]] is r
+            and r["verdict"] == "pass" and r.get("ref") and r.get("base_ref") and r["ref"] != r["base_ref"]
+            and (not lane or r["cost"]["lane"] == lane)]
 
 
 def cmd_why(a):
@@ -352,7 +386,8 @@ def cmd_result(a):
         a.lane = a.lane or c.get("lane")
     if a.arm:     # per-variant verdicts settle each arm's market
         rep["result"] = {"verdicts": dict(x.split("=", 1) for x in a.arm)}
-    row = record(lg, cfg, s, a.lane or s["lane"], {"report": rep, "wall_s": a.wall_s, "rc": 0}, agent=actor(a, lg).get("agent"))
+    proof = {k: prev[k] for k in ("ref", "base_ref", "change", "log") if prev and k in prev}
+    row = record(lg, cfg, s, a.lane or s["lane"], {"report": rep, "wall_s": a.wall_s, "rc": 0, **proof}, agent=actor(a, lg).get("agent"))
     sync(root, lg, f"result {a.id} {a.verdict}")
     print(f"{a.id}: {a.verdict} ${row['cost']['usd']:.2f}" + (f" (by {row['agent']})" if row.get("agent") else ""))
 
@@ -501,6 +536,7 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("add", help="validate specs and add them"); p.add_argument("spec", nargs="+"); p.set_defaults(f=cmd_add)
     p = sub.add_parser("list"); p.add_argument("--lane"); p.add_argument("--frontier", action="store_true")
+    p.add_argument("--changes", action="store_true", help="PASS results at changed refs, newest first, with diffstats: PR candidates")
     p.add_argument("--scenarios", action="store_true", help="the scenario names a job may run, one per line, with what a run typically costs per lane"); p.set_defaults(f=cmd_list)
     for name in ("why-blocked", "why"):
         p = sub.add_parser(name); p.add_argument("id"); p.set_defaults(f=cmd_why)
@@ -528,6 +564,7 @@ def main(argv=None):
     p.add_argument("--as", dest="agent", help="the agent claiming it"); p.set_defaults(f=cmd_run)
     p = sub.add_parser("post", help="add a spec as an agent: it pays the budget and stakes PASS")
     p.add_argument("spec"); p.add_argument("--as", dest="agent", required=True, help="an agent, `reflect` or `human`")
+    p.add_argument("--ref", help="commit or branch to test in the lane's repo (pinned to a commit when posted)")
     p.add_argument("--seed", action="store_true", help="a root the house stakes from its vig pool")
     p.add_argument("--stake", type=float, default=0.0, help="--as human: the stake per variant on PASS")
     p.set_defaults(f=cmd_post)

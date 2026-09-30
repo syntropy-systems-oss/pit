@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Runs at a ref: local lanes with `repo` and `base` (default `HEAD`) execute in disposable detached worktrees, with cwd at the tree, `{tree}`, `PIT_TREE` and `PIT_REF`. Cleanup covers timeout, stop rules and termination. Remote runs share the tree environment and ref metadata; their default is now `base` too.
+- `q post --ref` pins a commit and its comparison base, retaining `ref_name`; bad refs and `deny_paths` changes are refused. Ordered `!glob` exceptions allow editable subtrees. Scenario validation reads the proposed tree so a change can register a new case.
+- Results retain the tested ref and diffstat. `q list --changes` lists PASS PR candidates, newest first; nothing auto-merges. Blind views mark changes without showing diffs, and the terminal's change glyph hovers to the ref name.
+- Autopilot `workspace` / `workspace_init` creates a tree per wallet before its first turn, names the tree and branch in the prompt and adds the paths to both runtimes. The prompt describes making a change, committing and betting on its run.
+
 - `q run` refuses a lane whose slots are full or whose device is busy (`lane X: busy (...)` / `lane X: device D busy (...)`): the same guard autopilot uses, so a run started by hand or by an agent cannot bypass it. Lanes are tried least-recently-claimed first, so a device's lanes take turns.
 - Devices: a lane may declare `device = "<name>"`; lanes of one device never run together. Autopilot skips a lane while a job runs on another lane of its device, and dispatches on at most one lane of a device per tick (`lane X: device <name> busy (Y running on Z)`). `/market.json` lanes carry `device`; the terminal shows it and greys a lane whose device is busy elsewhere.
 - Reads: `kind = "read"` on a spec is a funded run with no market (no stake, seed, bets or settle). It books verdict `read` (or `invalid`), carries `result={..., "readout": ...}`, needs `then` instead of `if_pass`/`if_fail`, is left out of every record, and shows in the terminal with a `read` badge and no odds. `lanes.example.toml` has a commented `lens` lane for them.

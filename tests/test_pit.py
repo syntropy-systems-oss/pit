@@ -525,10 +525,6 @@ class View(unittest.TestCase):
             srv.server_close()
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class OverBudget(unittest.TestCase):
     def test_timeout_is_a_fail_with_partial_trace_kept(self):
         from pit.run import verdict_of
@@ -1109,3 +1105,215 @@ class TypicalCost(unittest.TestCase):
         self.assertIn("typical here $0.80 (200s)", board)
         self.assertNotIn("typical here", next(l for l in board.splitlines() if l.startswith("s2open ")))    # all killed: nothing to show
         self.assertIn("funded $1.4 (360s) · typical here $0.80 (200s)", B.new_markets(rows, self.cfg, "someone", 0))
+
+
+class RefRuns(unittest.TestCase):
+    def setUp(self):
+        from pit import cli, trees
+        self.cli, self.trees = cli, trees
+        self.tmp = tempfile.TemporaryDirectory(prefix='pit-test-')
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.repo = self.root / 'source with spaces'
+        self.repo.mkdir()
+        self.git('init', '-q', '-b', 'main')
+        self.git('config', 'user.name', 'Test')
+        self.git('config', 'user.email', 'test@example.com')
+        (self.repo / 'value.txt').write_text('before\n')
+        (self.repo / 'harness').mkdir()
+        (self.repo / 'harness/grade.py').write_text('protected\n')
+        self.git('add', '.')
+        self.git('commit', '-qm', 'base')
+        self.base = self.git('rev-parse', 'HEAD').strip()
+        self.git('switch', '-qc', 'feature')
+        (self.repo / 'value.txt').write_text('after\n')
+        (self.repo / 'scenarios').mkdir()
+        (self.repo / 'scenarios/new.txt').write_text('new case\n')
+        self.git('add', '.')
+        self.git('commit', '-qm', 'change')
+        self.sha = self.git('rev-parse', 'HEAD').strip()
+        self.lane = {'repo': str(self.repo), 'base': 'main', 'deny_paths': ['harness/**', '!harness/skills/**'],
+                     'usd_per_h': 14, 'gate': 'true',
+                     'runner': 'git -C {tree} rev-parse HEAD; pwd; echo "$PIT_TREE $PIT_REF"; cat value.txt; echo "pit: verdict=pass"'}
+        self.cfg = {'lanes': {'gpu-small': self.lane}, 'pit': {'enabled': True}}
+        self.lg = L.Ledger(self.root / 'ledger', 't')
+
+    def git(self, *args):
+        return self.trees.git(self.repo, *args)
+
+    def post(self, jid='change', ref='feature', **kw):
+        s = job(jid, **{'scenario': 'new', **kw})
+        path = self.root / f'{jid}.toml'
+        path.write_text('\n'.join(f'{k} = {json.dumps(v)}' for k, v in s.items()))
+        out = io.StringIO()
+        with mock.patch.object(self.cli, 'ctx', return_value=(self.root, self.lg, self.cfg)), \
+             mock.patch.object(self.cli, 'sync'), contextlib.redirect_stdout(out):
+            self.cli.main(['post', str(path), '--as', 'human', *([f'--ref={ref}'] if ref is not None else [])])
+        return L.fold(self.lg.rows()).jobs[jid]['spec']
+
+    def run_job(self, jid='change'):
+        return runmod.run_job(self.root, self.lg, self.cfg, jid, echo=lambda *_: None)
+
+    def listing(self, *args):
+        out = io.StringIO()
+        with mock.patch.object(self.cli, 'ctx', return_value=(self.root, self.lg, self.cfg)), contextlib.redirect_stdout(out):
+            self.cli.main(['list', *args])
+        return out.getvalue()
+
+    def test_post_pins_sha_and_name_and_runner_runs_at_ref_then_removes_tree(self):
+        s = self.post()
+        self.assertEqual((s['ref'], s['ref_name'], s['base_ref']), (self.sha, 'feature', self.base))
+        # Advancing the branch after posting cannot change the run or its diffstat.
+        (self.repo / 'value.txt').write_text('later\n')
+        self.git('commit', '-qam', 'later')
+        r = self.run_job()
+        log = (self.root / r['log']).read_text().splitlines()
+        self.assertEqual(log[0], self.sha)
+        self.assertEqual(log[2], f'{log[1]} {self.sha}')
+        self.assertEqual(log[3], 'after')
+        self.assertFalse(Path(log[1]).exists())
+        self.assertEqual(self.git('worktree', 'list', '--porcelain').count('worktree '), 1)
+        self.assertEqual((r['verdict'], r['ref'], r['base_ref']), ('pass', self.sha, self.base))
+        self.assertIn('value.txt', r['change'])
+        self.assertIn('files changed', r['change'])
+        self.assertIn(self.sha, self.listing())
+
+    def test_no_ref_runs_base_and_default_base_is_head(self):
+        self.post(ref=None, scenario='', run='git rev-parse HEAD; echo "pit: verdict=pass"')
+        r = self.run_job()
+        self.assertEqual((r['ref'], r['change']), (self.base, ''))
+        self.assertEqual(self.listing('--changes'), '')
+        del self.lane['base']
+        self.post('head', ref=None, scenario='', run='echo "pit: verdict=pass"')
+        self.assertEqual(self.run_job('head')['ref'], self.sha)
+
+    def test_freeform_tree_substitution_cwd_env_and_tilde_repo(self):
+        with mock.patch.dict(os.environ, {'HOME': str(self.root)}):
+            self.lane['repo'] = '~/source with spaces'
+            self.post(scenario='', run='test "$PWD" = "$PIT_TREE" && git -C {tree} rev-parse HEAD; echo "pit: verdict=pass"', cwd='/does-not-exist')
+            r = self.run_job()
+        self.assertEqual((self.root / r['log']).read_text().splitlines()[0], self.sha)
+
+    def test_bad_refs_and_refs_without_repo_leave_no_rows(self):
+        for ref in ('no-such-ref', '--help', 'HEAD:value.txt'):
+            with self.assertRaisesRegex(SystemExit, 'refused'):
+                self.post(ref=ref)
+        self.assertEqual(self.lg.rows(), [])
+        del self.lane['repo']
+        with self.assertRaisesRegex(SystemExit, 'ref needs a lane with repo'):
+            self.post()
+        self.assertEqual(self.lg.rows(), [])
+        self.assertIn('ref must be a nonempty string', specmod.validate(job('x', ref=42), self.cfg['lanes']))
+
+    def test_deny_paths_checks_renames_and_allows_exceptions(self):
+        self.git('mv', 'harness/grade.py', 'grade.py')
+        self.git('commit', '-qm', 'move grader')
+        with self.assertRaisesRegex(SystemExit, 'denied path: harness/grade.py'):
+            self.post()
+        self.assertEqual(self.lg.rows(), [])
+        self.git('reset', '--hard', self.sha)
+        (self.repo / 'harness/skills').mkdir()
+        (self.repo / 'harness/skills/card.txt').write_text('allowed')
+        self.git('add', '.')
+        self.git('commit', '-qm', 'skill')
+        self.post()
+
+    def test_timeout_and_stop_rule_remove_tree(self):
+        for jid, command, patch in [('timeout', 'pwd; sleep 30', mock.patch.object(specmod, 'funded_seconds', return_value=0.2)),
+                                    ('stop', 'pwd; echo feedback_report; sleep 30', contextlib.nullcontext())]:
+            self.post(jid, scenario='', run=command)
+            with patch:
+                r = self.run_job(jid)
+            self.assertEqual(r['verdict'], 'fail')
+            self.assertFalse(Path((self.root / r['log']).read_text().splitlines()[0]).exists())
+        self.assertEqual(self.git('worktree', 'list', '--porcelain').count('worktree '), 1)
+
+    def test_sigterm_removes_tree_and_kills_child(self):
+        import time
+        marker = self.root / 'started'
+        code = '''import sys
+from pathlib import Path
+from pit import trees, run
+with trees.worktree(sys.argv[1], 'feature') as tree:
+    run.execute('pwd > "$MARKER"; sleep 30', 30, [], cwd=tree, env={'MARKER': sys.argv[2]})
+'''
+        p = subprocess.Popen([sys.executable, '-c', code, str(self.repo), str(marker)])
+        self.addCleanup(lambda: p.poll() is None and (p.kill(), p.wait()))
+        deadline = time.monotonic() + 5
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertTrue(marker.exists())
+        tree = Path(marker.read_text().strip())
+        p.terminate()
+        p.wait(timeout=5)
+        self.assertFalse(tree.exists())
+        self.assertEqual(self.git('worktree', 'list', '--porcelain').count('worktree '), 1)
+
+    def test_list_changes_newest_first_skips_fail_baseline_and_corrections(self):
+        for jid, ref, verdict in [('older', 'feature', 'pass'), ('base', 'main', 'pass'),
+                                  ('failed', 'feature', 'fail'), ('newer', 'feature', 'pass')]:
+            self.post(jid, ref=ref, scenario='', run=f'echo "pit: verdict={verdict}"')
+            self.run_job(jid)
+        out = self.listing('--changes')
+        self.assertLess(out.index('newer PASS'), out.index('older PASS'))
+        self.assertNotIn('failed', out)
+        self.assertNotIn('base PASS', out)
+        self.assertIn('feature', out)
+        self.assertIn('value.txt', out)
+        latest = L.fold(self.lg.rows()).jobs['newer']['result']
+        self.lg.append({**latest, 'verdict': 'fail'})
+        self.assertNotIn('newer PASS', self.listing('--changes'))
+
+    def test_blind_views_only_mark_change_market_json_has_ref_name(self):
+        self.lg.append(B.agent_row(B.Book([]), 'a', 'a brief'))
+        s = specmod.pin_ref(job('change', ref='feature', proposer='a'), self.cfg['lanes'])
+        add(self.lg, s, ts=L.now())
+        rows = self.lg.rows()
+        for out in (B.board(rows, self.cfg, hide=True), B.new_markets(rows, self.cfg, 'human', 0),
+                    B.digest(rows, [1], self.cfg), B.thread(rows, 'a', hide=True)):
+            self.assertIn('◇', out)
+            self.assertNotIn('value.txt', out)
+            self.assertNotIn('PASS $', out)
+        j = market.market_json(rows, self.cfg)['markets'][0]
+        self.assertEqual((j['ref'], j['ref_name'], j['has_change']), (self.sha, 'feature', True))
+        self.assertNotIn('change', j)
+
+    def test_registry_command_reads_posted_tree(self):
+        self.cfg['bench'] = {'scenario_cmd': 'test "$PIT_REF" = "$(git -C {tree} rev-parse HEAD)" && test -f scenarios/new.txt && echo \'["new"]\''}
+        self.post()
+        self.assertEqual(self.git('worktree', 'list', '--porcelain').count('worktree '), 1)
+
+    def test_remote_url_ref_is_also_pinned(self):
+        self.lane.update(url='http://runner', repo=self.repo.as_uri())
+        s = self.post(scenario='', run='echo "pit: verdict=pass"')
+        self.assertEqual((s['ref'], s['ref_name']), (self.sha, 'feature'))
+
+    def test_result_correction_preserves_proof_and_thread_has_diffstat(self):
+        self.lg.append(B.agent_row(B.Book([]), 'a', 'capability'))
+        s = specmod.pin_ref(job('change', proposer='a', ref='feature', run='echo "pit: verdict=fail"'), self.cfg['lanes'])
+        add(self.lg, s, ts=L.now())
+        self.run_job()
+        with mock.patch.object(self.cli, 'ctx', return_value=(self.root, self.lg, self.cfg)), \
+             mock.patch.object(self.cli, 'sync'), contextlib.redirect_stdout(io.StringIO()):
+            self.cli.main(['result', 'change', '--verdict', 'pass'])
+        self.assertIn('change PASS', self.listing('--changes'))
+        thread = B.thread(self.lg.rows(), 'a', hide=True)
+        self.assertIn('value.txt', thread)
+        self.assertIn(self.sha, thread)
+        self.assertNotIn('change', market.market_json(self.lg.rows(), self.cfg)['threads']['a']['nodes'][0])
+
+    def test_checkout_error_is_invalid_and_lane_without_repo_keeps_cwd(self):
+        self.post(scenario='', run='echo "pit: verdict=pass"')
+        with mock.patch.object(self.trees, 'worktree', side_effect=self.trees.GitError('checkout failed')):
+            r = self.run_job()
+        self.assertEqual(r['verdict'], 'invalid')
+        self.assertIn('checkout failed', r['note'])
+        del self.lane['repo']
+        self.post('old-cwd', ref=None, scenario='', run='pwd; echo "pit: verdict=pass"', cwd=str(self.repo))
+        r = self.run_job('old-cwd')
+        self.assertEqual(Path((self.root / r['log']).read_text().splitlines()[0]), self.repo.resolve())
+        self.assertNotIn('ref', r)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -28,6 +28,8 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from . import trees
+
 
 def make_handler(workdir: Path, slots: int, token: str | None):
     free = queue.Queue()
@@ -89,6 +91,7 @@ def make_handler(workdir: Path, slots: int, token: str | None):
                 self.wfile.flush()
 
             try:
+                meta = {}
                 if "command" in req:
                     cwd = workdir / f"slot-{slot}"
                     cwd.mkdir(parents=True, exist_ok=True)
@@ -99,8 +102,19 @@ def make_handler(workdir: Path, slots: int, token: str | None):
                         say(f"runner: {why}\n")
                         return say(f"pit: verdict=invalid wall_s={time.monotonic() - t0:.1f}\n")
                     cmd = req["script"]
+                    base = req.get("base", req["ref"])
+                    p = subprocess.run(["git", "-C", str(cwd), "fetch", "--force", "origin", base],
+                                       capture_output=True, text=True, timeout=max(1, deadline - time.monotonic()))
+                    if p.returncode:
+                        raise trees.GitError(p.stderr.strip())
+                    meta = trees.metadata(cwd, "HEAD", "FETCH_HEAD")
+                    env.update(trees.environment(cwd, meta["ref"]))
+                    cmd = trees.command(cmd, cwd)
                 killed = stream(cmd, cwd, {**os.environ, **env, "PIT_CACHE": str(workdir / "cache")}, deadline, say)
-                say(f"pit: {'stop=timeout ' if killed else ''}wall_s={time.monotonic() - t0:.1f}\n")
+                say(f"pit: {'stop=timeout ' if killed else ''}wall_s={time.monotonic() - t0:.1f}"
+                    + (f" tree={json.dumps(meta)}" if meta else "") + "\n")
+            except (trees.GitError, subprocess.TimeoutExpired) as e:
+                say(f"runner: {e}\npit: verdict=invalid wall_s={time.monotonic() - t0:.1f}\n")
             except (BrokenPipeError, ConnectionResetError):
                 pass                      # the client hung up (a stop rule); stream() has killed the run
 

@@ -52,3 +52,18 @@ fixtures. Keep it in the bench's repository, next to the bench, and point the la
 `run`) at it. On a lane with a runner `url` and `repo`, the adapter lives in the repository the runner checks out, so
 every ref carries the adapter that matches it. If the bench needs a build, the adapter is also where build reuse lives
 (see [runner.md](runner.md)).
+
+
+## Running a change
+
+On a local lane, `repo = "~/src/project"` and `base = "main"` mean every run gets a fresh detached worktree at the posted commit (or base when no ref is posted). `base` defaults to `HEAD`. The command runs with cwd at the tree even if the spec has `cwd`; `{tree}` in `runner` or `run` expands to its shell-quoted path. Use it unquoted in templates, or use `"$PIT_TREE"` in shell. `PIT_REF` is the resolved commit, and `PIT_REF_NAME` is the posted spelling, if any. `PIT_ROOT` still points to the state directory: an adapter kept there can be invoked as `bash "$PIT_ROOT/adapters/run.sh" {scenario}`. With no `repo`, cwd behavior is unchanged.
+
+Pit removes local trees after completion, timeout, stop rules, SIGINT, SIGTERM and SIGHUP. SIGKILL and host loss cannot run cleanup handlers. Put reusable build artifacts outside the disposable tree and key them by source fingerprints. The adapter owns preparation of ignored inputs and reports their provenance; they are not part of a commit. Never copy mutable inputs over files tracked at the proposed ref.
+
+`q post --ref <name>` (or a spec's `ref`) pins a full commit SHA, the typed `ref_name`, and `base_ref`. `deny_paths` is an ordered list of case-sensitive globs matched against repository-relative paths in `base...ref`; `*` also matches slashes, and a later `!glob` allows an exception. Renames check both names. Protect the grader and driver, while leaving the product and intended scenario files editable. A remote URL repo is mirrored temporarily to perform the same post-time checks; the remote runner must be able to fetch the pinned SHA.
+
+A configured scenario registry runs inside the proposed local tree at post time, with `PIT_TREE`, `PIT_REF` and `{tree}` available. This lets a change add a new scenario. `q list --scenarios` still queries the state root; sites can choose a baseline there when `PIT_TREE` is absent. Preflight remains a state-root check before dispatch, before the run tree exists.
+
+Results store the tested `ref`, comparison `base_ref`, and `change` diffstat. `q list --changes` is the human's PR candidate queue: latest PASS results at a ref different from base. Blind betting views carry a change mark and question, never a diff. Nothing opens or merges a PR automatically.
+
+For agent workspaces, set `[autopilot] workspace` to a path template with `{agent}` and `workspace_init` to a shell command with `{agent}` and `{path}`. These substitutions are shell-quoted, so leave them unquoted in the command. Init runs only for a missing path, before the first turn; subs reuse their wallet's tree. A failed init prevents that turn from spawning. Dry runs do not create trees. Both runtimes receive the workspace via `--add-dir`; Codex also receives its Git index and common object directories. The site must allow agents to inspect and commit their tree: Git status, diff, log, add, commit, switch/checkout, rev-parse, worktree list, stash and restore, plus its own editing and test tools.

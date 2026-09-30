@@ -765,10 +765,6 @@ class Bootstrap(unittest.TestCase):
         self.assertEqual((r["verdict"], r["agent"], r["result"]["before"]["agent"], r["result"]["after"]["agent"]), ("pass", "reflect", "b", "c"))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class FreshLedgerIncome(unittest.TestCase):
     def test_first_tick_pays_from_the_start_row(self):
         import tempfile
@@ -837,3 +833,66 @@ runtimes.codex.model = "gpt-x"
         self.assertNotIn("model", B.agent_set_row(B.Book(lg.rows()), "a", "claude"))      # a runtime switch drops the model
         with self.assertRaises(SystemExit):
             B.agent_set_row(B.Book(lg.rows()), "a", "gpt")
+
+
+class Workspaces(unittest.TestCase):
+    def setUp(self):
+        from pit import trees
+        self.trees = trees
+        self.tmp = tempfile.TemporaryDirectory(prefix='pit-workspaces-')
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.repo = self.root / 'repo'
+        self.repo.mkdir()
+        trees.git(self.repo, 'init', '-q', '-b', 'main')
+        trees.git(self.repo, 'config', 'user.name', 'Test')
+        trees.git(self.repo, 'config', 'user.email', 'test@example.com')
+        trees.git(self.repo, 'commit', '--allow-empty', '-qm', 'base')
+        self.lg = L.Ledger(self.root / 'ledger', 't')
+        self.lg.append(B.agent_row(B.Book([]), 'a', 'capability'))
+        self.lg.append(B.agent_row(B.Book(self.lg.rows()), 'a-turn', 'turn', 'a'))
+        self.cfg = {'lanes': {}, 'autopilot': {
+            'workspace': str(self.root / 'agent trees/{agent}'),
+            'workspace_init': f'git -C {self.repo} worktree add -b test/{{agent}} {{path}} main'}}
+        self.ap = A.Autopilot(self.root, self.lg, self.cfg, echo=lambda *_: None)
+
+    def test_workspace_once_per_wallet_both_runtimes_and_linked_git_dirs(self):
+        from unittest import mock
+        tree = self.ap.workspace('a')
+        (tree / 'keep.txt').write_text('edits survive turns')
+        self.assertEqual(self.ap.workspace('a'), tree)
+        self.assertTrue((tree / 'keep.txt').exists())
+        real_popen = A.subprocess.Popen
+        for rt in ('claude', 'codex'):
+            spawned = []
+            def popen(cmd, **kw):
+                if cmd[0] == f'/bin/{rt}':
+                    spawned.append(cmd)
+                    return mock.Mock()
+                return real_popen(cmd, **kw)
+            with mock.patch.object(A.shutil, 'which', return_value=f'/bin/{rt}'), mock.patch.object(A.subprocess, 'Popen', side_effect=popen):
+                self.ap.spawn('a-turn', {'runtime': rt}, A.CHANGE)
+            cmd = spawned[0]
+            self.assertIn(str(tree), cmd)
+            self.assertEqual(cmd[cmd.index(str(tree)) - 1], '--add-dir')
+            text = (self.root / 'autopilot/logs/a-turn.prompt').read_text()
+            self.assertIn(f'Your working tree: {tree}, branch test/a; commit there, then post with --ref', text)
+            self.assertIn('Bettors see the question, not the diff', text)
+            self.assertIn('PR candidate for a human', text)
+            if rt == 'codex':
+                for opt in ('--git-dir', '--git-common-dir'):
+                    self.assertIn(self.trees.git(tree, 'rev-parse', '--path-format=absolute', opt).strip(), cmd)
+        self.assertFalse((self.root / 'agent trees/a-turn').exists())
+
+    def test_init_failure_prevents_spawn_and_dry_run_creates_nothing(self):
+        self.ap.c['workspace_init'] = 'exit 4'
+        with self.assertRaisesRegex(SystemExit, 'workspace_init for a failed'):
+            self.ap.workspace('a')
+        dry = A.Autopilot(self.root, self.lg, self.cfg, dry=True, echo=lambda *_: None)
+        dry.spawn('a-turn', {'runtime': 'claude'}, 'prompt')
+        self.assertFalse((self.root / 'agent trees').exists())
+        self.assertFalse((self.root / 'autopilot').exists())
+
+
+if __name__ == "__main__":
+    unittest.main()

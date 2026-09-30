@@ -75,5 +75,42 @@ class Runner(unittest.TestCase):
         th.join()
 
 
+class RefProtocol(unittest.TestCase):
+    """Exercise the runner's repo protocol without a listening socket."""
+    def test_script_tree_env_and_metadata_reach_the_dispatcher_parser(self):
+        import io
+        from pit import trees
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / 'source'
+            repo.mkdir()
+            trees.git(repo, 'init', '-q', '-b', 'main')
+            trees.git(repo, 'config', 'user.name', 'Test')
+            trees.git(repo, 'config', 'user.email', 'test@example.com')
+            (repo / 'value=result=').write_text('before')
+            trees.git(repo, 'add', '.')
+            trees.git(repo, 'commit', '-qm', 'base')
+            base = trees.resolve(repo, 'HEAD')
+            trees.git(repo, 'switch', '-qc', 'feature')
+            (repo / 'value=result=').write_text('after')
+            trees.git(repo, 'commit', '-qam', 'change')
+            sha = trees.resolve(repo, 'HEAD')
+            handler = R.make_handler(root / 'runner', 1, None)
+            h = object.__new__(handler)
+            h.send_response = h.send_header = h.end_headers = lambda *a: None
+            h.wfile = io.BytesIO()
+            h.run({'repo': str(repo), 'ref': sha, 'base': base,
+                   'script': 'git -C {tree} rev-parse HEAD; echo "$PIT_TREE $PIT_REF"; echo "pit: verdict=pass"'},
+                  10, {}, 0)
+            lines = h.wfile.getvalue().decode().splitlines()
+            self.assertEqual(lines[0], sha)
+            self.assertTrue(lines[1].endswith(' ' + sha))
+            report = runmod.parse_line(lines[-1])
+            self.assertEqual(report['tree']['ref'], sha)
+            self.assertEqual(report['tree']['base_ref'], base)
+            self.assertIn('value', report['tree']['change'])
+            self.assertIn('1 file changed', report['tree']['change'])
+
+
 if __name__ == "__main__":
     unittest.main()

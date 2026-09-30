@@ -19,7 +19,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import lanes, ledger as L, book as B, spec as specmod
+from . import lanes, ledger as L, book as B, spec as specmod, trees
 
 TAIL_LINES, TAIL_BYTES = 40, 4096      # a stopped run's output tail on its result row
 LINE = re.compile(r"^pit:\s+(.*)$")
@@ -33,17 +33,26 @@ def parse_line(line: str) -> dict | None:
     m = LINE.match(line.strip())
     if not m:
         return None
-    body, _, result = m[1].partition("result=")
+    body = m[1].strip()
     out = {}
-    if "meters=" in body:
-        pre, _, rest = body.partition("meters=")
-        out["meters"], end = json.JSONDecoder().raw_decode(rest)
-        body = pre + rest[end:]
-    out.update(kv.split("=", 1) for kv in body.split() if "=" in kv)
+    while body:
+        key = re.match(r"([^\s=]+)=", body)
+        if not key:
+            body = (body.split(maxsplit=1) + [""])[1]
+            continue
+        name, body = key[1], body[key.end():].lstrip()
+        if name == "result":        # always last; may contain strings that look like report keys
+            if body:
+                out[name] = json.loads(body)
+            break
+        if name in ("meters", "tree"):
+            out[name], end = json.JSONDecoder().raw_decode(body)
+            body = body[end:].lstrip()
+        else:
+            value, *rest = body.split(maxsplit=1) or [""]
+            out[name], body = value, rest[0] if rest else ""
     if "wall_s" in out:
         out["wall_s"] = float(out["wall_s"])
-    if result.strip():
-        out["result"] = json.loads(result)
     return out
 
 
@@ -78,6 +87,12 @@ def execute(cmd: str, timeout_s: float, fail_on: list[str], cwd=None, echo=print
         timeout = {"stop": "timeout", "stop_text": f"killed at {timeout_s:.0f}s: what the funding buys"}
         _kill(p)
         p.wait()
+    except BaseException:
+        _kill(p)
+        p.wait()
+        th.join(timeout=5)
+        p.stdout.close()
+        raise
     wall = time.monotonic() - t0     # before the join: a grandchild that outlives the kill holds the pipe open and would bill its sleep
     th.join(timeout=5)
     p.stdout.close()
@@ -173,9 +188,28 @@ def run_job(root, ledger: L.Ledger, cfg: dict, jid: str, lane: str | None = None
     echo(f"q run {jid} on {lane}: {cmd}")
     funded, l = specmod.funded_seconds(s, cfg["lanes"]), cfg["lanes"].get(lane, {})
     env = {"PIT_JOB": jid, "PIT_LANE": lane, "PIT_FUNDED_S": str(funded)}
+    if l.get("repo"):
+        env.update(PIT_ROOT=str(Path(root).resolve()), PIT_REF_NAME=s.get("ref_name", ""))
     if l.get("url"):
-        where = {"repo": l["repo"], "ref": s.get("ref") or l.get("ref", "HEAD"), "script": cmd} if l.get("repo") else {"command": cmd}
+        where = {"repo": l["repo"], "ref": s.get("ref") or l.get("base", "HEAD"),
+                 "base": s.get("base_ref") or l.get("base", "HEAD"), "script": cmd} if l.get("repo") else {"command": cmd}
         r = execute_remote(l["url"], {"job": jid, **where, "funded_s": funded, "env": env}, s["fail_on"], echo=echo)
+        if l.get("repo"):
+            meta = r["report"].get("tree", {})
+            r.update({k: meta[k] for k in ("ref", "base_ref", "change") if k in meta})
+    elif l.get("repo"):
+        t0 = time.monotonic()
+        try:
+            meta = trees.metadata(l["repo"], s.get("ref") or l.get("base", "HEAD"),
+                                  s.get("base_ref") or l.get("base", "HEAD"))
+            with trees.worktree(l["repo"], meta["ref"]) as tree:
+                r = execute(trees.command(cmd, tree), max(0, funded - (time.monotonic() - t0)), s["fail_on"],
+                            cwd=tree, echo=echo, env={**env, **trees.environment(tree, meta["ref"])})
+            r.update(meta)
+            r["wall_s"] = time.monotonic() - t0
+        except (trees.GitError, OSError) as e:
+            r = {"rc": None, "wall_s": time.monotonic() - t0, "output": str(e),
+                 "report": {"verdict": "invalid", "note": f"worktree: {e}"}}
     else:
         r = execute(cmd, funded, s["fail_on"], cwd=os.path.expanduser(s["cwd"]) if s.get("cwd") else (root if synth else None),
                     echo=echo, env=env)
@@ -207,6 +241,7 @@ def record(ledger: L.Ledger, cfg: dict, s: dict, lane: str, r: dict, ts: str | N
     if fund.get("shortfall"):
         note += f"; {fund['wallet']} short ${fund['shortfall']:.2f} of the overage"
     extra = {"log": r["log"]} if r.get("log") else {}
+    extra.update({k: r[k] for k in ("ref", "base_ref", "change") if k in r})
     if verdict not in ("pass", "read") and r.get("output"):     # what a stopped run did, for the proposer's hand-back
         extra["tail"] = "\n".join(r["output"].splitlines()[-TAIL_LINES:])[-TAIL_BYTES:]
     row = ledger.append({"t": "result", "job": s["id"], "verdict": verdict, "cost": cost,
