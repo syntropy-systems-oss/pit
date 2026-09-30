@@ -621,3 +621,23 @@ class Bootstrap(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FreshLedgerIncome(unittest.TestCase):
+    def test_first_tick_pays_from_the_start_row(self):
+        import tempfile
+        from pathlib import Path
+        from datetime import datetime, timedelta, timezone
+        from pit import ledger as L, book as B, autopilot as A, lanes
+        root = Path(tempfile.mkdtemp()); (root / "ledger").mkdir()
+        lg = L.Ledger(root / "ledger")
+        lg.append({"t": "agent", "id": "a", "kind": "persistent", "brief": "x"})
+        t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        lg.append({"t": "auto", "type": "start", "reason": "test"}, B.iso(t0))
+        cfg = lanes.load(Path(__file__).resolve().parent.parent / "examples" / "replay-synthetic") if hasattr(lanes, "load") else None
+        rows_before = len(lg.rows())
+        drip = B.tick(lg, cfg, t0 + timedelta(minutes=3), since=B.iso(t0))
+        self.assertIsNotNone(drip)
+        self.assertEqual(drip["minutes"], 3)
+        self.assertGreater(drip["to"]["a"], 0)
+

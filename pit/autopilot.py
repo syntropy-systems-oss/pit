@@ -190,7 +190,9 @@ class Autopilot:
             self.echo(f"STOP file {self.dir / 'STOP'}: nothing dispatched; the loop ends")
             self.auto("stop", "STOP file")
             return False
-        drip = B.tick(self.lg, self.cfg, now)
+        rows = self.lg.rows()
+        first = next((r["ts"] for r in rows if r["t"] == "auto" and r["type"] == "start"), None)
+        drip = B.tick(self.lg, self.cfg, now, since=first)      # a fresh ledger pays income from the loop's first start, not from "now" forever
         for w in B.wake(self.lg, now):
             self.echo(f"wake: {w['agent']} ({w['reason']})")
             self.auto("wake", wake_tag(w["reason"]), agent=w["agent"])
