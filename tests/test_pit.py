@@ -618,6 +618,16 @@ class Pit(unittest.TestCase):
         self.assertAlmostEqual(self.book().balance("reflect"), before)          # no budget debit, no stake
         self.assertEqual(self.post(job("r2"), "reflect", cfg=cfg), "seed")     # the pool is empty: no seed
         self.assertEqual([b for b in self.book().bets if b["job"] == "r2"], [])
+
+    def test_a_lane_can_turn_the_house_seed_off(self):
+        self.house_with_vig()
+        book = B.Book([])
+        book.agents["reflect"] = self.lg.append(B.agent_row(book, "reflect", "reflection", None), "2026-09-29T04:05:00Z")
+        lane = job("r1")["lane"]
+        cfg = {**self.PCFG, "lanes": {**self.PCFG["lanes"], lane: {**self.PCFG["lanes"][lane], "house_seed": 0}}}
+        self.assertEqual(self.post(job("r1", budget_usd=5), "reflect", cfg=cfg), "seed")
+        self.assertEqual([b for b in self.book().bets if b["job"] == "r1"], [])   # this lane's roots get no house money
+        self.assertGreater(self.book().balances()["house"], 0)                     # the pool is untouched
         self.assertEqual(B.funding(self.book(), job("r3", depends_on=["r1"]), "reflect"), "agent")   # not a root
         self.assertEqual(B.funding(self.book(), job("r4", **{"from": "F:x"}), "reflect"), "agent")
         self.assertEqual(B.funding(self.book(), job("r5"), "a", seed=True), "seed")                 # --seed

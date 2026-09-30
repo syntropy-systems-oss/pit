@@ -288,7 +288,8 @@ def stakes(rows: list[dict], cfg: dict, spec: dict, agent: str, mode: str, stake
     for v in [] if specmod.is_read(spec) else variants(spec):
         book = Book(rows + out)
         if mode == "seed":
-            usd = round(min(conf(cfg)["house_seed"], book.flows.get(HOUSE, 0.0)), 4)
+            seed = cfg.get("lanes", {}).get(spec.get("lane"), {}).get("house_seed", conf(cfg)["house_seed"])
+            usd = round(min(seed, book.flows.get(HOUSE, 0.0)), 4)
             if usd <= 0:
                 break                     # the pool is empty: the root waits for a bettor
             out.append({"t": "bet", "job": spec["id"], "variant": v, "side": "pass", "usd": usd,

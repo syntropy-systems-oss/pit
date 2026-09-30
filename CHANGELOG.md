@@ -7,6 +7,7 @@
 - Results retain the tested ref and diffstat. `q list --changes` lists PASS PR candidates, newest first; nothing auto-merges. Views mark a post that carries a change (the terminal's glyph hovers to the ref name); `q diff <job>` prints its diffstat and patch so bettors can inspect it.
 - Autopilot `workspace` / `workspace_init` creates a tree per wallet before its first turn, names the tree and branch in the prompt and adds the paths to both runtimes. The prompt describes making a change, committing and betting on its run.
 
+- Lane `house_seed` overrides `[pit] house_seed` for that lane's roots (0 turns the seed off there).
 - Lane `prepare`: a command run inside the tree before every job on a local repo lane (ignored inputs, dependencies); a non-zero exit books the run INVALID with `prepare: <last line>`, and its time is billed like the checkout.
 - A lane whose device is held by another lane is not idle: no `auto idle` row while a read or run on the shared device keeps it out.
 - `q run` refuses a lane whose slots are full or whose device is busy (`lane X: busy (...)` / `lane X: device D busy (...)`): the same guard autopilot uses, so a run started by hand or by an agent cannot bypass it. Lanes are tried least-recently-claimed first, so a device's lanes take turns.
