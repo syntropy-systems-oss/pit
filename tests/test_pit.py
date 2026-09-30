@@ -242,6 +242,24 @@ class Claim(unittest.TestCase):
             runmod.run_job(tmp, lg, CFG, "j", echo=lambda *_: None)
         self.assertFalse([c for c in g.call_args_list if c.args[1] == "push"])
 
+    def test_q_run_refuses_a_full_lane_or_a_busy_device(self):
+        """`q run` by hand is the same guard as autopilot: slots full, or another lane of the device has a run."""
+        import copy
+        tmp, lg = self.repo()
+        cfg = copy.deepcopy(CFG)
+        cfg["lanes"]["gpu-small"]["device"] = "gpu0"
+        cfg["lanes"]["lens"] = {"usd_per_h": 2, "slots": 1, "gate": "true", "device": "gpu0"}
+        add(lg, job("r", lane="lens", run="echo 'pit: verdict=pass'"))
+        lg.append({"t": "claim", "job": "j", "lane": "gpu-small", "cid": "c-j"})
+        with self.assertRaises(SystemExit) as e:
+            runmod.run_job(tmp, lg, cfg, "r", echo=lambda *_: None)
+        self.assertEqual(str(e.exception), "lane lens: device gpu0 busy (j running on gpu-small)")
+        add(lg, job("j2", run="echo 'pit: verdict=pass'"))
+        with self.assertRaises(SystemExit) as e:
+            runmod.run_job(tmp, lg, cfg, "j2", echo=lambda *_: None)
+        self.assertEqual(str(e.exception), "lane gpu-small: busy (j)")
+        self.assertEqual([r["t"] for r in lg.rows() if r["t"] == "claim"], ["claim"])   # neither refused run claimed
+
     def test_killed_run_keeps_its_transcript_and_hands_back_the_tail(self):
         from pit import autopilot as A
         tmp, lg = self.repo()

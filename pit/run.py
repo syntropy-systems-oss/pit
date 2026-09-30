@@ -150,6 +150,8 @@ def run_job(root, ledger: L.Ledger, cfg: dict, jid: str, lane: str | None = None
     lane = lane or s["lane"]
     if s["lane"] != "any" and lane != s["lane"]:
         raise SystemExit(f"{jid} runs on {s['lane']}, not {lane}")
+    if why := lanes.busy(cfg, lane, {j: st.jobs[j]["claim"]["lane"] for j in st.running()}):
+        raise SystemExit(f"lane {lane}: {why}")
     ok, why = lanes.gate_open(cfg, lane)
     if not ok and not force_gate:
         raise SystemExit(f"lane {lane}: {why}")

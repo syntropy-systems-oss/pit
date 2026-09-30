@@ -261,21 +261,16 @@ class Autopilot:
         # least recently claimed first, so lanes sharing a device take turns instead of the first in the file always winning
         for lane in sorted((n for n in self.cfg["lanes"] if n != "any"), key=lambda n: last.get(n, "")) + ["any"]:
             slots = self.c["any_workers"] if lane == "any" else self.cfg["lanes"][lane].get("slots", 1)
-            busy = {j for j in st.running() if st.jobs[j]["claim"]["lane"] == lane} | \
-                   {j for j, (l, _) in self.runs.items() if l == lane}
+            # in flight: ledger claims, plus children this loop just spawned (covers an earlier lane of this same tick)
+            on = {j: st.jobs[j]["claim"]["lane"] for j in st.running()} | {j: l for j, (l, _) in self.runs.items()}
+            busy = {j for j, l in on.items() if l == lane}
             picks = [j for j in order if st.jobs[j]["spec"]["lane"] == lane and j not in self.runs]
             head = f"lane {lane} ({slots} slot{'s' * (slots > 1)}):"
-            if len(busy) >= slots:
-                self.echo(f"{head} busy ({', '.join(sorted(busy))})")
+            if lane != "any" and (why := lanes.busy(self.cfg, lane, on)):
+                self.echo(f"{head} {why}" if why.startswith("busy") else f"lane {lane}: {why}")
                 continue
-            # a device is shared by its lanes: one running on another lane of it (ledger claims, or a child this loop just
-            # spawned, which covers an earlier lane of this same tick) keeps this lane out. Gates still apply after.
-            dev = self.cfg["lanes"].get(lane, {}).get("device")
-            on = {j: st.jobs[j]["claim"]["lane"] for j in st.running()} | {j: l for j, (l, _) in self.runs.items()}
-            held = dev and next(((j, l) for j, l in sorted(on.items()) if l != lane
-                                 and self.cfg["lanes"].get(l, {}).get("device") == dev), None)
-            if held:
-                self.echo(f"lane {lane}: device {dev} busy ({held[0]} running on {held[1]})")
+            if lane == "any" and len(busy) >= slots:
+                self.echo(f"{head} busy ({', '.join(sorted(busy))})")
                 continue
             if not picks:
                 self.fill_from_bag(lane, head, st, rows, now, spent, cap)

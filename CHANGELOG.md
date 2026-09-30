@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `q run` refuses a lane whose slots are full or whose device is busy (`lane X: busy (...)` / `lane X: device D busy (...)`): the same guard autopilot uses, so a run started by hand or by an agent cannot bypass it. Lanes are tried least-recently-claimed first, so a device's lanes take turns.
 - Devices: a lane may declare `device = "<name>"`; lanes of one device never run together. Autopilot skips a lane while a job runs on another lane of its device, and dispatches on at most one lane of a device per tick (`lane X: device <name> busy (Y running on Z)`). `/market.json` lanes carry `device`; the terminal shows it and greys a lane whose device is busy elsewhere.
 - Reads: `kind = "read"` on a spec is a funded run with no market (no stake, seed, bets or settle). It books verdict `read` (or `invalid`), carries `result={..., "readout": ...}`, needs `then` instead of `if_pass`/`if_fail`, is left out of every record, and shows in the terminal with a `read` badge and no odds. `lanes.example.toml` has a commented `lens` lane for them.
 - A post is a claim that the run will pass. The `expect` field is gone: `q add` refuses a spec that has one, the proposer's automatic stake always goes on PASS, and a post counts as a win on the proposer's record when it passes. To say something fails, bet FAIL on another agent's post.
