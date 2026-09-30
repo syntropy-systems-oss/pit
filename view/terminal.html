@@ -53,7 +53,7 @@ code{font-family:var(--mono);color:var(--fg2)}
 .btn[aria-pressed=true]{border-color:var(--acc);color:var(--acc)}
 
 /* panels */
-#main{display:grid;grid-template-columns:248px minmax(0,1fr) 304px;min-height:0;min-width:0}
+#main{display:grid;grid-template-columns:248px minmax(0,1fr) var(--agw,336px);min-height:0;min-width:0}
 .panel{display:flex;flex-direction:column;min-height:0;min-width:0;border-right:1px solid var(--line)}
 .panel:last-child{border-right:0}
 .ph{flex:none;display:flex;align-items:center;gap:8px;height:24px;padding:0 8px;background:var(--pan);border-bottom:1px solid var(--line);font:600 11px/1 var(--ui);letter-spacing:.1em;text-transform:uppercase;color:var(--fg2);white-space:nowrap}
@@ -129,6 +129,8 @@ tr.detail td{height:auto;white-space:normal;background:var(--pan);padding:8px 8p
 .tn .q{color:var(--fg2)}
 
 /* agents */
+.rt{grid-column:1 / -1;font-size:.92em;margin-top:-2px}
+#p-agents{resize:horizontal;overflow:auto;min-width:260px;max-width:60vw}
 .ag{display:grid;grid-template-columns:minmax(0,1fr) 96px;gap:0 8px;padding:8px;border-bottom:1px solid var(--line);cursor:pointer;line-height:20px}
 .ag:hover{background:var(--hi)}
 .ag.sel{background:var(--sel);box-shadow:inset 2px 0 var(--acc)}
@@ -177,7 +179,7 @@ tr.detail td{height:auto;white-space:normal;background:var(--pan);padding:8px 8p
 kbd{font:12px/16px var(--mono);padding:0 4px;border:1px solid var(--line2);border-bottom-width:2px;color:var(--fg)}
 
 /* narrower desktop */
-@media (min-width:1680px){#main{grid-template-columns:320px minmax(0,1fr) 400px}}
+@media (min-width:1680px){#main{grid-template-columns:320px minmax(0,1fr) var(--agw,420px)}}
 @media (max-width:1280px){#main{grid-template-columns:232px minmax(0,1fr) 288px}.kpi.story{display:none}}
 /* phone and small tablet: one column, markets first, tape collapsible */
 @media (max-width:900px){
@@ -399,7 +401,7 @@ function renderAgents(m) {
   const ags = list.map(([a, d]) => {
     const c = cal[a.wallet], own = a.kind === "persistent";
     return `<div class="ag${d ? " sub" : ""}${a.retired ? " ret" : ""}${S.agent === a.id ? " sel" : ""}" data-agent="${esc(a.id)}" tabindex="0" role="button" aria-label="open ${esc(a.id)}'s thread">` +
-      `<div class="l1"><b>${esc(a.id)}</b>${a.runtime ? ` <span class="dim">${esc(a.runtime)}</span>` : ""}${a.retired ? `<span class="b q" title="${esc(a.retired.reason)}">retired</span>` : a.sleeping ? '<span class="b acc">sleep</span>' : ""}<span class="num">${own ? usd(a.balance) : '<span class="dim">sub</span>'}</span></div>` +
+      `<div class="l1"><b>${esc(a.id)}</b>${a.retired ? `<span class="b q" title="${esc(a.retired.reason)}">retired</span>` : a.sleeping ? '<span class="b acc">sleep</span>' : ""}<span class="num">${own ? usd(a.balance) : '<span class="dim">sub</span>'}</span></div>${a.runtime ? `<div class="dim rt">${esc(a.runtime)}</div>` : ""}` +
       `<div class="l2">${a.sleeping ? "wakes " + esc(a.sleep.until) : own && c ? `won ${c.wins}/${c.bets} · brier ${c.brier}` : esc(a.brief)}${own ? ` · acted ${a.last_acted ? hms(a.last_acted) : "never"} · ${a.turns || 0} turns${a.last_turn ? ", last " + ago(a.last_turn_age_s) + " ago" : ""}${a.bootstrap_cost && a.bootstrap_cost.posts ? ` · bootstrap ${Math.round(100 * a.bootstrap_cost.invalid)}% invalid` : ""}` : ""}</div>${own ? spark(a.series) : ""}</div>`;
   }).join("") || `<div class="empty">no agents: add one with <code>q agent add &lt;id&gt; --brief "..."</code></div>`;
   const pnl = c => (parseFloat(c.returned) || 0) - (parseFloat(c.staked) || 0);
@@ -510,4 +512,9 @@ const hp = new URLSearchParams(location.hash.slice(1));
 if (/^\d+$/.test(hp.get("row") || "")) { S.live = false; S.upto = +hp.get("row"); }
 if (hp.get("open")) S.sel = S.open = hp.get("open");
 poll();
+
+// the agents column is resizable: its width feeds the grid track (and is remembered per viewer)
+(function(){const m=document.getElementById('main'),a=document.getElementById('p-agents');if(!m||!a)return;
+try{const w=localStorage.getItem('pit.agw');if(w)m.style.setProperty('--agw',w);}catch(e){}
+new ResizeObserver(es=>{const w=Math.round(es[0].contentRect.width);if(w>0){m.style.setProperty('--agw',w+'px');try{localStorage.setItem('pit.agw',w+'px');}catch(e){}}}).observe(a);})();
 </script></body></html>
