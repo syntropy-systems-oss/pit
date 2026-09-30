@@ -572,7 +572,7 @@ class Autopilot:
                             f"The CLI is {REPO}/bin/q (PIT_ROOT is set). Do step 2's brief: write proposals to "
                             f"{self.root}/queue/proposed/<id>.toml. Never run q add, q post or q reflect --record: "
                             f"steps 3 and 4 are the session's. Bet as `reflect` against every open run whose proposer you think is "
-                            f"overconfident; say why in one line each.",
+                            f"overconfident; say why in one line each (`q bet … --why '<one line>'`).",
                             STRUCTURE, "Agents on the book: " + json.dumps({a: {"brief": r["brief"], "retired": a in book.retired}
                                                                             for a, r in book.agents.items() if r["kind"] == "persistent"}),
                             BOOTSTRAP_LOOP, "agents/BOOTSTRAP.md now:\n" + bootstrap(self.root),
@@ -603,11 +603,19 @@ class Autopilot:
             f"The CLI is {REPO}/bin/q (on PATH as q; PIT_ROOT is set).",
             f"q thread {agent}:\n" + B.thread(self.lg.rows(), agent),
             "\n".join(t for _, _, t in items),
-            f"Your claim ({agent}'s brief): {B.Book(rows).agents[agent]['brief']}", CLAIM, digest, BOARD, "q board:\n" + B.board(rows, self.cfg),
+            f"Your claim ({agent}'s brief): {B.Book(rows).agents[agent]['brief']}", CLAIM, digest,
+            B.settled_stakes(rows, agent, self.since(agent, rows)), B.reflection_since(rows, self.since(agent, rows)), BOARD, "q board:\n" + B.board(rows, self.cfg),
             f"You MUST end your turn by saying what you are waiting on (`q sleep --as {sub} --until-result <job>`, or "
             f"`q sleep --as {sub} --until-event --note '<what>'`), then stop; you will be woken again in about "
             f"{self.c['idle_wake_gap_s']:.0f} s (a result of yours wakes you at once). Every turn must leave the market changed: "
             f"a post, a bet, or a finding."]))
+
+    def since(self, agent: str, rows: list[dict]) -> int:
+        """Row index of the agent's last turn: what it has seen, else the `upto` of its wake before the one being spawned now."""
+        if agent in self.seen:
+            return self.seen[agent]
+        ups = [x["upto"] for x in rows if x["t"] == "auto" and x["type"] == "wake" and x["agent"] == agent and "upto" in x]
+        return ups[-2] if len(ups) > 1 else self.base if self.base is not None else len(rows)
 
     def env(self) -> dict:
         return {**os.environ, "PIT_ROOT": str(self.root), "PATH": f"{REPO / 'bin'}:{os.environ.get('PATH', '')}",

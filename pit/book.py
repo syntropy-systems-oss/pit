@@ -13,6 +13,7 @@ staked by the house from its vig pool (`house_seed` per variant, capped by the p
 tagged `seed`) and debits no budget; a post `--as human` debits nothing and carries its --stake (tagged `human`);
 any other agent pays its budget and the default stake from its wallet.
 """
+import re
 from datetime import datetime, timedelta, timezone
 
 from . import ledger as L
@@ -191,7 +192,7 @@ def tick(ledger: L.Ledger, cfg: dict, now: datetime | None = None, since: str | 
 
 
 def bet_row(book: Book, st: L.State, job: str, variant: str, side: str, usd: float, agent: str,
-            auto: bool = False) -> dict:
+            auto: bool = False, why: str | None = None) -> dict:
     """Refuses (SystemExit) a bet the market cannot take."""
     j = st.jobs.get(job)
     if not j:
@@ -210,7 +211,7 @@ def bet_row(book: Book, st: L.State, job: str, variant: str, side: str, usd: flo
     proposer = book.proposers.get(job) or j["spec"].get("proposer")
     tags = (["auto"] if auto else []) + (["self"] if proposer and book.wallet(proposer) == wallet else [])
     return {"t": "bet", "job": job, "variant": variant, "side": side, "usd": round(usd, 4), "agent": agent,
-            "book": wallet, "tags": tags}
+            "book": wallet, "tags": tags, **({"why": " ".join(why.split())} if why else {})}
 
 
 def funding(book: Book, spec: dict, agent: str, seed: bool = False) -> str:
@@ -356,7 +357,56 @@ def digest(rows: list[dict], events: list[int]) -> str:
         elif r["t"] == "bet" and f"m{r['job']}/{r['variant']}" not in lines:
             t = book.totals(r["job"], r["variant"])
             lines[f"b{r['job']}/{r['variant']}"] = f"market moved {r['job']}/{r['variant']}: PASS ${t['pass']:.2f} / FAIL ${t['fail']:.2f}"
-    return "\n".join(_cap(list(lines.values()), 30, "events"))
+    refs = refuters(rows)
+    return "\n".join(mark_refuted(x, refs) for x in _cap(list(lines.values()), 30, "events"))
+
+
+def refuters(rows: list[dict]) -> dict[str, str]:
+    """finding id -> who refuted it (the refuting finding's agent, or the refuting job's proposer), from `refutes` edges."""
+    who = {r["id"]: r.get("agent") or (r.get("spec") or {}).get("proposer") for r in rows if r["t"] == "node"}
+    fids = {r["id"] for r in rows if r["t"] == "node" and r.get("kind") != "job"}
+    return {r["to"]: who.get(r["from"]) or r["from"] for r in rows if r["t"] == "edge" and r["type"] == "refutes" and r["to"] in fids}
+
+
+def mark_refuted(text: str, refs: dict[str, str]) -> str:
+    """Every citation of a refuted finding in `text` gets '(refuted by <agent>)' after it, so a wrong idea does not spread unmarked."""
+    for fid, by in refs.items():
+        text = re.sub(rf"(?<![\w:-]){re.escape(fid)}(?![\w-])(?! \(refuted)", lambda m: f"{m[0]} (refuted by {by})", text)
+    return text
+
+
+LOSS_RULE = ("Address each loss in your first finding this turn: what you believed, what the result showed, what you now "
+             "expect; a loss you do not address is a wasted turn.")
+
+
+def settled_stakes(rows: list[dict], agent: str, since: int) -> str:
+    """'Your stakes that settled since your last turn': one line per bet of the agent's wallet (its subs' too) on a
+    market settled at row >= since, with the why it gave and what it won or lost."""
+    book = Book(rows)
+    keys = dict.fromkeys((r["job"], r["variant"]) for r in rows[since:] if r["t"] == "settle")
+    out = []
+    for k in keys:
+        s = book.settled[k]
+        for b in (b for b in book.bets if (b["job"], b["variant"]) == k and b["book"] == book.wallet(agent)):
+            if s["outcome"] == "void" or (s.get("void_self") and "self" in b["tags"]):
+                how = "void"
+            elif b["side"] == s["outcome"]:
+                how = f"won +${max(returned(b, s) - b['usd'], 0):.2f}"
+            else:
+                how = f"lost ${b['usd']:.2f}"
+            said = f' (you said: "{b["why"]}")' if b.get("why") else ""
+            out.append(f"{k[0]} {k[1]}: you had {b['side'].upper()} ${b['usd']:.2f}{said} — {how}")
+    return "Your stakes that settled since your last turn:\n" + "\n".join(_cap(out, 15, "stakes")) + "\n" + LOSS_RULE if out else ""
+
+
+def reflection_since(rows: list[dict], since: int) -> str:
+    """'Reflection since your last turn': reflect's findings (up to the newest 5) and any agents/BOOTSTRAP.md edit, once."""
+    book, refs, win = Book(rows), refuters(rows), rows[since:]
+    fs = [r for r in win if r["t"] == "node" and r.get("kind") == "finding" and book.wallet(r.get("agent") or "") == REFLECT][-5:]
+    out = [mark_refuted(f"{r['id']}: {' '.join(r.get('text', '').split())[:200]}", refs) for r in fs]
+    out += [f"agents/BOOTSTRAP.md edited ({r.get('job') or 'by hand'}): " + "; ".join([f"+ {x}" for x in r.get("add", [])] + [f"- {x}" for x in r.get("remove", [])])
+            for r in win if r["t"] == "bootstrap"]
+    return "Reflection since your last turn:\n" + "\n".join(out) if out else ""
 
 
 def until_text(u: dict) -> str:
@@ -552,7 +602,7 @@ def pays(book: Book, job: str, variant: str, other: str, cfg: dict) -> tuple[str
 def board(rows: list[dict], cfg: dict, n: int = 20) -> str:
     """Every open market (queued job x variant), one line each: unopposed first, then smallest matched stake, then newest."""
     book, st = Book(rows), L.fold(rows)
-    recs, lines = records(book), []
+    recs, lines, refs = records(book), [], refuters(rows)
     for jid, j in sorted(st.jobs.items(), key=lambda kv: kv[1]["added"], reverse=True):      # newest first; sort below is stable
         if j["state"] != "queued":
             continue
@@ -562,9 +612,12 @@ def board(rows: list[dict], cfg: dict, n: int = 20) -> str:
             t = book.totals(jid, v)
             side, x = pays(book, jid, v, s.get("expect", "pass"), cfg)
             name = jid if v == "main" else f"{jid}/{v}"
+            ctr = next((b for b in reversed(book.bets) if (b["job"], b["variant"]) == (jid, v) and b.get("why")
+                        and b["side"] != s.get("expect", "pass")), None)      # the latest counter-bettor's reason
             lines.append(((min(t.values()) > 0, 2 * min(t.values())),
                           f"{name} [{s['lane']}, ${s.get('budget_usd', 0):g}] PASS ${t['pass']:.2f} / FAIL ${t['fail']:.2f} · "
-                          f"{side.upper()} pays {x:.1f}:1 · proposer {prop} ({record(recs, prop)})"))
+                          f"{side.upper()} pays {x:.1f}:1 · proposer {prop} ({record(recs, prop)})"
+                          + (f' [{ctr["side"].upper()} {ctr["agent"]}: "{mark_refuted(ctr["why"][:80], refs)}"]' if ctr else "")))
     lines = [l for _, l in sorted(lines, key=lambda k: k[0])]
     return "\n".join(lines[:n] + ([f"… {len(lines) - n} more: q list --frontier"] if len(lines) > n else []))
 

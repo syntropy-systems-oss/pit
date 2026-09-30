@@ -532,6 +532,62 @@ class Autopilot(unittest.TestCase):
         self.assertIn("--- prompt for b-", text)
         self.assertIn("reflection: not due", text)
 
+    def cli_patch(self):
+        from unittest import mock
+        from pit import cli
+        for name, fake in (("ctx", lambda: (self.root, self.lg, self.cfg)), ("sync", lambda *a: None)):
+            p = mock.patch.object(cli, name, fake)
+            p.start()
+            self.addCleanup(p.stop)
+        return cli
+
+    def test_cross_bet_needs_a_why_which_is_stored_and_on_the_board(self):
+        from argparse import Namespace as N
+        cli = self.cli_patch()
+        self.post(job("j1", lane="ci"), "a")
+        with self.assertRaises(SystemExit):
+            cli.cmd_bet(N(job="j1", args=["FAIL", "0.10"], agent="b", why=None))
+        cli.cmd_bet(N(job="j1", args=["PASS", "0.10"], agent="a", why=None))            # your own post: optional
+        cli.cmd_bet(N(job="j1", args=["FAIL", "0.10"], agent="b", why="the small model drops multi-step tasks"))
+        bets = [r for r in self.lg.rows() if r["t"] == "bet" and r["job"] == "j1"]
+        self.assertEqual(bets[-1]["why"], "the small model drops multi-step tasks")
+        self.assertIn('[FAIL b: "the small model drops multi-step tasks"]', B.board(self.lg.rows(), self.cfg))
+
+    def test_wake_prompt_returns_settled_stakes_reflection_and_marks_refuted_findings(self):
+        from argparse import Namespace as N
+        cli = self.cli_patch()
+        F = lambda id, text, agent, refutes=None: cli.cmd_finding(N(id=id, source=None, text=text, kind="finding", refutes=refutes,
+                                                                    refines=None, supersedes=None, agent=agent))
+        book = B.Book(self.lg.rows())
+        self.lg.append(B.agent_row(book, "b-1", "sub", "b"))
+        self.lg.append(B.agent_row(B.Book(self.lg.rows()), "reflect", "reflection passes"))
+        self.post(job("j1", lane="ci"), "a")
+        since = len(self.lg.rows())
+        cli.cmd_bet(N(job="j1", args=["FAIL", "0.10"], agent="b-1", why="the small model drops multi-step tasks"))
+        F("F:a-1", "ci has no runner for custom jobs", "a")
+        F("F:reflect-1", "small-model runs are underfunded: fund 3x", "reflect")
+        F("F:a-2", "a ci custom job ran and passed; F:a-1 was wrong", "a", refutes=["F:a-1"])
+        F("F:a-3", "per F:a-1, post on the gpu lane instead", "a")
+        (self.root / "agents").mkdir()
+        (self.root / "agents" / "BOOTSTRAP.md").write_text("- old line\n")
+        (self.root / "p.toml").write_text('id = "bs1"\nbootstrap_add = ["- fund small-model runs 3x"]\nbootstrap_remove = ["- old line"]\n')
+        cli.cmd_bootstrap(N(apply=str(self.root / "p.toml"), settle=None, n=20, agent="reflect"))
+        self.lg.append({"t": "result", "job": "j1", "verdict": "pass", "cost": {"usd": 0.1, "wall_s": 3, "lane": "ci"}})
+        B.settle_due(self.lg, self.cfg)
+        ap = self.ap()
+        ap.seen["b"] = since
+        text = ap.prompt("b-2", "b", [])
+        self.assertIn('j1 main: you had FAIL $0.10 (you said: "the small model drops multi-step tasks") — lost $0.10', text)
+        self.assertIn(B.LOSS_RULE, text)
+        self.assertLess(text.index("Since you last looked:"), text.index("Your stakes that settled since your last turn:"))
+        self.assertIn("Reflection since your last turn:\nF:reflect-1: small-model runs are underfunded: fund 3x", text)
+        self.assertIn("agents/BOOTSTRAP.md edited (bs1): + - fund small-model runs 3x; - - old line", text)
+        self.assertIn("finding F:a-3: per F:a-1 (refuted by a), post on the gpu lane instead", text)
+        self.assertIn("finding F:a-1 (refuted by a): ci has no runner", text)
+        ap.seen["b"] = len(self.lg.rows())                      # next turn: nothing new, so neither section repeats
+        self.assertNotIn("Reflection since your last turn", ap.prompt("b-3", "b", []))
+        self.assertNotIn("Your stakes that settled", ap.prompt("b-3", "b", []))
+
 
 class Retire(unittest.TestCase):
     setUp, restore, ap, auto = Autopilot.setUp, Autopilot.restore, Autopilot.ap, Autopilot.auto

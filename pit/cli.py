@@ -86,10 +86,13 @@ def cmd_bet(a):
     root, lg, cfg = ctx()
     rows = lg.rows()
     if len(a.args) not in (2, 3):
-        sys.exit("q bet <job> [<variant>] PASS|FAIL <amount> --as <agent>")
+        sys.exit("q bet <job> [<variant>] PASS|FAIL <amount> --as <agent> --why '<one line>'")
     variant, side, amount = (["main"] + a.args)[-3:]
     amount = float(amount.lstrip("$"))
-    row = lg.append(B.bet_row(B.Book(rows), L.fold(rows), a.job, variant, side.lower(), amount, a.agent))
+    row = B.bet_row(B.Book(rows), L.fold(rows), a.job, variant, side.lower(), amount, a.agent, why=a.why)
+    if "self" not in row["tags"] and not row.get("why"):
+        sys.exit(f"a bet on another agent's job needs --why '<one line: what you believe and why>'; it comes back to you when {a.job} settles")
+    lg.append(row)
     sync(root, lg, f"bet {a.job}/{variant} {side.upper()} as {a.agent}")
     t = B.Book(lg.rows()).totals(a.job, variant)
     print(f"{a.agent}: {side.upper()} ${amount:.2f} on {a.job}/{variant}{' (self)' if 'self' in row['tags'] else ''}"
@@ -422,12 +425,16 @@ def cmd_bootstrap(a):
         s = specmod.load(a.apply)
         lines = path.read_text().splitlines() if path.exists() else []
         drop = {x.strip() for x in s.get("bootstrap_remove", [])}
+        gone = [l for l in lines if l.strip() in drop]
         lines = [l for l in lines if l.strip() not in drop]
-        lines += [x for x in s.get("bootstrap_add", []) if x not in lines]
+        new = [x for x in s.get("bootstrap_add", []) if x not in lines]
+        lines += new
         path.parent.mkdir(exist_ok=True)
         path.write_text("\n".join(lines) + "\n")
         L.git(root, "add", str(path))
         L.git(root, "commit", "-q", "-m", f"bootstrap: apply {s.get('id', a.apply)}", "--", str(path))
+        lg.append({"t": "bootstrap", "job": s.get("id"), "add": new, "remove": gone, **({"by": a.agent} if a.agent else {})})    # every agent's next wake shows it once
+        sync(root, lg, f"bootstrap {s.get('id')}")
         print(f"applied {s.get('id')}: +{len(s.get('bootstrap_add', []))} -{len(drop)} lines")
     elif a.settle:
         from .run import record
@@ -516,6 +523,7 @@ def main(argv=None):
     p.add_argument("--note", default=""); p.set_defaults(f=cmd_sleep)
     p = sub.add_parser("bet", help="q bet <job> [<variant>] PASS|FAIL <amount> --as <agent>")
     p.add_argument("job"); p.add_argument("args", nargs="+"); p.add_argument("--as", dest="agent", required=True)
+    p.add_argument("--why", help="one line: why (required on another agent's job; shown on the board, and back to you when it settles)")
     p.set_defaults(f=cmd_bet)
     p = sub.add_parser("agent", help="q agent add <id> --brief ... [--parent <id>] [--runtime claude|codex] [--model <name>] | "
                                      "q agent set <id> --runtime ... --model ... | q agent retire <id> --reason ...")
