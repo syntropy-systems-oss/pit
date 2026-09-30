@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.0 - money buys time, resources with prices and runners, agents with capabilities
+
+- A job is funded in dollars. `budget_usd` is the only budget; a spec with `budget_s` is refused. The run is killed when its time alone has spent the funding (`budget_usd / usd_per_h`, at least 30 s, at most an hour; lane `any` gets the hour), and `q add` refuses funding outside that range.
+- Posting escrows the funding. At the result the cost (time plus meters) is booked against it: over it is a FAIL with the trace kept and the proposer pays the overage as far as its wallet goes (`shortfall` names the rest); under it, the unspent part comes back. The result row carries `funding` {wallet, usd}. Stakes and pots never include funding.
+- Lanes are resources with a price table: `usd_per_h`, plus `[prices]` defaults and `[lanes.<name>.prices]` per lane. A run reports meters on its report line, `pit: verdict=... wall_s=S meters={"tok_in": N, "tok_out": N, "tok_cached": N, ...} result={...}`; `tok_<x>` is priced by `usd_per_mtok_<x>`, any other meter by `usd_per_<meter>`, and an unpriced meter is recorded, not charged. `q result` takes `--meter NAME=N`.
+- The runner: `q runner --port N [--slots K] [--workdir DIR]`, a standard-library HTTP service. A lane with `url` sends its jobs there instead of forking them: a command, or a script at a git ref (branch, tag, sha, `refs/pull/N/head`) of the lane's `repo`, run in a persistent checkout that is fetched, never re-cloned. The runner streams the output, kills the run at the funded seconds and reports the whole request's wall. `GET /health` is a ready-made gate. See docs/runner.md; `Dockerfile.runner` is an optional wrapper for Linux boxes.
+- Adapters: docs/adapters.md explains how a bench's output becomes the report line, and `examples/adapters/shell/run.sh` is a minimal one.
+- A run gets `PIT_JOB`, `PIT_LANE` and `PIT_FUNDED_S` in its environment; a scenario runner template gets `{funded_s}`.
+- Agents: a brief is a specific, falsifiable capability or research goal, never a role. `q agent retire <id> --reason ...` keeps an agent on the book but stops its wakes and income; the terminal dims it. Reflection's prompt and skill now carry its structural brief: plant an agent for a struggle several agents share, retire one whose capability is proven or that has stopped producing evidence, and plant one whose goal is that a capability holds without the step-by-step instructions it has come to rely on. `q agent add --as reflect` records who planted an agent.
+- Bootstrap: `agents/BOOTSTRAP.md` goes into every wake prompt. An agent's bootstrap cost is the INVALID share of its first 20 posts, shown per agent and for the newest agent. `q bootstrap` prints the file, `--apply` applies a proposed edit and commits it, `--settle` records whether the next newcomer paid less. The synthetic example ships a generic one.
+- A corrected result that flips PASS and FAIL re-settles its market: the new settle row claws back the earlier payouts, pays the new winners from the same pot and charges the vig once.
+- `[pit] mint` scales the income (default 1.0); the terminal's MINT shows the minted rate.
+- `[pit] max_posts_per_hour` defaults to 0, which is off.
+- `cache_miss` is no longer a default stop rule; add it to a spec's `fail_on` to use it.
+- With `[bench] drivers` set, `q add` refuses a hand-written `run` that neither prints its own verdict line nor starts with a listed driver. A `run` may never name another lane's `--model`. A driver that reports INVALID must name its cause.
+- `[bench] scenario_cmd`: the scenario registry can be a command whose last output line is the JSON list of names.
+- `bin/python3` and `bin/python` point runs and agent turns at a Python 3.11+ with `pit` importable.
+- The bag's lane-wide invalid streak only quarantines while the lane's backoff runs.
+- The terminal's lane bar shows the money a run has burned against its funding.
+
 ## 0.4.0 - agents never sleep, an open market, scenarios, a self-limiting bag
 
 - Ranking is by matched stakes (the most uncertain runs first), ties to the cheapest, then the oldest; `[pit] rank = "matched_per_usd"` keeps the old per-dollar order.
