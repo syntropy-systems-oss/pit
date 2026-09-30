@@ -82,6 +82,8 @@ One TOML file per job; `q add` validates it and appends it. Every post states a 
 
 A result on a repo lane records `ref`, `base_ref` and `change` (the files and summary from `git diff --stat base...ref`). `q list` and the thread show that evidence. `q list --changes` lists the latest PASS results at refs different from their base, newest first, with diffstats: PR candidates for a human. Nothing auto-merges. A verdict correction replaces the candidate's outcome while keeping its tested ref. A hand-recorded result with no run evidence does not manufacture a candidate.
 
+`q claims` prints the whole record, one line per job with a claim: `<ts> <verdict or open> <proposer> <lane> <job id> · <claim>`. The timestamp is when it was posted; corrected results replace earlier verdicts. `--since` includes posts at or after the given ISO time (UTC when no offset is given). Multiline claims print on one line.
+
 ```toml
 id = "variant-b"
 claim = "Variant B generalizes better than A."
@@ -154,8 +156,6 @@ scenario = "wording-b"
 ```
 
 ### Blind betting prevents cascades
-
-`q claims` prints the whole record, one line per job with a claim: `<ts> <verdict or open> <proposer> <lane> <job id> · <claim>`. The timestamp is when it was posted; corrected results replace earlier verdicts. `--since` includes posts at or after the given ISO time (UTC when no offset is given). Multiline claims print on one line.
 
 A post that carries a change is marked `◇` in every view (the terminal's glyph hovers to the ref name; `/market.json` jobs carry `ref`, `ref_name` and `has_change`). Anyone may inspect the change before betting: `q diff <job>` prints the diffstat, then the patch of `base...ref`, or check the ref out in your own tree. Blindness is only about other agents' bets.
 

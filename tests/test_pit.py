@@ -118,6 +118,8 @@ class PostedClaims(unittest.TestCase):
         for value in (None, 42, [], {}):
             self.assertEqual(specmod.validate({**s, "claim": value}, CFG["lanes"]), ["claim must be a string"])
         self.assertEqual(specmod.validate({**s, "bag": True, "proposer": "house"}, CFG["lanes"]), [])
+        with self.assertRaisesRegex(SystemExit, "bag is set only by the house's draws"):
+            self.q("post", self.specfile("fake", bag=True), "--as", "a")
         path = self.specfile(kind="read", then="use the reading")
         self.q("post", path, "--as", "a")
         self.assertFalse(any(r["t"] == "bet" for r in self.lg.rows()))

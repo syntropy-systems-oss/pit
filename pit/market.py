@@ -36,7 +36,7 @@ def _walk(rows, book, cfg):
             s, who = r["spec"], r["spec"].get("proposer")
             if book.payer(s):
                 move(book.payer(s), -s.get("budget_usd", 0), i)
-            ev.update(type="POST", agent=who, job=r["id"], text=f"{r['id']}  ${s.get('budget_usd', 0):.2f} {s.get('lane', '')}  {s.get('question', '')[:80]}")
+            ev.update(type="POST", agent=who, job=r["id"], text=f"{r['id']}  ${s.get('budget_usd', 0):.2f} {s.get('lane', '')}  {specmod.claim_first(s, 80)}")
         elif t == "node":
             ev.update(type="FINDING", job=r["id"], text=f"{r['id']} ({r.get('kind')}) from {r.get('from')}: {r.get('text', '')[:100]}")
         elif t == "edge":
