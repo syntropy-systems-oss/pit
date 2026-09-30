@@ -6,14 +6,14 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from pit import autopilot as A, lanes, ledger as L, market, book as B, reflect
+from pit import autopilot as A, lanes, ledger as L, market, book as B, reflect, spec as specmod
 from tests.test_pit import add, job
 
 LANES = """
-[tokens]
-uncached_per_m = 0.24
-cache_read_per_m = 0.05
-out_per_m = 2.20
+[prices]
+usd_per_mtok_in = 0.24
+usd_per_mtok_cached = 0.05
+usd_per_mtok_out = 2.20
 [reflect]
 rows = 100000
 [lanes.gpu-small]
@@ -21,7 +21,7 @@ usd_per_h = 14
 slots = 1
 gate = "true"
 model = "small"
-runner = "echo RUN {scenario} {model} {budget_s}; echo 'pit: verdict=pass result={{}}'"
+runner = "echo RUN {scenario} {model} {funded_s}; echo 'pit: verdict=pass result={{}}'"
 preflight = "test -f ok.flag && echo {model}"
 [lanes.ci]
 usd_per_h = 100
@@ -91,8 +91,8 @@ class Autopilot(unittest.TestCase):
         return [p.read_text() for p in sorted(self.out.glob("*.txt"))]
 
     def test_orphaned_claim_is_settled_invalid(self):
-        add(self.lg, job("o", budget_s=60), job("fresh", budget_s=60), job("live", budget_s=60), ts=L.now())
-        old = (datetime.now(timezone.utc) - timedelta(seconds=2 * 60 + 61)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        add(self.lg, job("o"), job("fresh"), job("live"), ts=L.now())
+        old = (datetime.now(timezone.utc) - timedelta(seconds=specmod.funded_seconds(job("o"), self.cfg["lanes"]) + 61)).strftime("%Y-%m-%dT%H:%M:%SZ")
         new = (datetime.now(timezone.utc) - timedelta(seconds=100)).strftime("%Y-%m-%dT%H:%M:%SZ")
         for j, ts in (("o", old), ("fresh", new), ("live", old)):
             self.lg.append({"t": "claim", "job": j, "lane": "gpu-small", "cid": f"c-{j}"}, ts)
@@ -145,7 +145,7 @@ class Autopilot(unittest.TestCase):
         self.assertEqual(len(self.auto("handback")), 3)                           # + p1's result, to a
 
     def test_scenario_spec_dispatches_with_synthesized_run_after_preflight(self):
-        self.post(job("sc", scenario="heldout_b", budget_s=300), "a")
+        self.post(job("sc", scenario="heldout_b"), "a")
         ap = self.ap()
         ap.tick()                                                  # preflight (test -f ok.flag in the root) fails
         ap.wait()
@@ -156,7 +156,7 @@ class Autopilot(unittest.TestCase):
         ap.tick()
         ap.wait()
         (claim,) = [r for r in self.lg.rows() if r["t"] == "claim"]
-        self.assertEqual(claim["run"], "echo RUN heldout_b small 300; echo 'pit: verdict=pass result={}'")
+        self.assertEqual(claim["run"], "echo RUN heldout_b small 257; echo 'pit: verdict=pass result={}'")
         self.assertEqual(L.fold(self.lg.rows()).jobs["sc"]["result"]["verdict"], "pass")
         self.assertEqual(len(self.auto("refuse")), 1)
 
@@ -267,7 +267,7 @@ class Autopilot(unittest.TestCase):
             p = mock.patch.object(cli, name, fake)
             p.start()
             self.addCleanup(p.stop)
-        cli.cmd_result(N(id="d1", verdict="pass", wall_s=0.0, uncached=0, cached=0, out=0, lane=None, arm=None, agent="b-1", force=False))
+        cli.cmd_result(N(id="d1", verdict="pass", wall_s=0.0, meter=[], lane=None, arm=None, agent="b-1", force=False))
         cli.cmd_finding(N(id="F:x", source="d1", text="t", kind="finding", refutes=None, refines=None, supersedes=None, agent="b-1"))
         cli.cmd_cancel(N(id="d2", reason="r", agent="b-1"))
         cli.cmd_decide(N(id="F:x", changed=True, note="n", agent="b-1"))
@@ -337,7 +337,7 @@ class Autopilot(unittest.TestCase):
             self.assertIn(A.CLAIM, c)
             self.assertLess(c.index("Your claim ("), c.index("Since you last looked:"))   # claim, experiment, then the board
             self.assertLess(c.index("Your next experiment"), c.index("The board is context"))
-            self.assertIn("Your brief is a claim to prove or refute; it is your goal. This turn: (1) state the claim", c)
+            self.assertIn("Your brief is a capability or research goal to prove or refute; it is your goal.", c)
             self.assertIn("--until-result <job>", c)
             self.assertIn("Every turn must leave the market changed", c)
 
@@ -531,6 +531,92 @@ class Autopilot(unittest.TestCase):
         self.assertIn("desk d1: wake b (desk:d1)", text)
         self.assertIn("--- prompt for b-", text)
         self.assertIn("reflection: not due", text)
+
+
+class Retire(unittest.TestCase):
+    setUp, restore, ap, auto = Autopilot.setUp, Autopilot.restore, Autopilot.ap, Autopilot.auto
+
+    def test_retired_agent_gets_no_wake_and_no_drip(self):
+        from argparse import Namespace as N
+        from unittest import mock
+        from pit import cli
+        with mock.patch.object(cli, "ctx", lambda: (self.root, self.lg, self.cfg)), mock.patch.object(cli, "sync", lambda *a: None):
+            cli.cmd_agent(N(verb="retire", id="b", brief=None, parent=None, reason="capability proven", by="reflect"))
+            with self.assertRaises(SystemExit):
+                cli.cmd_agent(N(verb="retire", id="b", brief=None, parent=None, reason="again", by=None))
+        book = B.Book(self.lg.rows())
+        self.assertEqual((book.retired["b"]["reason"], book.active()), ("capability proven", ["a"]))
+        ap = self.ap()
+        ap.c = {**ap.c, "idle_wake_gap_s": 0, "heartbeat_minutes": 0}
+        ap.tick()
+        ap.wait()
+        woken = {r["agent"] for r in self.lg.rows() if r["t"] == "wake"} | {r.get("agent") for r in self.auto("wake")}
+        subs_of = {r["parent"] for r in self.lg.rows() if r["t"] == "agent" and r.get("parent")}
+        self.assertNotIn("b", woken | subs_of)
+        self.assertIn("a", subs_of)                                                  # the live agent still gets its turn
+        later = (datetime.now(timezone.utc) + timedelta(minutes=10))
+        drip = B.tick(self.lg, self.cfg, later)
+        self.assertEqual(list(drip["to"]), ["a"])
+        m = {x["id"]: x for x in market.market_json(self.lg.rows(), self.cfg)["agents"]}
+        self.assertEqual((m["b"]["retired"]["reason"], m["a"]["retired"]), ("capability proven", None))   # on the book, dimmed
+        self.assertAlmostEqual(B.Book(self.lg.rows()).balance("b"), book.balance("b"))
+
+
+class Bootstrap(unittest.TestCase):
+    setUp, restore, post, ap = Autopilot.setUp, Autopilot.restore, Autopilot.post, Autopilot.ap
+
+    def done(self, jid, verdict):
+        self.lg.append({"t": "result", "job": jid, "verdict": verdict, "cost": {"usd": 0, "wall_s": 0, "lane": "ci"}})
+
+    def cli(self, **kw):
+        from argparse import Namespace as N
+        from unittest import mock
+        from pit import cli
+        with mock.patch.object(cli, "ctx", lambda: (self.root, self.lg, self.cfg)), mock.patch.object(cli, "sync", lambda *a: None):
+            cli.cmd_bootstrap(N(**{"apply": None, "settle": None, "n": 2, "agent": "reflect", **kw}))
+
+    def test_bootstrap_text_is_in_the_wake_prompt(self):
+        (self.root / "agents").mkdir()
+        (self.root / "agents" / "BOOTSTRAP.md").write_text("- check q board before posting\n")
+        text = self.ap().prompt("a-x", "a", [])
+        self.assertIn("- check q board before posting", text)
+        self.assertLess(text.index(A.RULES), text.index("- check q board before posting"))
+
+    def test_bootstrap_cost_counts_invalids_among_the_first_n(self):
+        for j in ("j1", "j2", "j3"):
+            self.post(job(j, lane="ci"), "a")
+        self.done("j1", "invalid")
+        self.lg.append({"t": "cancel", "id": "j2", "reason": "dup"})
+        self.done("j3", "invalid")
+        c = B.bootstrap_cost(self.lg.rows(), "a", n=2)
+        self.assertEqual((c["posts"], c["invalid"], c["cancelled"]), (2, 0.5, 0.5))
+        self.assertEqual(B.newcomer_cost(self.lg.rows())["agent"], "b")
+        self.assertEqual(market.market_json(self.lg.rows(), self.cfg)["top"]["newcomer_cost"]["agent"], "b")
+
+    def test_apply_edits_the_file(self):
+        (self.root / "agents").mkdir()
+        (self.root / "agents" / "BOOTSTRAP.md").write_text("# how\n- old line\n- keep\n")
+        spec = self.root / "p.toml"
+        spec.write_text('id = "bs1"\nbootstrap_add = ["- new line"]\nbootstrap_remove = ["- old line"]\n')
+        self.cli(apply=str(spec))
+        self.assertEqual((self.root / "agents" / "BOOTSTRAP.md").read_text(), "# how\n- keep\n- new line\n")
+
+    def test_settle_records_pass_when_the_cost_drops(self):
+        self.lg.append(B.agent_row(B.Book(self.lg.rows()), "reflect", "reflection"))
+        for j in ("b1", "b2"):
+            self.post(job(j, lane="ci"), "b")
+            self.done(j, "invalid")
+        add(self.lg, job("bs1", lane="any"), ts=L.now())
+        self.lg.append(B.agent_row(B.Book(self.lg.rows()), "c", "newcomer after the edit"))
+        add(self.lg, job("c1", lane="ci", proposer="c"), ts=L.now())
+        with self.assertRaises(SystemExit):           # 1/2 posts in: too early to settle
+            self.cli(settle="bs1")
+        add(self.lg, job("c2", lane="ci", proposer="c"), ts=L.now())
+        self.done("c1", "pass")
+        self.done("c2", "invalid")
+        self.cli(settle="bs1")
+        r = L.fold(self.lg.rows()).jobs["bs1"]["result"]
+        self.assertEqual((r["verdict"], r["agent"], r["result"]["before"]["agent"], r["result"]["after"]["agent"]), ("pass", "reflect", "b", "c"))
 
 
 if __name__ == "__main__":

@@ -23,7 +23,8 @@ from . import bag, lanes, ledger as L, book as B, reflect, spec as specmod
 REPO = Path(__file__).resolve().parent.parent
 RULES = ("Money is a scheduling signal, not real. Never spend real money, never send messages to people, never touch "
          "production; bench runs use mocks only; nothing over an hour.")
-CLAIM = ("Your brief is a claim to prove or refute; it is your goal. This turn: (1) state the claim in one line and the "
+CLAIM = ("Your brief is a capability or research goal to prove or refute; it is your goal. Test it where it could fail, "
+         "including held-out variants with the step-by-step instructions that make it work removed. This turn: (1) state the claim in one line and the "
          "strongest evidence for and against it from your thread. (2) Your next experiment: name the cheapest run "
          "that could change your mind and post it (`q post --as <you>` — you pay; if you cannot afford the lane you "
          "want, post it on a cheaper lane or `q sleep --until-balance` naming the run). Posting is the primary action "
@@ -45,6 +46,21 @@ BOARD = ("The board is context. If an open run bears on your claim you may bet o
 REWAKE = ("Agents never sleep: you get a turn about every {gap} s whether or not a run of yours is in flight. While one is, "
           "use the turn to bet on other open runs, research, or post a second experiment on a free lane. "
           "Every turn must leave the market changed: a post, a bet, or a finding.")
+BOOTSTRAP_LOOP = ("You maintain agents/BOOTSTRAP.md. If the tape shows a newcomer paying for something the text does not say, "
+                  "propose the edit as a job spec in queue/proposed/ (lane any, no run): `question` = the exact line(s) to add or "
+                  "change, `expect = pass`, `if_pass` = 'the next newcomer's bootstrap cost over its first 20 posts is lower than "
+                  "the previous newcomer's', `if_fail` = 'revert the line'; carry the edit as `bootstrap_add = [\"<line>\", ...]` and "
+                  "`bootstrap_remove = [\"<exact existing line>\", ...]`. The session applies accepted edits (`q bootstrap --apply`) "
+                  "and records the result (`q bootstrap --settle <job>`) when the next newcomer's first 20 posts are in.")
+STRUCTURE = ("You are the one agent with a standing, structural brief: the shape of the population. Every other agent's brief is a "
+             "specific, falsifiable capability or research goal, never a role. Look across all agents' findings and results for "
+             "struggles several of them share; for a shared cause, plant a new persistent agent whose brief names the capability "
+             "that would remove it (`q agent add <id> --brief '<capability>' --as reflect`) and post its first experiment as a root "
+             "(`q post <spec> --as reflect`: the house seeds it from the vig pool). Retire an agent whose capability is proven, or "
+             "whose brief has stopped producing new evidence (`q agent retire <id> --reason '<why>' --as reflect`): it stays on the "
+             "book and gets no more wakes or income. When you see a brief narrowing into step-by-step instructions to the runtime, "
+             "plant an agent whose goal is that the capability holds without those instructions (held-out variants with the "
+             "instructions removed). Write these as proposals in queue/proposed/ with the exact commands; the session runs them.")
 DEFAULTS = {"max_usd_per_hour": 0,       # 0 = no spend gate (an open market); hour spend is reported only
              "any_workers": 2, "permission_mode": "", "allowed_tools": [],
             "max_subagent_runs_per_hour": 60, "heartbeat_minutes": 20, "heartbeat_min_usd": 1.0, "idle_wake_gap_s": 90}
@@ -124,6 +140,12 @@ def skill(name: str) -> str:
     return text.replace('"${CLAUDE_PLUGIN_ROOT}/bin/q"', "q").replace("${CLAUDE_PLUGIN_ROOT}", str(REPO))
 
 
+def bootstrap(root) -> str:
+    """agents/BOOTSTRAP.md: how to be a member of this market (reflection evolves it; `q bootstrap`)."""
+    p = Path(root) / "agents" / "BOOTSTRAP.md"
+    return p.read_text().strip() if p.exists() else ""
+
+
 def stamp(now: datetime) -> str:
     return now.strftime("%Y%m%dT%H%M%S")
 
@@ -195,13 +217,13 @@ class Autopilot:
         return True
 
     def orphans(self, rows, now):
-        """A claim with no result, no release and no live child, older than 2x budget + 60s, is dead: settle it `invalid` so the lane frees."""
+        """A claim with no result, no release and no live child, older than its kill line (what its funding buys) + 60s, is dead: settle it `invalid` so the lane frees."""
         if self.dry:
             return
         st = L.fold(rows)
         for j in st.running():
             c, s = st.jobs[j]["claim"], st.jobs[j]["spec"]
-            if j in self.runs or (now - B.parse_t(c["ts"])).total_seconds() <= min(2 * s["budget_s"], 3600) + 60:
+            if j in self.runs or (now - B.parse_t(c["ts"])).total_seconds() <= specmod.funded_seconds(s, self.cfg["lanes"]) + 60:
                 continue
             self.echo(f"auto note {j} orphan")
             lane = c["lane"]
@@ -249,7 +271,7 @@ class Autopilot:
                 s, m = st.jobs[j]["spec"], book.matched(j, st.jobs[j]["spec"])
                 why = (f"fallback: nothing matched on {lane}, cheapest at ${s['budget_usd']}" if j in fb or m <= 0 else
                        f"matched ${m:.2f} / budget ${s['budget_usd']} = {m / max(s['budget_usd'], 0.01):.3f} per $")
-                self.echo(f"{head} gate {gate} · pick {j} ({why}) · claim + run, stop at {min(2 * s['budget_s'], 3600)}s")
+                self.echo(f"{head} gate {gate} · pick {j} ({why}) · claim + run, funded ${s['budget_usd']} ({specmod.funded_seconds(s, self.cfg['lanes'])}s)")
                 self.auto("dispatch", why, lane, j, book.proposers.get(j))
                 self.runs[j] = (lane, self.spawn_run(j, now))
 
@@ -309,8 +331,8 @@ class Autopilot:
         spec = bag.post(self.lg, self.cfg, s, lane, c, stamp(now))
         stake = B.Book(self.lg.rows()).totals(spec["id"], "main")["pass"]
         why = f"bag draw {s['id']}, last run {last or 'never'}, house PASS ${stake:.2f}"
-        self.echo(f"{head} gate {gate} · BAG {spec['id']} ({why}; ${spec['budget_usd']} / {spec['budget_s']}s; "
-                  f"bag {n + 1}/{c['max_per_day']} today) · post as house + claim + run, stop at {min(2 * spec['budget_s'], 3600)}s")
+        self.echo(f"{head} gate {gate} · BAG {spec['id']} ({why}; "
+                  f"bag {n + 1}/{c['max_per_day']} today) · post as house + claim + run, funded ${spec['budget_usd']} ({specmod.funded_seconds(spec, self.cfg['lanes'])}s)")
         self.auto("dispatch", why, lane, spec["id"], B.HOUSE)
         self.runs[spec["id"]] = (lane, self.spawn_run(spec["id"], now))
 
@@ -398,6 +420,8 @@ class Autopilot:
             self.echo("hand-backs: none due")
         for agent, items in due.items():
             what = "; ".join(ref for ref, _, _ in items)
+            if agent in book.retired:
+                continue                   # retired: its results settle, nobody is woken for them
             if agent in self.subs:
                 self.echo(f"hand-back {agent}: waits, {self.subs[agent][0]} is still running ({what})")
             elif len(self.subs) >= self.max_subs():
@@ -427,7 +451,7 @@ class Autopilot:
             self.t0 = B.iso(now)      # the heartbeat clock starts with the loop
         due = []
         for a, r in book.agents.items():
-            if r["kind"] != "persistent" or a == B.REFLECT or a in self.subs or B.explicit_sleep(rows, book, a):
+            if a not in book.active() or a == B.REFLECT or a in self.subs or B.explicit_sleep(rows, book, a):
                 continue
             if a not in self.seen:
                 self.seen[a] = next((x["upto"] for x in reversed(rows) if x["t"] == "auto" and x["type"] == "wake"
@@ -461,8 +485,7 @@ class Autopilot:
 
     def max_subs(self) -> int:
         """[autopilot] max_concurrent_subagents if set, else one per persistent agent + 1 for the reflection pass."""
-        return self.c.get("max_concurrent_subagents") or 1 + sum(
-            1 for a, r in B.Book(self.lg.rows()).agents.items() if r["kind"] == "persistent" and a != B.REFLECT)
+        return self.c.get("max_concurrent_subagents") or 1 + sum(1 for a in B.Book(self.lg.rows()).active() if a != B.REFLECT)
 
     def over_budget(self, now):
         """max_subagent_runs_per_hour is a budget, not a gate: over it, one `auto refuse` row per hour, nothing blocked."""
@@ -484,8 +507,8 @@ class Autopilot:
         epoch = starts[-1] if starts else B.iso(now)
         done = {x for r in rows if r["t"] == "auto" and r["type"] == "handback" for x in r.get("refs", [])}
         live = set(awake(rows))
-        for a, ag in book.agents.items():
-            if ag["kind"] != "persistent" or a == B.REFLECT:
+        for a in book.active():
+            if a == B.REFLECT:
                 continue
             fam = book.family(a)
             fl = sorted(j for j, x in st.jobs.items() if book.proposers.get(j) in fam
@@ -533,6 +556,7 @@ class Autopilot:
                 (self.root / "agents" / "reflect.toml").write_text(
                     'id = "reflect"\nkind = "persistent"\nbrief = "reflection passes: patterns across jobs and findings"\n')
         sub = self.register(B.REFLECT, f"autopilot reflection pass ({why})", now)
+        book = B.Book(self.lg.rows())
         self.echo(f"reflection: due ({why}); spawn {sub} (opus); proposals go to queue/proposed/, never added")
         self.auto("reflect", why, agent=sub)
         text = "\n\n".join([skill("reflect"), "Standing rules (verbatim): " + RULES,
@@ -541,6 +565,10 @@ class Autopilot:
                             f"{self.root}/queue/proposed/<id>.toml. Never run q add, q post or q reflect --record: "
                             f"steps 3 and 4 are the session's. Bet as `reflect` against every open run whose proposer you think is "
                             f"overconfident; say why in one line each.",
+                            STRUCTURE, "Agents on the book: " + json.dumps({a: {"brief": r["brief"], "retired": a in book.retired}
+                                                                            for a, r in book.agents.items() if r["kind"] == "persistent"}),
+                            BOOTSTRAP_LOOP, "agents/BOOTSTRAP.md now:\n" + bootstrap(self.root),
+                            "Newcomer (most recently registered agent) bootstrap cost: " + json.dumps(B.newcomer_cost(rows)),
                             "Digest (q reflect --since-last):\n" + reflect.digest(rows)])
         self.subs[B.REFLECT] = (sub, self.claude(sub, "opus", text), self.proposed())
 
@@ -562,7 +590,7 @@ class Autopilot:
                          f"this turn (`q list --scenarios`), or say in one line why nothing worth running exists."
                          for l, s in self.idle_lanes(datetime.now(timezone.utc), 120).items())
         return "\n\n".join(filter(None, [
-            idle, skill("pit"), "Standing rules (verbatim): " + RULES,
+            idle, skill("pit"), "Standing rules (verbatim): " + RULES, bootstrap(self.root),
             f"You are {sub}, a sub of {agent}: act `--as {sub}`; your bets and posts book to {agent}. "
             f"The CLI is {REPO}/bin/q (on PATH as q; PIT_ROOT is set).",
             f"q thread {agent}:\n" + B.thread(self.lg.rows(), agent),
@@ -711,6 +739,5 @@ def finished(jid: str, j: dict) -> str:
     c = res.get("cost", {})
     branch = s.get(f"if_{res['verdict']}")
     return (f"Your job {jid} finished: {res['verdict']}, {json.dumps(res.get('result', {}))}, "
-            f"cost ${c.get('usd', 0):.2f} ({c.get('wall_s', 0):.0f}s on {c.get('lane', '?')}, {c.get('uncached_in', 0)} uncached / "
-            f"{c.get('cache_read', 0)} cached / {c.get('out', 0)} out)." + (f" Note: {res['note']}." if res.get("note") else "")
+            f"cost ${c.get('usd', 0):.2f} ({c.get('wall_s', 0):.0f}s on {c.get('lane', '?')}, meters {json.dumps(c.get('meters', {}))})." + (f" Note: {res['note']}." if res.get("note") else "")
             + (f" The spec's {res['verdict']} branch: {branch}" if branch else ""))

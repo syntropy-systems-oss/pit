@@ -4,7 +4,6 @@ expect = "pass"
 if_pass = "send it to review"
 if_fail = "fix the build"
 lane = "ci"
-budget_s = 1200
 budget_usd = 34
 run = "gh workflow run ci.yml --ref rc && gh run watch"
 

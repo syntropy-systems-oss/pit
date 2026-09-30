@@ -48,7 +48,7 @@ def add_specs(root, lg, cfg, loaded):
     st = L.fold(lg.rows())
     specs, bad, known = [], [], specmod.scenarios(root, cfg)
     for path, s in loaded:        # validate all first: a batch goes in whole or not at all
-        errs = specmod.validate(s, cfg["lanes"], known)
+        errs = specmod.validate(s, cfg["lanes"], known, cfg.get("bench", {}).get("drivers"))
         if s.get("id") in st.jobs or s.get("id") in [x["id"] for _, x in specs]:
             errs.append(f"{s['id']} is already in the ledger (cancel or supersede it)")
         (bad.append(f"refused {path}:\n  " + "\n  ".join(errs)) if errs else specs.append((path, s)))
@@ -59,7 +59,7 @@ def add_specs(root, lg, cfg, loaded):
             (root / "queue").mkdir(exist_ok=True)
             shutil.copy(path, root / "queue" / f"{s['id']}.toml")
         lg.append({"t": "node", "kind": "job", "id": s["id"], "spec": s})
-        print(f"added {s['id']} ({s['lane']}, ${s['budget_usd']} / {s['budget_s']}s, value {s['value']})")
+        print(f"added {s['id']} ({s['lane']}, funded ${s['budget_usd']} ({specmod.funded_seconds(s, cfg['lanes'])}s), value {s['value']})")
     return [s["id"] for _, s in specs]
 
 
@@ -98,13 +98,22 @@ def cmd_bet(a):
 
 def cmd_agent(a):
     root, lg, cfg = ctx()
-    row = lg.append(B.agent_row(B.Book(lg.rows()), a.id, a.brief, a.parent))
+    book = B.Book(lg.rows())
+    if a.verb == "retire":
+        if not a.reason:
+            sys.exit("q agent retire <id> --reason '...'")
+        lg.append(B.retire_row(book, a.id, a.reason, a.by))
+        sync(root, lg, f"retire {a.id}")
+        return print(f"agent {a.id} retired: {a.reason}")
+    if not a.brief:
+        sys.exit("q agent add <id> --brief '<a capability or research goal to prove or refute>'")
+    row = lg.append({**B.agent_row(book, a.id, a.brief, a.parent), **({"by": a.by} if a.by else {})})
     (root / "agents").mkdir(exist_ok=True)
     (root / "agents" / f"{a.id}.toml").write_text(
         f'id = "{a.id}"\nkind = "{row["kind"]}"\n' + (f'parent = "{a.parent}"\n' if a.parent else "") + f"brief = {json.dumps(a.brief)}\n")
     L.git(root, "add", str(root / "agents" / f"{a.id}.toml"))
     sync(root, lg, f"agent {a.id}")
-    print(f"agent {a.id} ({row['kind']})")
+    print(f"agent {a.id} ({row['kind']})" + (f", planted by {a.by}" if a.by else ""))
 
 
 def print_balances(book):
@@ -159,7 +168,7 @@ def row_line(st, jid, cfg):
     flag = " STALE" if jid in st.stale else ""
     v = f" {j['result']['verdict']}" if j["result"] else ""
     return f"{jid:<24} {s['lane']:<11} {j['state'] + v + flag:<18} value {s['value']:<3} " \
-           f"budget {s['budget_s']:>5}s ${s['budget_usd']:<6} {s['question'][:70]}"
+           f"funded ${s['budget_usd']:<6} ({specmod.funded_seconds(s, cfg['lanes']):>4}s) {s['question'][:70]}"
 
 
 def cmd_list(a):
@@ -167,7 +176,7 @@ def cmd_list(a):
     if a.scenarios:
         names = specmod.scenarios(root, cfg)
         if names is None:
-            sys.exit(f"no scenario directory: set [bench] scenario_dir in lanes.toml (default: scenarios/ in {root})")
+            sys.exit(f"no scenario registry: set [bench] scenario_dir (default: scenarios/ in {root}) or scenario_cmd in lanes.toml")
         print("\n".join(names))
         return
     st = L.fold(lg.rows())
@@ -309,11 +318,12 @@ def cmd_result(a):
     dead = [r for d in s.get("depends_on", []) if "dead branch" in (r := st.dep_reason(d) or "")]
     if dead and not a.force:
         sys.exit(f"refused: {a.id} is on a dead branch ({dead[0]}); cancel it, or --force")
-    rep = {"verdict": a.verdict, "uncached": a.uncached, "cached": a.cached, "out": a.out, "wall_s": a.wall_s}
+    meters = {k: float(v) for k, v in (m.split("=", 1) for m in a.meter)}
+    rep = {"verdict": a.verdict, "meters": meters, "wall_s": a.wall_s}
     prev = st.jobs[a.id]["result"]
-    if prev and not (a.uncached or a.cached or a.out or a.wall_s):     # a verdict-only correction keeps the cost already booked
+    if prev and not (meters or a.wall_s):     # a verdict-only correction keeps the cost already booked
         c = prev["cost"]
-        rep.update(uncached=c.get("uncached_in", 0), cached=c.get("cache_read", 0), out=c.get("out", 0), wall_s=c.get("wall_s", 0.0))
+        rep.update(meters=c.get("meters", {}), wall_s=c.get("wall_s", 0.0))
         a.lane = a.lane or c.get("lane")
     if a.arm:     # per-variant verdicts settle each arm's market
         rep["result"] = {"verdicts": dict(x.split("=", 1) for x in a.arm)}
@@ -328,8 +338,8 @@ def cmd_run(a):
     row = run_job(root, lg, cfg, a.id, a.lane, a.force_gate, agent=a.agent)
     sync(root, lg, f"result {a.id} {row['verdict']}")
     c = row["cost"]
-    print(f"{a.id}: {row['verdict'].upper()} {row['note']}\n  cost: {c['uncached_in']} uncached / "
-          f"{c['cache_read']} cached / {c['out']} out · {c['wall_s']}s · ${c['usd']:.2f} on {c['lane']}")
+    print(f"{a.id}: {row['verdict'].upper()} {row['note']}\n  cost: {c['wall_s']}s · {json.dumps(c.get('meters', {}))} · "
+          f"${c['usd']:.2f} on {c['lane']}")
     branch = L.fold(lg.rows()).jobs[a.id]["spec"].get(f"if_{row['verdict']}")
     if branch:
         print(f"  next ({row['verdict']}): {branch}")
@@ -395,6 +405,48 @@ def cmd_replay(a):
     replay(a.dir, Path(a.dir) if (Path(a.dir) / "lanes.toml").exists() else find_root(), a.out)
 
 
+def cmd_bootstrap(a):
+    """Print agents/BOOTSTRAP.md; --apply a proposed edit (bootstrap_add / bootstrap_remove) and commit it;
+    --settle a bootstrap job: the first newcomer registered after the job vs the one before it, over their first n posts."""
+    from .autopilot import bootstrap
+    root, lg, cfg = ctx()
+    path = root / "agents" / "BOOTSTRAP.md"
+    if a.apply:
+        s = specmod.load(a.apply)
+        lines = path.read_text().splitlines() if path.exists() else []
+        drop = {x.strip() for x in s.get("bootstrap_remove", [])}
+        lines = [l for l in lines if l.strip() not in drop]
+        lines += [x for x in s.get("bootstrap_add", []) if x not in lines]
+        path.parent.mkdir(exist_ok=True)
+        path.write_text("\n".join(lines) + "\n")
+        L.git(root, "add", str(path))
+        L.git(root, "commit", "-q", "-m", f"bootstrap: apply {s.get('id', a.apply)}", "--", str(path))
+        print(f"applied {s.get('id')}: +{len(s.get('bootstrap_add', []))} -{len(drop)} lines")
+    elif a.settle:
+        from .run import record
+        rows = lg.rows()
+        st = L.fold(rows)
+        if a.settle not in st.jobs:
+            sys.exit(f"no job {a.settle}")
+        pivot = next(i for i, r in enumerate(rows) if r["t"] == "node" and r["id"] == a.settle)
+        prev = B.newcomer(rows, pivot)
+        old = set(B.Book(rows[:pivot]).agents)
+        nxt = next((x for x, r in B.Book(rows).agents.items() if r["kind"] == "persistent" and x not in old and x != B.REFLECT), None)
+        if not prev or not nxt:
+            sys.exit(f"{a.settle}: no newcomer {'before' if not prev else 'after'} it yet; wait")
+        before, after = B.bootstrap_cost(rows, prev, a.n), B.bootstrap_cost(rows, nxt, a.n)
+        if after["posts"] < a.n:
+            sys.exit(f"{a.settle}: newcomer {nxt} has {after['posts']}/{a.n} posts; wait")
+        key = lambda c: (c["invalid"], c["cancelled"])
+        verdict = "pass" if key(after) < key(before) else "fail"
+        rep = {"verdict": verdict, "result": {"before": before, "after": after}}
+        record(lg, cfg, st.jobs[a.settle]["spec"], st.jobs[a.settle]["spec"]["lane"], {"report": rep, "wall_s": 0.0, "rc": 0}, agent=actor(a, lg).get("agent"))
+        sync(root, lg, f"result {a.settle} {verdict}")
+        print(f"{a.settle}: {verdict} ({prev} invalid {before['invalid']:.0%} -> {nxt} {after['invalid']:.0%})")
+    else:
+        print(bootstrap(root))
+
+
 def cmd_autopilot(a):
     from .autopilot import Autopilot
     root, lg, cfg = ctx()
@@ -409,6 +461,10 @@ def cmd_view(a):
 
 
 def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["runner"]:          # the runner needs no state directory: it only runs what it is sent
+        from . import runner_service
+        return runner_service.main(argv[1:])
     ap = argparse.ArgumentParser(prog="q", description=f"{NAME}: a prediction market that schedules experiments, over a ledger of jobs and findings. You dispatch.")
     ap.add_argument("--version", action="version", version=f"{NAME.lower()} {__version__}")
     ap.add_argument("--root", help="the state directory (default: $PIT_ROOT, else the nearest one above the cwd, else this checkout)")
@@ -433,11 +489,11 @@ def main(argv=None):
     p = sub.add_parser("review", help="re-admit a stale node"); p.add_argument("id"); p.add_argument("--note", required=True); p.set_defaults(f=cmd_review)
     p = sub.add_parser("result", help="record a hand-run result"); p.add_argument("id")
     p.add_argument("--verdict", required=True, choices=specmod.VERDICTS); p.add_argument("--wall-s", type=float, default=0.0)
-    p.add_argument("--uncached", type=int, default=0); p.add_argument("--cached", type=int, default=0)
-    p.add_argument("--out", type=int, default=0); p.add_argument("--lane"); p.add_argument("--as", dest="agent", help="the agent recording it")
+    p.add_argument("--meter", action="append", default=[], help="NAME=N, e.g. tok_in=1200 (priced by the lane)")
+    p.add_argument("--lane"); p.add_argument("--as", dest="agent", help="the agent recording it")
     p.add_argument("--force", action="store_true", help="record even on a dead @pass/@fail branch")
     p.add_argument("--arm", action="append", help="VARIANT=pass|fail|invalid, per arm"); p.set_defaults(f=cmd_result)
-    p = sub.add_parser("run", help="run a job's command: claim, 2x budget, stop rules, result")
+    p = sub.add_parser("run", help="run a job's command: claim, kill when the funding runs out, stop rules, result")
     p.add_argument("id"); p.add_argument("--lane"); p.add_argument("--force-gate", action="store_true")
     p.add_argument("--as", dest="agent", help="the agent claiming it"); p.set_defaults(f=cmd_run)
     p = sub.add_parser("post", help="add a spec as an agent: it pays the budget and stakes its expect")
@@ -454,8 +510,10 @@ def main(argv=None):
     p = sub.add_parser("bet", help="q bet <job> [<variant>] PASS|FAIL <amount> --as <agent>")
     p.add_argument("job"); p.add_argument("args", nargs="+"); p.add_argument("--as", dest="agent", required=True)
     p.set_defaults(f=cmd_bet)
-    p = sub.add_parser("agent", help="q agent add <id> --brief ... [--parent <id>]"); p.add_argument("verb", choices=("add",))
-    p.add_argument("id"); p.add_argument("--brief", required=True); p.add_argument("--parent"); p.set_defaults(f=cmd_agent)
+    p = sub.add_parser("agent", help="q agent add <id> --brief ... [--parent <id>] | q agent retire <id> --reason ...")
+    p.add_argument("verb", choices=("add", "retire")); p.add_argument("id"); p.add_argument("--brief"); p.add_argument("--parent")
+    p.add_argument("--reason"); p.add_argument("--as", dest="by", help="who adds or retires it (reflect, when it plants or retires)")
+    p.set_defaults(f=cmd_agent)
     p = sub.add_parser("tick", help="pay the income since the last tick; print balances")
     p.add_argument("--since", help="ISO time the first tick counts from"); p.set_defaults(f=cmd_tick)
     p = sub.add_parser("balance"); p.add_argument("--as", dest="agent"); p.set_defaults(f=cmd_balance)
@@ -472,6 +530,9 @@ def main(argv=None):
     p.add_argument("--record", action="store_true"); p.add_argument("--note"); p.add_argument("--why", action="store_true")
     p.add_argument("--as", dest="agent", help="the reflecting identity (reflect, or a sub of it)")
     p.set_defaults(f=cmd_reflect)
+    p = sub.add_parser("bootstrap", help="agents/BOOTSTRAP.md; --apply <proposed.toml>; --settle <job>")
+    p.add_argument("--apply"); p.add_argument("--settle"); p.add_argument("-n", type=int, default=20)
+    p.add_argument("--as", dest="agent", default="reflect"); p.set_defaults(f=cmd_bootstrap)
     p = sub.add_parser("metrics", help="derived per-node numbers: cost, budget ratios, lineage spend, depth"); p.add_argument("id", nargs="?")
     p.set_defaults(f=cmd_metrics)
     p = sub.add_parser("autopilot", help="run the loop: dispatch per free lane, hand results back to agents, reflect")
@@ -483,6 +544,7 @@ def main(argv=None):
     p.set_defaults(f=cmd_autopilot)
     p = sub.add_parser("view", help="serve the terminal (markets, lanes, agents, tape) at http://127.0.0.1:8790/"); p.add_argument("--port", type=int, default=8790); p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--no-open", action="store_true"); p.set_defaults(f=cmd_view)
+    sub.add_parser("runner", help="serve runs on this box over HTTP (docs/runner.md); q runner --help", add_help=False)
     p = sub.add_parser("replay"); p.add_argument("dir"); p.add_argument("--out", help="write the simulated ledger here (ndjson)")
     p.set_defaults(f=cmd_replay)
     a = ap.parse_args(argv)

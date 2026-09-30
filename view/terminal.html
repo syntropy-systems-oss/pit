@@ -138,6 +138,7 @@ tr.detail td{height:auto;white-space:normal;background:var(--pan);padding:8px 8p
 .ag .l2{color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ag svg{grid-column:2;grid-row:1/3;align-self:center}
 .ag.sub{padding-left:24px}
+.ag.ret{opacity:.5}
 #cal td,#cal th{height:24px;padding:0 4px}
 #cal td:first-child,#cal th:first-child{padding-left:8px}
 #cal td:last-child,#cal th:last-child{padding-right:8px}
@@ -309,12 +310,12 @@ function renderLanes(m) {
   $("n-lanes").textContent = m.lanes.length;
   if (!m.lanes.length) return setHTML("lanes", `<div class="empty">no lanes: name them, with a $/h each, in <code>lanes.toml</code></div>`);
   setHTML("lanes", m.lanes.map(l => {
-    const r = l.running, pct = r ? Math.min(100, 100 * r.elapsed_s / Math.max(1, r.budget_s)) : 0, q = l.queue.slice(0, 8);
+    const r = l.running, pct = r ? Math.min(100, 100 * r.burned_usd / Math.max(0.01, r.budget_usd)) : 0, q = l.queue.slice(0, 8);   // money burned (elapsed x rate) of the funding
     return `<div class="lane" title="${esc(l.box || "")}"><div class="top"><span class="name">${esc(l.lane)}</span><span class="dim">${usd(l.price)}/h</span><span class="num fg2" title="spent today">${usd(l.spend_today)}</span></div>` +
       (l.bag ? `<div class="dim">bag: ${l.bag.n}/${l.bag.max} today</div>` : "") +
       (r ? `<div class="st"><span class="b acc">run</span><span class="chip" data-task="${esc(r.job)}">${esc(r.job)}</span>${r.fallback ? '<span class="b q">fbk</span>' : ""}</div>` +
-        `<div class="pr"><div class="prog" role="progressbar" aria-label="${esc(r.job)} elapsed of budget" aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100"><i class="${r.elapsed_s > r.budget_s ? "over" : ""}" style="width:${pct}%"></i></div>` +
-        `<span class="num">${mmss(r.elapsed_s)}<span class="dim"> / ${mmss(r.budget_s)}</span></span></div>`
+        `<div class="pr"><div class="prog" role="progressbar" aria-label="${esc(r.job)} funding burned" aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100"><i class="${r.burned_usd > r.budget_usd ? "over" : ""}" style="width:${pct}%"></i></div>` +
+        `<span class="num" title="${mmss(r.elapsed_s)} of ${mmss(r.funded_s)}">${usd(r.burned_usd)}<span class="dim"> / ${usd(r.budget_usd)}</span></span></div>`
         : `<div class="st"><span class="b ${l.idle_s > 120 ? "F" : "q"}">idle${l.idle_s != null ? " " + Math.floor(l.idle_s / 60) + "m" : ""}</span></div>`) +
       `<div class="qh"><span>Queue ${l.depth}</span><span class="num">score</span></div>` +
       (q.map((x, i) => `<div class="qr" data-task="${esc(x.task)}"><span class="dim num">${i + 1}</span><span class="t">${esc(x.task)}</span><span>${x.fallback ? '<span class="b q">fbk</span>' : ""}</span><span class="num">${x.score.toFixed(2)}</span></div>`).join("") ||
@@ -397,9 +398,9 @@ function renderAgents(m) {
   $("n-agents").textContent = `${list.length} agents · ${m.top.subs || 0} turns`;
   const ags = list.map(([a, d]) => {
     const c = cal[a.wallet], own = a.kind === "persistent";
-    return `<div class="ag${d ? " sub" : ""}${S.agent === a.id ? " sel" : ""}" data-agent="${esc(a.id)}" tabindex="0" role="button" aria-label="open ${esc(a.id)}'s thread">` +
-      `<div class="l1"><b>${esc(a.id)}</b>${a.sleeping ? '<span class="b acc">sleep</span>' : ""}<span class="num">${own ? usd(a.balance) : '<span class="dim">sub</span>'}</span></div>` +
-      `<div class="l2">${a.sleeping ? "wakes " + esc(a.sleep.until) : own && c ? `won ${c.wins}/${c.bets} · brier ${c.brier}` : esc(a.brief)}${own ? ` · acted ${a.last_acted ? hms(a.last_acted) : "never"} · ${a.turns || 0} turns${a.last_turn ? ", last " + ago(a.last_turn_age_s) + " ago" : ""}` : ""}</div>${own ? spark(a.series) : ""}</div>`;
+    return `<div class="ag${d ? " sub" : ""}${a.retired ? " ret" : ""}${S.agent === a.id ? " sel" : ""}" data-agent="${esc(a.id)}" tabindex="0" role="button" aria-label="open ${esc(a.id)}'s thread">` +
+      `<div class="l1"><b>${esc(a.id)}</b>${a.retired ? `<span class="b q" title="${esc(a.retired.reason)}">retired</span>` : a.sleeping ? '<span class="b acc">sleep</span>' : ""}<span class="num">${own ? usd(a.balance) : '<span class="dim">sub</span>'}</span></div>` +
+      `<div class="l2">${a.sleeping ? "wakes " + esc(a.sleep.until) : own && c ? `won ${c.wins}/${c.bets} · brier ${c.brier}` : esc(a.brief)}${own ? ` · acted ${a.last_acted ? hms(a.last_acted) : "never"} · ${a.turns || 0} turns${a.last_turn ? ", last " + ago(a.last_turn_age_s) + " ago" : ""}${a.bootstrap_cost && a.bootstrap_cost.posts ? ` · bootstrap ${Math.round(100 * a.bootstrap_cost.invalid)}% invalid` : ""}` : ""}</div>${own ? spark(a.series) : ""}</div>`;
   }).join("") || `<div class="empty">no agents: add one with <code>q agent add &lt;id&gt; --brief "..."</code></div>`;
   const pnl = c => (parseFloat(c.returned) || 0) - (parseFloat(c.staked) || 0);
   const calt = m.calibration.length ? `<table id="cal" aria-label="calibration"><colgroup><col><col style="width:48px"><col style="width:64px"><col style="width:56px"><col style="width:48px"></colgroup>` +

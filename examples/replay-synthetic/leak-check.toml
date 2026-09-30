@@ -4,7 +4,6 @@ expect = "pass"
 if_pass = "B's gain is contamination: refute F:b-beats-a"
 if_fail = "B's gain stands"
 lane = "any"
-budget_s = 600
 budget_usd = 1
 proposer = "skeptic"
 depends_on = ["variant-b"]

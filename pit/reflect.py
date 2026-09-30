@@ -93,7 +93,7 @@ def digest(rows: list[dict], n: int | None = None) -> str:
         if jid not in touched:
             continue
         s, res = j["spec"], j["result"]
-        line = f"job {jid} [{j['state']}] lane={s['lane']} budget={s['budget_s']}s ${s['budget_usd']} expect={s['expect']} " \
+        line = f"job {jid} [{j['state']}] lane={s['lane']} budget=${s['budget_usd']} expect={s['expect']} " \
                f"q={s['question']}"
         if res:
             c = res["cost"]

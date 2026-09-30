@@ -22,7 +22,7 @@ CFG = tomllib.loads((ROOT / "lanes.example.toml").read_text())
 
 def job(id, **kw):
     s = {"id": id, "question": f"does {id} hold?", "expect": "pass", "if_pass": "go", "if_fail": "stop",
-         "lane": "gpu-small", "budget_s": 60, "budget_usd": 1}
+         "lane": "gpu-small", "budget_usd": 1}
     s.update(kw)
     return specmod.normalize(s)
 
@@ -36,9 +36,10 @@ class Validator(unittest.TestCase):
     def errs(self, **kw):
         return specmod.validate(job("a", **kw), CFG["lanes"])
 
-    def test_budget_s_is_capped_at_an_hour(self):
-        self.assertEqual(self.errs(budget_s=3600), [])
-        self.assertTrue(any("over an hour" in e for e in self.errs(budget_s=3601)))
+    def test_funding_buys_between_30_s_and_an_hour(self):
+        self.assertEqual(self.errs(budget_usd=14, value=1), [])                               # the hour on a $14/h lane
+        self.assertTrue(any("no run longer than an hour" in e for e in self.errs(budget_usd=14.1, value=1)))
+        self.assertTrue(any("no budget_s" in e for e in self.errs(budget_s=60)))                # money, not time
 
     def test_ok(self):
         self.assertEqual(self.errs(), [])
@@ -49,8 +50,10 @@ class Validator(unittest.TestCase):
         self.assertTrue(any("if_pass == if_fail" in e for e in self.errs(if_fail="go")))
         self.assertTrue(any("unknown lane" in e for e in self.errs(lane="gpu9")))
         self.assertTrue(any("cheap lane" in e for e in self.errs(budget_usd=30)))      # gpu-small: $25/value
-        self.assertEqual(self.errs(budget_usd=30, value=2), [])
-        self.assertEqual(specmod.validate(job("a", lane="gpu-large", budget_usd=500), CFG["lanes"]), [])
+        self.assertTrue(any("no run longer than an hour" in e for e in self.errs(budget_usd=30, value=2)))   # $30 on a $14/h lane buys > 3600 s
+        self.assertEqual(self.errs(budget_usd=10, value=2), [])                                  # $10 buys 2571 s on gpu-small
+        self.assertTrue(any("no run longer than an hour" in e for e in specmod.validate(job("a", lane="gpu-large", budget_usd=500), CFG["lanes"])))
+        self.assertTrue(any("funding buys < 30 s on gpu-small" in e for e in self.errs(budget_usd=0.1)))   # $0.10 at $14/h = 25 s
         self.assertTrue(any("not in depends_on" in e for e in self.errs(inputs={"x": "{{ jobs.b.result.k }}"})))
         self.assertTrue(any("unresolved" in e for e in self.errs(inputs={"x": "{{ nonsense }}"})))
         self.assertEqual(self.errs(depends_on=["b"], inputs={"x": "{{ jobs.b.result.k }}"}), [])
@@ -112,14 +115,22 @@ class Fold(unittest.TestCase):
 
 class Cost(unittest.TestCase):
     def test_cost_line(self):
-        c = lanes.cost_line(CFG, "gpu-large", uncached_in=1_000_000, cache_read=1_000_000, out=1_000_000, wall_s=36)
+        c = lanes.cost_line(CFG, "gpu-large", 36, {"tok_in": 1_000_000, "tok_cached": 1_000_000, "tok_out": 1_000_000})
         self.assertAlmostEqual(c["usd"], 0.24 + 0.05 + 2.20 + 1.0)
+        self.assertEqual((c["usd_time"], c["wall_s"], "unpriced" in c), (1.0, 36.0, False))
         self.assertAlmostEqual(lanes.cost_line(CFG, "gpu-small", wall_s=3600)["usd"], 14)
         self.assertAlmostEqual(lanes.cost_line(CFG, "ci", wall_s=17 * 60)["usd"], 28.3333, places=3)
 
+    def test_meters_are_priced_by_the_lane(self):
+        cfg = {**CFG, "lanes": {**CFG["lanes"], "ci": {**CFG["lanes"]["ci"], "prices": {"usd_per_mtok_out": 10, "usd_per_gb": 0.5}}}}
+        c = lanes.cost_line(cfg, "ci", 0, {"tok_in": 2_000_000, "tok_out": 100_000, "gb": 3, "widgets": 7})
+        self.assertAlmostEqual(c["usd"], 2 * 0.24 + 0.1 * 10 + 3 * 0.5)          # [prices] default, the lane's own over it
+        self.assertEqual((c["meters"]["widgets"], c["unpriced"]), (7, ["widgets"]))   # recorded, not charged
+        self.assertAlmostEqual(lanes.cost_line(CFG, "any", 3600, {"tok_out": 1_000_000})["usd"], 2.20)   # `any`: meters only
+
     def test_parse_line(self):
-        r = runmod.parse_line('pit: job=a verdict=fail uncached=10 cached=20 out=3 wall_s=4.5 result={"k": [1, 2]}')
-        self.assertEqual(r, {"job": "a", "verdict": "fail", "uncached": 10, "cached": 20, "out": 3, "wall_s": 4.5,
+        r = runmod.parse_line('pit: job=a verdict=fail wall_s=4.5 meters={"tok_in": 10, "tok_cached": 20, "tok_out": 3} result={"k": [1, 2]}')
+        self.assertEqual(r, {"job": "a", "verdict": "fail", "wall_s": 4.5, "meters": {"tok_in": 10, "tok_cached": 20, "tok_out": 3},
                              "result": {"k": [1, 2]}})
         self.assertIsNone(runmod.parse_line("  | pit: job=a"))
 
@@ -127,11 +138,11 @@ class Cost(unittest.TestCase):
 class Rank(unittest.TestCase):
     def test_critical_path_then_value_per_dollar(self):
         lg = L.MemLedger()
-        add(lg, job("leaf-rich", value=5, budget_s=60), job("leaf-poor", value=1, budget_s=60),
-            job("gate", budget_s=600), job("child", depends_on=["gate"], budget_s=600),
-            job("large-leaf", lane="gpu-large", value=5, budget_s=60))
+        add(lg, job("leaf-rich", value=5), job("leaf-poor", value=1),
+            job("gate"), job("child", depends_on=["gate"]),
+            job("large-leaf", lane="gpu-large", value=5, budget_usd=10))
         st = L.fold(lg.rows())
-        # unblocking work first; then value per $: at $14/h vs $100/h, value 1 on gpu-small outranks value 5 on gpu-large
+        # unblocking work first; then value per estimated $ (the funding, until past walls exist): 1/$1 outranks 5/$10
         self.assertEqual(L.rank(st, CFG), ["gate", "leaf-rich", "leaf-poor", "large-leaf"])
 
 
@@ -146,8 +157,12 @@ class Run(unittest.TestCase):
         self.assertEqual(runmod.verdict_of(r)[0], "fail")
         r = runmod.execute("sleep 5", 0.5, [], echo=lambda *_: None)
         self.assertEqual(runmod.verdict_of(r)[0], "fail")  # over budget fails; the partial trace is kept
-        r = runmod.execute("echo 'pit: verdict=fail uncached=5 wall_s=2'; exit 0", 10, [], echo=lambda *_: None)
-        self.assertEqual((runmod.verdict_of(r)[0], r["report"]["uncached"]), ("fail", 5))
+        r = runmod.execute("""echo 'pit: verdict=fail wall_s=2 meters={"tok_in": 5}'; exit 0""", 10, [], echo=lambda *_: None)
+        self.assertEqual((runmod.verdict_of(r)[0], r["report"]["meters"]), ("fail", {"tok_in": 5}))
+
+    def test_shell_adapter_prints_a_report_line(self):
+        r = runmod.execute(f"{ROOT}/examples/adapters/shell/run.sh sh -c 'echo a; echo b; exit 1'", 10, [], echo=lambda *_: None)
+        self.assertEqual((runmod.verdict_of(r)[0], r["report"]["meters"], r["report"]["result"]), ("fail", {"out_lines": 2, "out_bytes": 3}, {"rc": 1}))
 
     def test_refusal_is_invalid(self):
         r = runmod.execute("exit 2", 10, [], echo=lambda *_: None)
@@ -245,7 +260,7 @@ class Replay(unittest.TestCase):
         hand = sum(a["usd"] for s, a in jobs.values() if a.get("hand_run", True))
         self.assertAlmostEqual(hand - sum(v["usd"] for v in sim.values()), 26.0)
         self.assertIn("critical path wall", text)
-        self.assertIn("wallets after settlement: explorer $92.93, skeptic $104.95, house $1.11", text)
+        self.assertIn("wallets after settlement: explorer $90.60, skeptic $105.56, house $1.11", text)
 
     def test_example_ledger_is_the_replay(self):
         """examples/replay-synthetic/ledger is `q replay --out`: fold, Pit settlement, calibration, reflect and view on it."""
@@ -276,7 +291,7 @@ class Hooks(unittest.TestCase):
         (self.root / "ledger").mkdir()
         (self.root / "ledger" / "sim.ndjson").write_text("".join(json.dumps(r) + "\n" for r in sim_lg.rows()))
         self.lg = L.Ledger(self.root / "ledger", "local")
-        add(self.lg, job("next-rung", lane="gpu-large", budget_s=300, budget_usd=9,
+        add(self.lg, job("next-rung", lane="gpu-large", budget_usd=9,
                          if_fail="ask the owner whether to ship v2"))
 
     def test_session_start_script(self):
@@ -381,13 +396,13 @@ class Reflect(unittest.TestCase):
 
     def test_metrics(self):
         lg = L.Ledger(self.root / "ledger2", "local")
-        add(lg, job("a", budget_usd=2, budget_s=100), job("b", depends_on=["a"], budget_usd=4, budget_s=10),
+        add(lg, job("a", budget_usd=2), job("b", depends_on=["a"], budget_usd=4),
             job("c", depends_on=["b"]))
         lg.append({"t": "result", "job": "a", "verdict": "pass", "cost": {"usd": 1.0, "wall_s": 50.0, "lane": "any"}})
         lg.append({"t": "result", "job": "b", "verdict": "pass", "cost": {"usd": 6.0, "wall_s": 5.0, "lane": "any"}})
         lg.append({"t": "node", "kind": "hypothesis", "id": "F:h", "from": "b", "text": "x"})
         m = metrics(lg.rows())
-        self.assertEqual((m["a"]["cost_ratio"], m["a"]["wall_ratio"], m["a"]["depth"], m["a"]["lineage_spend"]), (0.5, 0.5, 0, 1.0))
+        self.assertEqual((m["a"]["cost_ratio"], m["a"]["depth"], m["a"]["lineage_spend"]), (0.5, 0, 1.0))
         self.assertEqual((m["b"]["cost_ratio"], m["b"]["depth"], m["b"]["lineage_spend"]), (1.5, 1, 7.0))
         self.assertEqual((m["c"]["depth"], m["c"]["lineage_spend"], m["c"]["verdict"]), (2, 7.0, None))
         self.assertEqual(m["a"]["rows_since_added"], 3)
@@ -492,7 +507,7 @@ class SilentRun(unittest.TestCase):
 
     def test_version(self):
         r = subprocess.run([sys.executable, "-m", "pit.cli", "--version"], cwd=ROOT, capture_output=True, text=True)
-        self.assertEqual(r.stdout.strip(), "pit 0.4.0")
+        self.assertEqual(r.stdout.strip(), "pit 0.5.0")
 
 
 class Pit(unittest.TestCase):
@@ -537,6 +552,23 @@ class Pit(unittest.TestCase):
         self.bet("y", "pass", 1, "b")
         self.settle("y", "pass", "2026-09-29T05:10:00Z")                         # pot 1.25: vig 0.025
         self.assertAlmostEqual(self.book().balances()["house"], 0.225)
+
+    def test_reflection_plants_an_agent_with_a_house_seeded_root(self):
+        from argparse import Namespace as N
+        from pit import cli, market
+        self.house_with_vig()
+        self.lg.append(B.agent_row(self.book(), "reflect", "the shape of the population"))
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root)
+        with mock.patch.object(cli, "ctx", lambda: (root, self.lg, self.PCFG)), mock.patch.object(cli, "sync", lambda *a: None):
+            cli.cmd_agent(N(verb="add", id="c", brief="a capability several agents lacked, tested without its instructions",
+                            parent=None, reason=None, by="reflect"))
+        self.assertEqual((self.book().agents["c"]["kind"], self.book().agents["c"]["by"]), ("persistent", "reflect"))
+        self.assertIn("a capability several agents lacked", (root / "agents" / "c.toml").read_text())
+        self.assertEqual(self.post(job("c-root"), "reflect"), "seed")                # its first experiment: a root reflect posts
+        self.assertEqual([(b["agent"], b["tags"]) for b in self.book().bets if b["job"] == "c-root"], [("house", ["seed"])])
+        self.assertIn("c", self.book().active())
+        self.assertIn("c", {a["id"] for a in market.market_json(self.lg.rows(), self.PCFG, self.T0)["agents"]})
 
     def test_reflect_root_is_house_seeded(self):
         self.house_with_vig()
@@ -674,7 +706,7 @@ class Pit(unittest.TestCase):
         self.post(job("r"), "a")
         self.post(job("cut", depends_on=["r@pass"]), "a")
         self.lg.append({"t": "result", "job": "r", "verdict": "fail", "cost": {"usd": 0, "wall_s": 0, "lane": "gpu-small"}})
-        kw = dict(id="cut", verdict="pass", wall_s=0.0, uncached=0, cached=0, out=0, lane=None, arm=None, agent=None)
+        kw = dict(id="cut", verdict="pass", wall_s=0.0, meter=[], lane=None, arm=None, agent=None)
         with self.assertRaises(SystemExit):
             self.cli("cmd_result", force=False, **kw)
         self.cli("cmd_result", force=True, **kw)
@@ -682,7 +714,7 @@ class Pit(unittest.TestCase):
 
     def test_verdict_only_correction_inherits_cost(self):
         self.post(job("c"), "a")
-        kw = dict(id="c", uncached=0, cached=0, out=0, lane=None, arm=None, agent=None, force=False)
+        kw = dict(id="c", meter=[], lane=None, arm=None, agent=None, force=False)
         self.cli("cmd_result", verdict="pass", wall_s=1800.0, **kw)
         first = L.fold(self.lg.rows()).jobs["c"]["result"]["cost"]["usd"]
         self.assertGreater(first, 0)
@@ -756,6 +788,29 @@ class Pit(unittest.TestCase):
             s = B.settle_due(self.lg, self.PCFG)[0]
             self.assertEqual((s["outcome"], s["vig"], s["payouts"]), ("void", 0.0, {"a": 0.25, "b": 2.0}))
 
+    def test_corrected_verdict_resettles(self):
+        def market(jid):
+            self.post(job(jid), "a")                                              # a: PASS 0.25
+            self.bet(jid, "pass", 0.75, "a")
+            self.bet(jid, "fail", 3, "b")                                         # pot 4, vig 0.08
+        market("x")
+        self.settle("x", "pass")
+        want = self.book().balances()                                             # pass-only settlement
+        self.setUp()
+        market("x")
+        self.settle("x", "fail")
+        s = self.settle("x", "pass", "2026-09-29T05:01:00Z")                      # (a) corrected: re-settle
+        self.assertEqual(len(s), 1)
+        self.assertEqual((s[0]["supersedes"], s[0]["reason"]), ("2026-09-29T05:00:00Z", "verdict corrected fail -> pass"))
+        self.assertEqual(s[0]["clawback"], {"b": 3.92})
+        self.assertEqual(self.book().balances(), want)                            # house keeps one vig
+        self.assertEqual(self.book().balances()["house"], 0.08)
+        self.assertEqual(B.settle_due(self.lg, self.PCFG), [])                  # (c) idempotent
+        self.assertEqual(self.settle("x", "pass", "2026-09-29T05:02:00Z"), [])    # (b) same verdict: nothing
+        self.settle("x", "fail", "2026-09-29T05:03:00Z")                          # flip back: chain stays exact
+        self.settle("x", "pass", "2026-09-29T05:04:00Z")
+        self.assertEqual(self.book().balances(), want)
+
     def test_thread_and_calibration(self):
         self.post(job("x", produces_if_fail=["F:x"]), "a")
         self.post(job("open", budget_usd=2), "b")
@@ -789,6 +844,47 @@ class Pit(unittest.TestCase):
                                    "(0-0 on posts, 0-0 on bets)")
         self.assertIn("PASS pays 1.2:1", lines[0])
         self.assertEqual(B.pays(self.book(), "both", "main", "pass", self.PCFG), ("pass", (1.25 + 1) * 0.98 / 1.25))
+
+    # ---- funding: budget_usd is the only budget; time and tokens burn it; the market pool is separate ----
+    def rec(self, jid, verdict="pass", ts="2026-09-29T05:00:00Z", **rep):
+        s = L.fold(self.lg.rows()).jobs[jid]["spec"]
+        return runmod.record(self.lg, self.PCFG, s, s["lane"], {"report": {"verdict": verdict, **rep}, "wall_s": rep.get("wall_s", 0), "rc": 0}, ts)
+
+    def test_funded_seconds(self):
+        f = lambda **kw: specmod.funded_seconds(job("a", **kw), CFG["lanes"])
+        self.assertEqual((f(budget_usd=1), f(budget_usd=5, lane="gpu-large"), f(budget_usd=5, lane="ci"), f(lane="any")), (257, 180, 180, 3600))
+        self.assertEqual((f(budget_usd=0.01), f(budget_usd=200, lane="ci")), (30, 3600))      # floor 30 s, cap an hour
+        self.assertEqual(specmod.validate(job("a", lane="any", budget_usd=0.01), CFG["lanes"]), [])   # `any` is unpriced: the hour
+
+    def test_tokens_over_budget_fail_and_overage_charged(self):
+        self.post(job("x", budget_usd=1), "a")                                   # a: -1 funding, -0.25 PASS stake
+        row = self.rec("x", wall_s=60, meters={"tok_out": 400000})              # time $0.2333 + meters $0.88 = $1.1133
+        self.assertEqual(row["verdict"], "fail")
+        self.assertEqual(row["note"], "over budget: $1.11 of $1.00 (time $0.23, meters $0.88); trace kept")
+        self.assertEqual(row["funding"], {"wallet": "a", "usd": -0.1133})
+        self.assertAlmostEqual(self.book().balance("a"), 53.5 - 1 - 0.25 - 0.1133)
+        (st,) = [r for r in self.lg.rows() if r["t"] == "settle"]
+        self.assertEqual((st["pot"], st["payouts"]), (0.25, {"house": 0.25}))  # the pot is the stake alone: no funding in it
+
+    def test_overage_takes_what_the_wallet_has(self):
+        self.post(job("x", budget_usd=1), "b")
+        self.post(job("y"), "a")
+        self.bet("y", "fail", 52.2, "b")                                          # b: 53.5 - 1 - 0.25 - 52.2 = 0.05 left
+        row = self.rec("x", wall_s=60, meters={"tok_out": 500000})                              # $1.3333: overage 0.3333
+        self.assertEqual(row["funding"], {"wallet": "b", "usd": -0.05, "shortfall": 0.2833})
+        self.assertIn("b short $0.28 of the overage", row["note"])
+        self.assertAlmostEqual(self.book().balance("b"), 0.0)
+
+    def test_under_budget_refunds_unspent_once(self):
+        self.post(job("x", budget_usd=1), "a")
+        row = self.rec("x", wall_s=30)                                           # $0.1167 of $1
+        self.assertEqual((row["verdict"], row["funding"]), ("pass", {"wallet": "a", "usd": 0.8833}))
+        paid = lambda: sum(u for r in self.lg.rows() if r["t"] == "settle" for w, u in r["payouts"].items() if w == "a") - \
+            sum(u for r in self.lg.rows() if r["t"] == "settle" for w, u in r.get("clawback", {}).items() if w == "a")
+        self.assertAlmostEqual(self.book().balance("a") - paid(), 53.5 - 1 - 0.25 + 0.8833)
+        self.rec("x", "fail", ts="2026-09-29T05:05:00Z", wall_s=30)             # a corrected result replaces the refund, never adds a second
+        self.assertEqual(list(self.book().funds.values()), [("a", 0.8833)])
+        self.assertAlmostEqual(self.book().balance("a") - paid(), 53.5 - 1 - 0.25 + 0.8833)
 
     def test_record(self):
         self.post(job("x"), "a")                                                  # a posts PASS (self)

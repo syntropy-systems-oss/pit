@@ -4,7 +4,6 @@ expect = "pass"
 if_pass = "nothing to do"
 if_fail = "add it before the release"
 lane = "any"
-budget_s = 300
 budget_usd = 1
 
 [actual]

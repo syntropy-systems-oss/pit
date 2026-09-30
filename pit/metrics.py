@@ -3,7 +3,7 @@ from . import ledger as L, spec as specmod
 
 
 def metrics(rows: list[dict]) -> dict[str, dict]:
-    """{node id: {...}}. Job: state verdict cost wall_s cost_ratio wall_ratio lineage_spend depth rows_since_added. Finding: kind status open_dependents."""
+    """{node id: {...}}. Job: state verdict cost wall_s cost_ratio lineage_spend depth rows_since_added. Finding: kind status open_dependents."""
     st = L.fold(rows)
     out: dict[str, dict] = {}
     for jid, j in st.jobs.items():
@@ -11,7 +11,6 @@ def metrics(rows: list[dict]) -> dict[str, dict]:
         out[jid] = {"state": j["state"], "verdict": j["result"]["verdict"] if j["result"] else None,
                     "cost": c.get("usd", 0.0), "wall_s": c.get("wall_s", 0.0),
                     "cost_ratio": c.get("usd", 0.0) / s["budget_usd"] if s["budget_usd"] else 0.0,
-                    "wall_ratio": c.get("wall_s", 0.0) / s["budget_s"] if s["budget_s"] else 0.0,
                     "rows_since_added": sum(1 for r in rows if r["ts"] > j["added"])}
     depth: dict[str, int] = {}
 
@@ -32,7 +31,7 @@ def metrics(rows: list[dict]) -> dict[str, dict]:
 
 def table(m: dict[str, dict], only=None) -> str:
     ids = [i for i in m if only is None or i in only]
-    cols = ["state", "verdict", "cost", "wall_s", "cost_ratio", "wall_ratio", "lineage_spend", "depth", "rows_since_added"]
+    cols = ["state", "verdict", "cost", "wall_s", "cost_ratio", "lineage_spend", "depth", "rows_since_added"]
     fcols = ["kind", "status", "open_dependents"]
     fmt = lambda v: f"{v:.2f}" if isinstance(v, float) else "-" if v is None else str(v)
     out = ["job          " + " ".join(f"{c:>10}" for c in cols)]

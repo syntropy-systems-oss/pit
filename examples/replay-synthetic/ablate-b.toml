@@ -4,7 +4,6 @@ expect = "pass"
 if_pass = "the gain is the architecture"
 if_fail = "the gain is the data mix"
 lane = "gpu-small"
-budget_s = 2400
 budget_usd = 10
 depends_on = ["F:b-beats-a"]
 run = "python3 eval.py --variant B-nomix --set heldout"

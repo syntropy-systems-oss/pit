@@ -1,6 +1,8 @@
 """Job spec: one TOML file per job. Parse, validate, render templated inputs."""
+import json
 import re
 import shlex
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -11,7 +13,7 @@ REF = re.compile(r"^(?:(jobs)\.(.+?)\.(result|verdict)|(findings)\.(.+?)\.(text|
 VERDICTS = ("pass", "fail", "invalid", "unknown")
 FINDING_LISTS = ("produces", "produces_if_pass", "produces_if_fail", "refutes_if_pass", "refutes_if_fail")
 DEFAULTS = {"value": 1, "depends_on": [], "inputs": {}, "priority": 0, "run": "",
-            "fail_on": ["feedback_report", "cache_miss"], **{k: [] for k in FINDING_LISTS}}
+            "fail_on": ["feedback_report"], **{k: [] for k in FINDING_LISTS}}
 
 
 class SpecError(ValueError):
@@ -52,9 +54,18 @@ def refs(value):
 
 
 def scenarios(root, cfg: dict) -> list[str] | None:
-    """The scenario names a job may run: the entries of `[bench] scenario_dir` (relative to the state root, default
-    `scenarios/`), one file or directory per scenario, named by its stem. None = no such directory: accept anything."""
-    d = Path(root) / Path(cfg.get("bench", {}).get("scenario_dir", "scenarios")).expanduser()
+    """The scenario names a job may run. `[bench] scenario_cmd`, when set, is a shell command run in the state root whose
+    last stdout line is a JSON list of names (earlier lines, e.g. warnings, are ignored). Otherwise the entries of
+    `[bench] scenario_dir` (relative to the state root, default `scenarios/`), one file or directory per scenario, named
+    by its stem. None = no registry: accept anything."""
+    b = cfg.get("bench", {})
+    if b.get("scenario_cmd"):
+        p = subprocess.run(["sh", "-c", b["scenario_cmd"]], cwd=root, capture_output=True, text=True, timeout=60)
+        lines = p.stdout.strip().splitlines()
+        if p.returncode or not lines:
+            raise SystemExit(f"[bench] scenario_cmd exited {p.returncode} with no list: {p.stderr.strip()[-200:]}")
+        return sorted(json.loads(lines[-1]))
+    d = Path(root) / Path(b.get("scenario_dir", "scenarios")).expanduser()
     if not d.is_dir():
         return None
     return sorted({p.stem for p in d.iterdir() if not p.name.startswith(".")})
@@ -66,12 +77,20 @@ def synth(spec: dict, cfg: dict) -> tuple[str, str | None] | None:
     l = cfg["lanes"].get(spec.get("lane"), {})
     if spec.get("run") or not spec.get("scenario") or "runner" not in l:
         return None
-    f = dict(scenario=shlex.quote(spec["scenario"]), model=shlex.quote(l.get("model", "")), budget_s=int(spec["budget_s"]))
+    f = dict(scenario=shlex.quote(spec["scenario"]), model=shlex.quote(l.get("model", "")), funded_s=funded_seconds(spec, cfg["lanes"]))
     return l["runner"].format(**f), (l["preflight"].format(**f) if l.get("preflight") else None)
 
 
-def validate(spec: dict, lanes: dict, known: list[str] | None = None) -> list[str]:
-    """Reasons to refuse the spec; empty list = accepted. `lanes` is lanes.load()['lanes']; `known` = scenarios() (None: any)."""
+def funded_seconds(spec: dict, lanes: dict) -> int:
+    """The kill line: the seconds budget_usd buys on the spec's lane (budget_usd x 3600 / usd_per_h), floor 30 s,
+    cap an hour; `any` (or a lane with no usd_per_h) gets the hour. `lanes` is lanes.load()['lanes']."""
+    rate = lanes.get(spec.get("lane"), {}).get("usd_per_h")
+    return max(30, min(3600, int(spec.get("budget_usd", 0) * 3600 / rate))) if rate else 3600
+
+
+def validate(spec: dict, lanes: dict, known: list[str] | None = None, drivers: list[str] | None = None) -> list[str]:
+    """Reasons to refuse the spec; empty list = accepted. `lanes` is lanes.load()['lanes']; `known` = scenarios() (None: any);
+    `drivers` = [bench] drivers (None: a run is not checked for a verdict line)."""
     errs = []
     for k in ("id", "question", "expect", "if_pass", "if_fail"):
         if not str(spec.get(k, "")).strip():
@@ -85,11 +104,16 @@ def validate(spec: dict, lanes: dict, known: list[str] | None = None) -> list[st
     lane = spec.get("lane")
     if lane != "any" and lane not in lanes:
         errs.append(f"unknown lane {lane!r} (have: {', '.join([*lanes, 'any'])})")
-    budget_s, budget_usd, value = spec.get("budget_s"), spec.get("budget_usd"), spec.get("value", 1)
-    if not isinstance(budget_s, (int, float)) or budget_s <= 0:
-        errs.append("budget_s must be a positive number")
-    elif budget_s > 3600:
-        errs.append("budget_s over an hour: nothing runs longer than 3600 s (split it)")
+    if "budget_s" in spec:
+        errs.append("no budget_s: fund the run in dollars (budget_usd); the time it buys is budget_usd / the lane's usd_per_h")
+    budget_usd, value = spec.get("budget_usd"), spec.get("value", 1)
+    rate = lanes.get(lane, {}).get("usd_per_h")
+    if isinstance(budget_usd, (int, float)) and rate:
+        raw = budget_usd * 3600 / rate
+        if raw < 30:
+            errs.append(f"funding buys < 30 s on {lane} (${budget_usd} at ${rate}/h)")
+        elif raw > 3600:
+            errs.append(f"no run longer than an hour: ${budget_usd} buys {raw:.0f} s on {lane} (at most ${rate}; split it)")
     if not isinstance(budget_usd, (int, float)) or budget_usd < 0:
         errs.append("budget_usd must be a number >= 0")
     if not isinstance(value, (int, float)) or value <= 0:
@@ -102,6 +126,17 @@ def validate(spec: dict, lanes: dict, known: list[str] | None = None) -> list[st
             errs.append(f"budget_usd {budget_usd} > value {value} x ${min(caps)}/value on a cheap lane")
     if not isinstance(spec.get("run", ""), str):
         errs.append("run must be a shell command string")
+    elif spec.get("run") and drivers is not None and "verdict=" not in spec["run"] \
+            and not any(spec["run"].lstrip().startswith(d) for d in drivers):
+        errs.append("run never prints its verdict: end it with `echo \"pit: verdict=pass|fail result={...}\"` or start it "
+                    "with a [bench] drivers command (an exit code alone books INVALID); a question answered by reading is a finding")
+    elif spec.get("run") and lane in lanes:
+        # a hand-written run may not borrow another lane's model: that work belongs on that lane
+        named = set(re.findall(r"--model[ =]['\"]?([^\s'\"]+)", spec["run"]))
+        other = {l["model"] for n, l in lanes.items() if n != lane and l.get("model")} - {lanes[lane].get("model")}
+        if named & other:
+            errs.append(f"run names model {', '.join(sorted(named & other))}, which is another lane's: post it there, "
+                        f"or use `scenario` and let this lane's runner build the run")
     if spec.get("scenario") and not spec.get("run"):
         if "runner" not in lanes.get(lane, {}):
             errs.append(f"scenario needs a lane with a runner (lanes.toml), not {lane!r}: give `run` for desk work or a custom driver")

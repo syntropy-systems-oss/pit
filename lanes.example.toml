@@ -1,12 +1,18 @@
-# Copy to <your state directory>/lanes.toml. Lanes are priced by attention, not rental: a $/h that says what an
-# hour of that box is worth to you. The prices below are examples (the Pit's dollars are play money).
-# cost line = uncached_in x tokens.uncached_per_m + cache_read x tokens.cache_read_per_m
-#           + out x tokens.out_per_m + wall_h x lane.usd_per_h        (pit.lanes.cost_line)
+# Copy to <your state directory>/lanes.toml. Each [lanes.<name>] table is a resource: a box (or pool of boxes) that runs
+# jobs, priced by attention, not rental: a $/h that says what an hour of it is worth to you, plus optional prices for
+# whatever else a run consumes. The prices below are examples (the Pit's dollars are play money).
+#   cost = wall_h x usd_per_h + sum over the run's meters of meter x price        (pit.lanes.cost_line)
+# A run reports its meters on its report line: pit: verdict=pass wall_s=S meters={"tok_in": N, "tok_out": N} result={...}
+# A meter `tok_<x>` is priced by usd_per_mtok_<x> (per million), any other meter `<m>` by usd_per_<m> (per unit);
+# a meter with no price is recorded on the result and not charged.
+# A job is funded in dollars (budget_usd): the run is killed when its time alone has spent the funding
+# (budget_usd / usd_per_h, at least 30 s, at most an hour), and a total cost over budget_usd books FAIL.
 
-[tokens]
-uncached_per_m = 0.24
-cache_read_per_m = 0.05
-out_per_m = 2.20
+# Default prices for every lane (and for lane `any`); a lane's own [lanes.<name>.prices] overrides them key by key.
+[prices]
+usd_per_mtok_in = 0.24
+usd_per_mtok_cached = 0.05
+usd_per_mtok_out = 2.20
 
 [git]
 push = false                   # claims are a local commit; true also pushes them (git is then the cross-host lock)
@@ -24,11 +30,15 @@ usd_per_h = 14
 slots = 1                       # GPU-exclusive
 max_usd_per_value = 25          # cheap lane: q add refuses budget_usd > value x this
 gate = "true"                   # a shell command; exit 0 = the lane is free
-# A spec with `scenario = "<name>"` and no `run` gets its driver from the lane: {scenario} {model} {budget_s} are filled in,
-# and `preflight` (optional) must exit 0 before the job is dispatched. Without a runner a lane takes only `run` jobs.
-# runner = "python3 bench.py --scenario {scenario} --model {model} --timeout {budget_s}"
+# A spec with `scenario = "<name>"` and no `run` gets its driver from the lane: {scenario} {model} {funded_s} are filled in,
+# and `preflight` (optional) must exit 0 before the job is dispatched; it may also prepare the box (pull an image, warm a
+# cache) as long as it exits 0 when done. Without a runner a lane takes only `run` jobs.
+# runner = "python3 bench.py --scenario {scenario} --model {model} --timeout {funded_s}"
 # preflight = "python3 bench.py --check --model {model}"
-# model = "small"
+# model = "small"               # a hand-written `run` on another lane may not name this model with --model
+# [lanes.gpu-small.prices]      # this lane's own prices, over [prices]
+# usd_per_mtok_out = 1.10
+# usd_per_gpu_mem_gb_h = 0.02   # any meter the run reports, e.g. meters={"gpu_mem_gb_h": 3.5}
 
 [lanes.gpu-large]
 box = "a large GPU box that also serves production"
@@ -43,20 +53,35 @@ box = "self-hosted CI runners: builds, release rehearsals"
 usd_per_h = 100                 # a 17-min rehearsal = $28
 slots = 1
 gate = "true"
+# A lane with `url` runs its jobs on a runner service on that box (`q runner`, docs/runner.md) instead of forking them
+# here. With `repo`, the runner keeps a checkout of it, moves it to the spec's `ref` (else this lane's `ref`, else HEAD)
+# and runs the job's command there; without, it runs the command in its own working directory. The runner kills the run
+# when the funding runs out and reports the whole request's wall. Point the gate at its health check.
+# url = "http://ci-box:8791"
+# repo = "https://example.com/you/project.git"
+# ref = "main"
+# gate = "curl -sf -m 3 http://ci-box:8791/health"
 
-# `any` is built in: wherever the session is, tokens only.
+# `any` is built in: wherever the session is; charged its meters only, at [prices].
 
 # The scenario registry: `q list --scenarios` prints the entries of this directory (relative to the state root; one file
 # or directory per scenario, named by its stem), and `q add` refuses a scenario not in it. No directory = any name.
+# scenario_cmd, when set, replaces the directory: a shell command run in the state root whose last stdout line is a JSON
+# list of scenario names (anything printed before it, such as warnings, is ignored).
+# drivers, when set, turns on the verdict-line rule: a hand-written `run` must print `pit: verdict=...` itself (contain
+# `verdict=`) or start with one of these commands, which print the report line for it.
 [bench]
 scenario_dir = "scenarios"
+# scenario_cmd = "python3 bench.py --list-scenarios"
+# drivers = ["python3 bench.py", "examples/adapters/shell/run.sh"]
 
 # Pit: agents fund runs and bet PASS/FAIL per variant; the frontier is ordered by matched stakes (the most uncertain
 # runs first, ties cheapest). enabled = false restores the default ranking (priority, critical path, value per $).
 [pit]
 enabled = true
 rank = "matched"                # "matched" | "matched_per_usd" (matched stakes divided by budget_usd)
-max_posts_per_hour = 4          # per wallet (the house is exempt); 0 = no limit
+max_posts_per_hour = 0          # per wallet (the house is exempt); 0 (the default) = off: a post's funding is the limiter
+mint = 1.0                      # income per minute = mint x the sum of lane usd_per_h / 60; 1.0 = every lane sold every minute
 default_stake = 0.25            # the automatic stake a post puts on its `expect`, per variant
 vig_rate = 0.02                 # of each settled pot, to the house
 house_seed = 1.00               # the house stakes a reflect-planted root this much per variant from its vig, capped by the pool
@@ -73,11 +98,13 @@ allowed_tools = []              # e.g. ["Bash(q *)", "Read", "Grep", "Edit"] -> 
 add_dirs = []                   # directories a desk job may touch (each -> --add-dir), e.g. ["~/src/my-project"]
 heartbeat_minutes = 20          # an idle, funded agent asleep until-event is woken after this long without acting (reason `heartbeat`)
 heartbeat_min_usd = 1.0         # ...if its balance is at least this (the cheapest lane's minimum post)
+# Runs and agent turns get <this repo>/bin first on PATH: `q`, and `python3` = scripts/py.sh (a Python >= 3.11 with pit
+# importable). Put your own tools on PATH before starting autopilot.
 # kill file: autopilot/STOP (checked every tick). Standing rules injected into every prompt: pit.autopilot.RULES
 
 # The bag (pit/bag.py): a lane with nothing runnable draws one known-good spec (least recently run first), posts it as
 # `house` (tag `bag`, a house PASS stake of house_stake usd per variant from the vig pool) and runs it. A failed run
-# becomes a "REGRESSION:" finding naming the spec's last pass. budget_usd / budget_s are fallbacks for a spec without its own;
+# becomes a "REGRESSION:" finding naming the spec's last pass. budget_usd is the fallback for a spec without its own;
 # bag spend counts against the hour cap if one is set; one bag job per lane at a time; a spec may carry its own max_per_day;
 # an `invalid` draw does not count toward the day. Paths are relative to the state root. Scalars here apply to every lane
 # unless its [bag.<lane>] sets its own.
@@ -91,7 +118,6 @@ quarantine_after = 3           # this many fail/invalid results in a row take a 
 specs = ["bag/gpu-small-*.toml"]
 max_per_day = 6
 budget_usd = 0.5
-budget_s = 60
 house_stake = 0.25
 enabled = true
 
@@ -99,7 +125,6 @@ enabled = true
 specs = ["bag/gpu-large-*.toml"]
 max_per_day = 2
 budget_usd = 1
-budget_s = 60
 house_stake = 0.25
 enabled = true
 
@@ -107,6 +132,5 @@ enabled = true
 specs = ["bag/ci-*.toml"]
 max_per_day = 2
 budget_usd = 1
-budget_s = 60
 house_stake = 0.25
 enabled = false                 # off until you want the house running builds

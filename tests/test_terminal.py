@@ -77,6 +77,7 @@ class Terminal(unittest.TestCase):
         m = market.market_json(rows, PCFG, self.now)
         run = {l["lane"]: l for l in m["lanes"]}["gpu-small"]["running"]
         self.assertEqual((run["job"], run["proposer"], run["elapsed_s"]), ("x", "a", 27 * 60))
+        self.assertEqual((run["burned_usd"], run["funded_s"]), (6.3, 257))       # 27 min x $14/h burned of a $1 funding (257 s)
         srv = view.ThreadingHTTPServer(("127.0.0.1", 0), view.make_handler(lambda: self.rows, PCFG))
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         base = f"http://127.0.0.1:{srv.server_port}"

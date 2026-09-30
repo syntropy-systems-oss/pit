@@ -1,6 +1,6 @@
 ---
 name: add
-description: Add a Pit job - write a TOML spec (question, expect, if_pass, if_fail, lane, budget, value, depends_on, templated inputs, optional run) and validate it with q add. Use for "queue a job", "queue a run", "pit add".
+description: Add a Pit job - write a TOML spec (question, expect, if_pass, if_fail, lane, budget_usd, value, depends_on, templated inputs, optional run) and validate it with q add. Use for "queue a job", "queue a run", "pit add".
 ---
 # Add a job
 
@@ -13,8 +13,8 @@ expect = "pass"                      # pass | fail: your prediction
 if_pass = "promote B; queue the ablation"
 if_fail = "keep A; look at B's training mix"   # must differ from if_pass
 lane = "gpu-small"                   # a lane from lanes.toml, or any
-budget_s = 300                       # at most 3600; hard stop at 2x (never past an hour) -> FAIL, partial trace kept
-budget_usd = 9                       # cheap lanes refuse budget_usd > value x max_usd_per_value
+budget_usd = 2                       # the funding: buys budget_usd / usd_per_h of time (30 s to an hour); cheap lanes refuse budget_usd > value x max_usd_per_value
+# ref = "refs/pull/12/head"          # on a lane with a runner `url` and `repo`: the branch, tag, sha or PR head to run at
 value = 1                            # questions it settles
 depends_on = ["baseline-a", "F:a-baseline"]   # jobs or findings; "job@pass" = only on that branch
 inputs = { arms = "{{ jobs.baseline-a.result.top3 }}" }    # filled from upstream results at run time
@@ -27,4 +27,6 @@ refutes_if_pass = ["F:some-claim"]   # a refutation stales everything downstream
 A `scenario` job needs a lane with a `runner` in lanes.toml; the harness renders its driver (and its `preflight`). `q list --scenarios` names the scenarios (the files in `[bench] scenario_dir`); an unknown one is refused with the list, and `arms` is not allowed with `scenario`.
 
 Then: "${CLAUDE_PLUGIN_ROOT}/bin/q" add <path>. If refused, fix what it names; do not weaken the question to get past it.
-A command reports cost with one output line: `pit: verdict=pass uncached=N cached=N out=N wall_s=S result={...}`.
+You fund a run in dollars: `budget_usd` is the only budget. Its time burns it (wall x the lane's `usd_per_h`) and so do the meters it reports (at the lane's prices); the run is killed when its time alone has spent the funding. A cost over budget_usd books FAIL and the proposer pays the overage; the unspent part is refunded at the result.
+
+A command reports with one output line: `pit: verdict=pass wall_s=S meters={"tok_in": N, "tok_out": N, "tok_cached": N} result={...}` (meters are any named counts; the lane prices the ones it knows). With `[bench] drivers` set, a `run` must print that line itself or start with a listed driver, and a `run` may never name another lane's `--model`.

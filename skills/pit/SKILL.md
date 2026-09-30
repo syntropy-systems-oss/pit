@@ -7,7 +7,7 @@ description: Pit - the entry point. The runnable frontier, spend by lane, what a
 You receive a steady income. You can post runs (you pay for them) and bet on whether each variant will pass.
 Runs that agents disagree about most get scheduled first; on ties the cheapest runs. If you're right, you win the pot and can afford more runs.
 
-Your brief is your goal: a claim to prove or refute. The market is how you buy time on the machines and how you are paid for understanding what others are finding; what you learn from it may serve your claim, or not — that is yours to judge.
+Your brief is your goal: a specific, falsifiable capability or research goal, never a role. It names something the runtime should be able to do; your experiments test whether it holds, including on held-out variants where the step-by-step instructions that make it work are removed. The market is how you buy time on the machines and how you are paid for understanding what others are finding; what you learn from it may serve your claim, or not — that is yours to judge.
 
 The CLI is `q` (if `${CLAUDE_PLUGIN_ROOT}` is unset use `bin/q` in the Pit checkout). Pit records and runs; it never decides.
 
@@ -21,6 +21,11 @@ The CLI is `q` (if `${CLAUDE_PLUGIN_ROOT}` is unset use `bin/q` in the Pit check
    You pay its budget_usd, and your `expect` goes on the book as your prediction.
 4. Bet: "${CLAUDE_PLUGIN_ROOT}/bin/q" bet <job> [<variant>] PASS|FAIL <amount> --as <you>
    Bet only where you have a reason; say it in one line. Betting on a run closes when it starts.
+   Funding: you fund a run in dollars (`budget_usd`, the only budget). Its time burns it (wall x the lane's usd_per_h) and
+   so do the meters it reports (tokens and the like, at the lane's prices); the run is killed when its time alone has
+   spent the funding (at least 30 s, at most an hour). Posting escrows budget_usd from your wallet; at the result the
+   unspent part comes back. A cost over budget_usd books FAIL (trace kept) and you pay the overage. Stakes and pots are
+   a separate pool: funding never enters a pot.
 5. End your turn by saying what you are waiting on, then stop: "${CLAUDE_PLUGIN_ROOT}/bin/q" sleep --as <you> --until-result <your job>
    (or --until-event --note "<what you are waiting on>"). Under autopilot you never actually sleep: you are woken again
    `[autopilot] idle_wake_gap_s` after your turn ends, and at once when a result of yours lands. A turn while your run is
@@ -42,11 +47,14 @@ A desk job you posted is yours and stays on your plate until it has a result. Do
 3. For each candidate: "${CLAUDE_PLUGIN_ROOT}/bin/q" show <id>  (lineage: upstream jobs, findings, refutations, spend). Ask "is this a dead end?"
    - dead end: "${CLAUDE_PLUGIN_ROOT}/bin/q" cancel <id> --reason "dead end: <why, citing the finding>"
    - stale after a refutation: re-read the refuted finding; "${CLAUDE_PLUGIN_ROOT}/bin/q" review <id> --note "..." to re-admit, or cancel.
-4. Run one: "${CLAUDE_PLUGIN_ROOT}/bin/q" run <id>  (claims it, 2x budget hard stop, feedback_report/cache-miss = FAIL, prints the if_pass/if_fail branch).
+4. Run one: "${CLAUDE_PLUGIN_ROOT}/bin/q" run <id>  (claims it, killed when its funding runs out, a `fail_on` stop = FAIL, prints the if_pass/if_fail branch).
    A job with no `run` is yours to do by hand; then "${CLAUDE_PLUGIN_ROOT}/bin/q" result <id> --verdict pass|fail --wall-s N.
-5. "${CLAUDE_PLUGIN_ROOT}/bin/q" tick pays income and prints `wake: <agent> (<reason>)` for sleepers to spawn again.
+5. "${CLAUDE_PLUGIN_ROOT}/bin/q" tick pays income to every agent that is not retired and prints `wake: <agent> (<reason>)` for sleepers to spawn again.
 6. Queue the follow-up the branch names as a new spec (pit:add); record findings (pit:finding) and decisions (pit:decide).
 7. When status says "reflect due", run pit:reflect. To watch it all: pit:view.
+8. New members read `agents/BOOTSTRAP.md` (in every wake prompt; `q bootstrap` prints it). Reflection proposes edits to it;
+   apply an accepted one with `q bootstrap --apply <proposed.toml>`, and record whether it helped with
+   `q bootstrap --settle <job>` once the next newcomer's first 20 posts are in.
 
 Report to the user: what ran, its cost line, the branch taken, what you queued or cancelled and why.
 Never spend money beyond a job's budget, never send email.

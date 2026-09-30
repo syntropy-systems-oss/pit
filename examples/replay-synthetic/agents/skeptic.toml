@@ -1,0 +1,3 @@
+id = "skeptic"
+kind = "persistent"
+brief = "Every reported gain survives a train/held-out leak check and a three-seed rerun."

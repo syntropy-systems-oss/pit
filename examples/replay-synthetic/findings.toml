@@ -3,12 +3,12 @@
 
 [[agent]]
 id = "explorer"
-brief = "Which variant should be the default?"
+brief = "Variant B beats baseline A on held-out data, and the gain holds without its new data mix."
 income_min = 60
 
 [[agent]]
 id = "skeptic"
-brief = "Is every gain real? Look for leaks and flukes."
+brief = "Every reported gain survives a train/held-out leak check and a three-seed rerun."
 
 [[bet]]
 job = "variant-b"

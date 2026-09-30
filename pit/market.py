@@ -1,7 +1,7 @@
 """market_json(): what the terminal (view/terminal.html) needs, folded from the (already sliced) ledger. Read-only; reuses ledger.fold and B.Book/order/sleepers/calibration."""
 from datetime import datetime, timezone
 
-from . import autopilot, bag, ledger as L, book as B
+from . import autopilot, bag, ledger as L, book as B, spec as specmod
 
 TAPE = 200
 
@@ -15,7 +15,7 @@ def _calibration(rows):
 
 def _walk(rows, book, cfg):
     """One pass over the rows: per-wallet balance series, and the one-line tape events."""
-    flows, series, tot, closed, done, events = {}, {}, {}, set(), set(), []
+    flows, series, tot, closed, done, events, fund = {}, {}, {}, set(), set(), [], {}
 
     def move(w, usd, i):
         flows[w] = round(flows.get(w, 0.0) + usd, 4)
@@ -29,11 +29,13 @@ def _walk(rows, book, cfg):
                 move(a, u, i)
             ev.update(type="DRIP", text=f"+${r['usd']:.2f} minted, {r['minutes']} min, {len(r['to'])} agents")
         elif t == "agent":
-            ev.update(type="AGENT", agent=r["id"], text=f"{r['kind']}" + (f" under {r['parent']}" if r.get("parent") else "") + f": {r['brief'][:80]}")
+            ev.update(type="AGENT", agent=r["id"], text=f"{r['kind']}" + (f" under {r['parent']}" if r.get("parent") else "") + (f", planted by {r['by']}" if r.get("by") else "") + f": {r['brief'][:80]}")
+        elif t == "retire":
+            ev.update(type="AGENT", agent=r["agent"], text=f"retired{' by ' + r['by'] if r.get('by') else ''}: {r['reason'][:80]}")
         elif t == "node" and r.get("kind") == "job":
             s, who = r["spec"], r["spec"].get("proposer")
-            if who and not s.get("seed") and who != B.HUMAN:
-                move(book.wallet(who), -s.get("budget_usd", 0), i)
+            if book.payer(s):
+                move(book.payer(s), -s.get("budget_usd", 0), i)
             ev.update(type="POST", agent=who, job=r["id"], text=f"{r['id']}  ${s.get('budget_usd', 0):.2f} {s.get('lane', '')}  {s.get('question', '')[:80]}")
         elif t == "node":
             ev.update(type="FINDING", job=r["id"], text=f"{r['id']} ({r.get('kind')}) from {r.get('from')}: {r.get('text', '')[:100]}")
@@ -53,11 +55,16 @@ def _walk(rows, book, cfg):
                       text=f"{r['job']}/{r['variant']}  {r['side'].upper()}  ${r['usd']:.2f}  (book {book_t['pass']:.2f}/{book_t['fail']:.2f})"
                            + ("  [self]" if "self" in tags else "") + ("  [seed]" if "seed" in tags else "") + ("" if live else "  [late, ignored]"))
         elif t == "result":
-            c = r.get("cost", {})
+            c, f = r.get("cost", {}), r.get("funding")
+            if f:      # the unspent funding back (+) or the overage (-); a corrected result replaces its earlier row, like Book
+                move(f["wallet"], f["usd"] - fund.get(r["job"], 0.0), i)
+                fund[r["job"]] = f["usd"]
             ev.update(type="RESULT", verdict=r["verdict"], usd=c.get("usd", 0), text=f"{r['job']}  {r['verdict'].upper()}  ${c.get('usd', 0):.2f}  {c.get('wall_s', 0):.0f}s {c.get('lane', '')}" + (f"  by {r['agent']}" if r.get("agent") else ""))
         elif t == "settle":
-            if (r["job"], r["variant"]) not in done:       # settle rows count once, like Book
+            if (r["job"], r["variant"]) not in done or r.get("supersedes"):   # settle rows count once, like Book, unless re-settled
                 done.add((r["job"], r["variant"]))
+                for w, u in r.get("clawback", {}).items():
+                    move(w, -u, i)
                 for w, u in r["payouts"].items():
                     move(w, u, i)
             win = ", ".join(f"{w} +${u:.2f}" for w, u in sorted(r["payouts"].items(), key=lambda x: -x[1]) if w != B.HOUSE) or "none"
@@ -116,7 +123,8 @@ def market_json(rows: list[dict], cfg: dict, now: datetime | None = None) -> dic
     lane_out = []
     for name, l in lanes.items():
         run = next(({"job": j, "proposer": book.proposers.get(j), "since": v["claim"]["ts"], "elapsed_s": _age(v["claim"]["ts"], now),
-                     "budget_s": v["spec"]["budget_s"], "budget_usd": v["spec"]["budget_usd"], "fallback": bool(v["claim"].get("fallback"))}
+                     "funded_s": specmod.funded_seconds(v["spec"], cfg["lanes"]), "budget_usd": v["spec"]["budget_usd"],
+                     "burned_usd": round(_age(v["claim"]["ts"], now) / 3600 * l.get("usd_per_h", 0), 4), "fallback": bool(v["claim"].get("fallback"))}
                     for j, v in st.jobs.items() if v["state"] == "running" and v["spec"]["lane"] == name), None)
         q = [j for j in order if st.jobs[j]["spec"]["lane"] == name]
         lane_out.append({"lane": name, "price": l.get("usd_per_h", 0), "box": l.get("box", ""), "running": run,
@@ -136,7 +144,8 @@ def market_json(rows: list[dict], cfg: dict, now: datetime | None = None) -> dic
         turns = [s["ts"] for s in subs if book.wallet(s["id"]) == a]
         agents.append({"id": a, "kind": r["kind"], "parent": None, "brief": r["brief"], "wallet": w, "balance": round(book.balance(a), 4),
                        "turns": len(turns), "last_turn": max(turns, default=None), "last_turn_age_s": _age(max(turns, default=None), now),
-                       "series": series.get(w, [])[-80:], "last_acted": autopilot.last_acted(rows, book, a), "sleeping": bool(z and not z["wake"]),
+                       "series": series.get(w, [])[-80:], "bootstrap_cost": B.bootstrap_cost(rows, a), "last_acted": autopilot.last_acted(rows, book, a), "sleeping": bool(z and not z["wake"]),
+                       "retired": (lambda x: x and {"reason": x["reason"], "ts": x["ts"], "by": x.get("by")})(book.retired.get(a)),
                        "sleep": None if not z else {"until": B.until_text(z["sleep"]["until"]), "note": z["sleep"].get("note", ""), "since": z["sleep"]["ts"],
                                                      "woke": z["wake"]["reason"] if z["wake"] else None}})
     claimed = {}
@@ -163,8 +172,8 @@ def market_json(rows: list[dict], cfg: dict, now: datetime | None = None) -> dic
              "findings": len(st.findings), "refutations": sum(1 for e in st.edges if e["type"] == "refutes"), "usd": round(sum(r["cost"]["usd"] for r in results), 4)}
     escrow = sum(b["usd"] for b in book.bets if (b["job"], b["variant"]) not in book.settled)
     return {"agents": agents, "markets": markets, "tape": events[-TAPE:][::-1], "lanes": lane_out, "calibration": _calibration(rows), "threads": threads,
-            "top": {"mint_per_h": sum(l.get("usd_per_h", 0) for l in lanes.values()), "house": round(book.flows.get(B.HOUSE, 0.0), 4), "escrow": round(escrow, 4),
-                    "spend_today": spend, "story": story, "subs": len(subs)},
+            "top": {"mint_per_h": round(B.conf(cfg)["mint"] * sum(l.get("usd_per_h", 0) for l in lanes.values()), 2), "house": round(book.flows.get(B.HOUSE, 0.0), 4), "escrow": round(escrow, 4),
+                    "spend_today": spend, "story": story, "subs": len(subs), "newcomer_cost": B.newcomer_cost(rows)},
             "autopilot": autopilot.status(rows, cfg, now), "rows": len(rows), "row_ts": [r["ts"] for r in rows], "now": now.isoformat(timespec="seconds"), "generated_at": L.now()}
 
 

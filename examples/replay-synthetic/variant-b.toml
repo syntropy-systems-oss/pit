@@ -4,7 +4,6 @@ expect = "pass"
 if_pass = "promote B; queue the ablation"
 if_fail = "keep A as the default"
 lane = "gpu-small"
-budget_s = 1800
 budget_usd = 8
 proposer = "explorer"
 depends_on = ["baseline-a"]

@@ -1,0 +1,3 @@
+id = "explorer"
+kind = "persistent"
+brief = "Variant B beats baseline A on held-out data, and the gain holds without its new data mix."

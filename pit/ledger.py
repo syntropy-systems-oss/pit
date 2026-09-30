@@ -271,14 +271,14 @@ def settle(ledger: Ledger, spec: dict, verdict: str, ts: str | None = None) -> l
 
 # ---- ranking (the session's default heuristic; Pit never decides for it) ----------------------
 
-def est_wall(st: State, jid: str) -> float:
-    """Median wall of past results with the same lane and first word of `run`, else the declared budget."""
+def est_wall(st: State, jid: str, cfg: dict | None = None) -> float:
+    """Median wall of past results with the same lane and first word of `run`, else the seconds its funding buys."""
     s = st.jobs[jid]["spec"]
     key = (s["lane"], (s.get("run") or "").split(" ")[0])
     walls = [r["cost"]["wall_s"] for r in st.results if r["job"] in st.jobs and r["job"] != jid
              and (st.jobs[r["job"]]["spec"]["lane"], (st.jobs[r["job"]]["spec"].get("run") or "").split(" ")[0])
              == key and s.get("run")]
-    return statistics.median(walls) if walls else float(s["budget_s"])
+    return statistics.median(walls) if walls else float(specmod.funded_seconds(s, (cfg or {}).get("lanes", {})))
 
 
 def next_jobs(st: State, jid: str) -> set[str]:
@@ -289,10 +289,10 @@ def next_jobs(st: State, jid: str) -> set[str]:
             and parents & {specmod.dep_id(d)[0] for d in j["spec"]["depends_on"]}}
 
 
-def critical_path(st: State, jid: str, _seen: frozenset = frozenset()) -> float:
+def critical_path(st: State, jid: str, _seen: frozenset = frozenset(), cfg: dict | None = None) -> float:
     """est wall of this job plus the longest chain of open jobs that rest on it."""
     _seen = _seen | {jid}
-    return est_wall(st, jid) + max((critical_path(st, k, _seen) for k in next_jobs(st, jid) - _seen), default=0.0)
+    return est_wall(st, jid, cfg) + max((critical_path(st, k, _seen, cfg) for k in next_jobs(st, jid) - _seen), default=0.0)
 
 
 def rank(st: State, cfg: dict, ids: list[str] | None = None) -> list[str]:
@@ -303,9 +303,9 @@ def rank(st: State, cfg: dict, ids: list[str] | None = None) -> list[str]:
     def key(jid):
         s = st.jobs[jid]["spec"]
         has_kids = bool(next_jobs(st, jid))
-        est_usd = max(est_wall(st, jid) / 3600 * rate(cfg, s["lane"]), 0.01)
+        est_usd = max(est_wall(st, jid, cfg) / 3600 * rate(cfg, s["lane"]), 0.01)
         n_down = sum(1 for k in st.downstream(jid) if st.jobs.get(k, {}).get("state") == "queued")
-        return (-s["priority"], -(critical_path(st, jid) if has_kids else 0), -n_down, -s["value"] / est_usd,
+        return (-s["priority"], -(critical_path(st, jid, cfg=cfg) if has_kids else 0), -n_down, -s["value"] / est_usd,
                 st.jobs[jid]["added"])
     return sorted(ids, key=key)
 

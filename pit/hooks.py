@@ -30,7 +30,7 @@ def status_block(root, today: str | None = None) -> str:
     for jid in front[:7]:
         s = st.jobs[jid]["spec"]
         tag = "ready" if s.get("run") or specmod.synth(s, cfg) else "desk "     # desk = no run/scenario: its proposer does it by hand
-        lines.append(f"  {tag} {jid} [{s['lane']}, {s['budget_s']}s, ${s['budget_usd']}] {s['question'][:80]}")
+        lines.append(f"  {tag} {jid} [{s['lane']}, funded ${s['budget_usd']}] {s['question'][:80]}")
     if len(front) > 7:
         lines.append(f"  ... {len(front) - 7} more: q list --frontier")
     for jid in st.running()[:3]:

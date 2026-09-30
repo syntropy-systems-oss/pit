@@ -1,8 +1,10 @@
 """Pit: a prediction market that schedules runs (README: Pit).
 
 Agents get a steady income, pay for the runs they post, and bet PASS/FAIL per variant. Wallets are never
-stored: balance = drips + settlements - stakes - budgets, folded from rows by Book.
-Rows: `agent` {id, kind: persistent|sub, parent, brief}, `drip` {since, until, minutes, usd, to: {agent: usd}},
+stored: balance = drips + settlements - stakes - budgets + funding, folded from rows by Book. The market pot is
+stakes only; funding is a separate pool: a post escrows its budget_usd, and its result row's `funding` {wallet, usd}
+books the unspent part back (+) or the overage past it (-, as far as the wallet goes; `shortfall` names the rest).
+Rows: `agent` {id, kind: persistent|sub, parent, brief, by?}, `retire` {agent, reason, by}, `drip` {since, until, minutes, usd, to: {agent: usd}},
 `bet` {job, variant, side, usd, agent, book (the wallet), tags: auto|self}, `settle` {job, variant, outcome:
 pass|fail|void, verdict, totals, pot, vig, payouts: {wallet: usd}}. A job node whose spec has `proposer` is the
 budget debit. A sub has no wallet: its budgets and bets are booked to its persistent ancestor.
@@ -22,7 +24,8 @@ SIDES = ("pass", "fail")
 
 
 def conf(cfg: dict) -> dict:
-    return {"enabled": False, "default_stake": 0.25, "vig_rate": 0.02, "house_seed": 1.0, "rank": "matched", **cfg.get("pit", {})}
+    return {"enabled": False, "default_stake": 0.25, "vig_rate": 0.02, "house_seed": 1.0, "rank": "matched", "mint": 1.0,
+            "max_posts_per_hour": 0, **cfg.get("pit", {})}
 
 
 def enabled(cfg: dict) -> bool:
@@ -52,11 +55,15 @@ class Book:
         self.expects: dict[str, str] = {}                # job -> the proposer's side
         self.flows: dict[str, float] = {}                # wallet -> usd
         self.last_drip: dict | None = None
+        self.funds: dict[str, tuple[str, float]] = {}    # job -> (wallet, usd) booked at result: + refund, - overage
+        self.retired: dict[str, dict] = {}               # agent -> its retire row: on the book, no wakes, no drip
         closed: set[str] = set()                         # betting closes at claim
         for r in rows:
             t = r["t"]
             if t == "agent":
                 self.agents[r["id"]] = r
+            elif t == "retire":
+                self.retired[r["agent"]] = r
             elif t == "drip":
                 self.last_drip = r
                 for a, usd in r["to"].items():
@@ -64,17 +71,32 @@ class Book:
             elif t == "node" and r.get("kind") == "job" and r["spec"].get("proposer"):
                 self.proposers[r["id"]] = r["spec"]["proposer"]
                 self.expects[r["id"]] = r["spec"].get("expect")
-                if not r["spec"].get("seed") and not r["spec"].get("bag") and r["spec"]["proposer"] != HUMAN:   # seeds, bag draws and human posts debit no wallet
-                    self._add(self.wallet(r["spec"]["proposer"]), -r["spec"].get("budget_usd", 0))
+                if self.payer(r["spec"]):
+                    self._add(self.payer(r["spec"]), -r["spec"].get("budget_usd", 0))
+            elif t == "result" and r.get("funding"):
+                self.funds[r["job"]] = (r["funding"]["wallet"], r["funding"]["usd"])     # a corrected result replaces the earlier one
             elif t == "claim":
                 closed.add(r["job"])
             elif t == "bet" and r["job"] not in closed:
                 self.bets.append(r)
                 self._add(r["book"], -r["usd"])
-            elif t == "settle" and (r["job"], r["variant"]) not in self.settled:
-                self.settled[(r["job"], r["variant"])] = r
+            elif t == "settle" and ((r["job"], r["variant"]) not in self.settled or r.get("supersedes")):
+                self.settled[(r["job"], r["variant"])] = r     # a re-settle (verdict corrected) replaces the one it supersedes
+                for w, usd in r.get("clawback", {}).items():
+                    self._add(w, -usd)
                 for w, usd in r["payouts"].items():
                     self._add(w, usd)
+        for w, usd in self.funds.values():
+            self._add(w, usd)
+
+    def active(self) -> list[str]:
+        """Persistent agents that still get income and turns: every one on the book that is not retired."""
+        return [a for a, r in self.agents.items() if r["kind"] == "persistent" and a not in self.retired]
+
+    def payer(self, spec: dict) -> str | None:
+        """The wallet a post's funding came from; seeds, bag draws and human posts debit none."""
+        p = spec.get("proposer")
+        return None if not p or spec.get("seed") or spec.get("bag") or p == HUMAN else self.wallet(p)
 
     def _add(self, wallet, usd):
         self.flows[wallet] = round(self.flows.get(wallet, 0.0) + usd, 4)
@@ -122,6 +144,15 @@ def agent_row(book: Book, aid: str, brief: str, parent: str | None = None) -> di
     return {"t": "agent", "id": aid, "kind": "sub" if parent else "persistent", "parent": parent, "brief": brief}
 
 
+def retire_row(book: Book, aid: str, reason: str, by: str | None = None) -> dict:
+    """Retire a persistent agent: it stays on the book (its record and balance), but gets no more wakes or drip."""
+    if aid not in book.agents or book.agents[aid]["kind"] != "persistent":
+        raise SystemExit(f"no persistent agent {aid}")
+    if aid in book.retired or aid == REFLECT:
+        raise SystemExit(f"{aid} is already retired" if aid in book.retired else "reflect is structural: it is never retired")
+    return {"t": "retire", "agent": aid, "reason": reason, **({"by": by} if by else {})}
+
+
 def tick(ledger: L.Ledger, cfg: dict, now: datetime | None = None, since: str | None = None) -> dict | None:
     """Mint the lane rates for the whole minutes since the last drip (or `since` on the first tick), split
     evenly across persistent agents. Within the same minute it appends nothing."""
@@ -130,8 +161,9 @@ def tick(ledger: L.Ledger, cfg: dict, now: datetime | None = None, since: str | 
     minutes = int((now - last).total_seconds() // 60)
     if minutes <= 0:
         return None
-    usd = minutes * sum(l.get("usd_per_h", 0) for n, l in cfg["lanes"].items() if n != "any") / 60
-    live = [a for a, r in book.agents.items() if r["kind"] == "persistent"]
+    mint = conf(cfg)["mint"]       # share of lane capacity minted per minute; 1.0 = every lane sold every minute
+    usd = mint * minutes * sum(l.get("usd_per_h", 0) for n, l in cfg["lanes"].items() if n != "any") / 60
+    live = book.active()
     return ledger.append({"t": "drip", "since": iso(last), "until": iso(last + timedelta(minutes=minutes)),
                           "minutes": minutes, "usd": round(usd, 4),
                           "to": {a: round(usd / len(live), 4) for a in live}}, iso(now))
@@ -188,6 +220,22 @@ def stakes(rows: list[dict], cfg: dict, spec: dict, agent: str, mode: str, stake
     return out
 
 
+def funding_row(rows: list[dict], spec: dict, cost_usd: float) -> dict:
+    """The `funding` of a result row: the unspent budget_usd back to the payer (+), or the overage past it (-) as far as
+    the wallet goes (`shortfall` names the rest). {} when no wallet paid (seeds, bag draws, human posts)."""
+    book = Book(rows)
+    w = book.payer(spec)
+    if not w:
+        return {}
+    usd = round(spec.get("budget_usd", 0) - cost_usd, 4)
+    if usd >= 0:
+        return {"wallet": w, "usd": usd}
+    have = max(0.0, book.balance(w) - book.funds.get(spec["id"], (w, 0.0))[1])     # a re-record replaces its own earlier row
+    take = round(min(-usd, have), 4)
+    short = round(-usd - take, 4)
+    return {"wallet": w, "usd": -take, **({"shortfall": short} if short else {})}
+
+
 def check_post(book: Book, cfg: dict, spec: dict, agent: str, rows: list[dict] | None = None) -> str | None:
     if agent not in book.agents:
         return f"no agent {agent} (q agent add)"
@@ -195,7 +243,7 @@ def check_post(book: Book, cfg: dict, spec: dict, agent: str, rows: list[dict] |
     if book.balance(agent) < need:
         return f"{book.wallet(agent)} has ${book.balance(agent):.2f}; posting {spec.get('id')} needs ${need:.2f} " \
                f"(budget ${spec.get('budget_usd', 0)} + the default stake)"
-    cap = conf(cfg).get("max_posts_per_hour", 4)
+    cap = conf(cfg)["max_posts_per_hour"]
     w = book.wallet(agent)
     if w != "house" and cap:
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
@@ -350,18 +398,25 @@ def order(st: L.State, rows: list[dict], cfg: dict, ids: list[str] | None = None
 def settle_due(ledger: L.Ledger, cfg: dict) -> list[dict]:
     """Append a settle row for every market whose task has a result, or was cancelled or superseded.
     pass/fail: winners split the pot less the vig pro rata (no winners: the house keeps it);
-    invalid/unknown/cancelled/superseded: everyone is refunded, no vig. Idempotent."""
+    invalid/unknown/cancelled/superseded: everyone is refunded, no vig. Idempotent.
+    A pass/fail market whose newest verdict flips to the other side is re-settled: the new row claws back what the
+    prior settle credited (the house keeps its vig), pays the new winners from the same pot less the same vig, and
+    names the prior row in `supersedes`. The vig is charged once."""
     rows = ledger.rows()
     st, book, out = L.fold(rows), Book(rows), []
     for key in dict.fromkeys((b["job"], b["variant"]) for b in book.bets):
         j = st.jobs.get(key[0])
-        if key in book.settled or not j:
+        prior = book.settled.get(key)
+        if not j:
             continue
         if j["result"]:
             verdict = ((j["result"].get("result") or {}).get("verdicts") or {}).get(key[1], j["result"]["verdict"])
         elif j["state"] in ("cancelled", "superseded"):
             verdict = j["state"]
         else:
+            continue
+        # ponytail: only pass<->fail flips re-settle; a flip to/from void would need the vig refunded too
+        if prior and not (prior["outcome"] in SIDES and verdict in SIDES and verdict != prior["outcome"]):
             continue
         allbets = [b for b in book.bets if (b["job"], b["variant"]) == key]
         res, spec = j["result"], j["spec"]
@@ -383,9 +438,18 @@ def settle_due(ledger: L.Ledger, cfg: dict) -> list[dict]:
             vig = 0.0
             for b in bets:
                 pay[b["book"]] = pay.get(b["book"], 0) + b["usd"]
+        extra = {}
+        if prior:       # claw back exactly what the prior row credited, except the vig the house already holds
+            back = dict(prior["payouts"])
+            if not prior.get("supersedes"):
+                back[HOUSE] = back.get(HOUSE, 0) - prior["vig"]
+            pay[HOUSE] = pay.get(HOUSE, 0) - vig
+            extra = {"supersedes": prior["ts"], "reason": f"verdict corrected {prior['outcome']} -> {verdict}",
+                     "clawback": {w: round(u, 4) for w, u in back.items() if round(u, 4)}}
+            pay = {w: u for w, u in pay.items() if round(u, 4)}
         out.append(ledger.append({"t": "settle", "job": key[0], "variant": key[1], "verdict": verdict,
                                   "outcome": verdict if verdict in SIDES else "void", "totals": {s: round(sum(b["usd"] for b in bets if b["side"] == s), 4) for s in SIDES},
-                                  "pot": pot, "vig": vig, **({"void_self": True} if selfvoid else {}), "payouts": {w: round(u, 4) for w, u in pay.items()}},
+                                  "pot": pot, "vig": vig, **({"void_self": True} if selfvoid else {}), **extra, "payouts": {w: round(u, 4) for w, u in pay.items()}},
                                  j["result"]["ts"] if j["result"] else None))
     return out
 
@@ -526,3 +590,26 @@ def thread(rows: list[dict], agent: str) -> str:
                                f"{j['spec']['lane']} · {j['spec']['question'][:60]}")
     out += ["open markets you have not bet on:"] + (_cap(markets, 20, "markets") or ["  none"])
     return "\n".join(out)
+
+
+# ---- bootstrap: what a new agent pays to learn the market (agents/BOOTSTRAP.md is what it is told) -------------
+
+def bootstrap_cost(rows: list[dict], agent: str, n: int = 20) -> dict:
+    """Over the first n jobs the agent (or its subs) posted: the share that ended INVALID, and, secondarily, cancelled."""
+    book, st = Book(rows), L.fold(rows)
+    first = [j for j, p in book.proposers.items() if book.wallet(p) == agent and j in st.jobs][:n]
+    k = len(first) or 1
+    inv = sum(1 for j in first if (st.jobs[j]["result"] or {}).get("verdict") == "invalid")
+    can = sum(1 for j in first if st.jobs[j]["state"] == "cancelled")
+    return {"agent": agent, "posts": len(first), "invalid": round(inv / k, 4), "cancelled": round(can / k, 4)}
+
+
+def newcomer(rows: list[dict], before: int | None = None) -> str | None:
+    """The most recently registered persistent agent (among rows[:before] when given); reflect maintains the text, it is not a newcomer."""
+    ids = [a for a, r in Book(rows[:before]).agents.items() if r["kind"] == "persistent" and a != REFLECT]
+    return ids[-1] if ids else None
+
+
+def newcomer_cost(rows: list[dict], n: int = 20) -> dict | None:
+    a = newcomer(rows)
+    return a and bootstrap_cost(rows, a, n)

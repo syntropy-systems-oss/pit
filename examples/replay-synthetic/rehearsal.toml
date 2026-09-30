@@ -4,7 +4,6 @@ expect = "pass"
 if_pass = "ask a human to approve the release"
 if_fail = "find what broke before cutting"
 lane = "ci"
-budget_s = 1800
 budget_usd = 50
 depends_on = ["review@pass", "variant-b@pass"]
 run = "./release --rehearse"

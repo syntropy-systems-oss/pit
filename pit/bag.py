@@ -1,7 +1,7 @@
 """The bag: when a lane has nothing runnable, the house draws a known-good scenario and runs it.
 
 `[bag.<lane>]` in lanes.toml (a spec may carry its own `max_per_day`): specs (a path or glob, or a list of them, relative to the state root), max_per_day,
-budget_usd, budget_s (fallbacks when the spec has none), house_stake (usd PASS per variant), enabled.
+budget_usd (fallback when the spec has none), house_stake (usd PASS per variant), enabled.
 A draw is posted as proposer `house` (spec `bag = true`, `bag_spec = <the file's id>`; no wallet pays its budget, like a
 seed) with a house PASS `bet` tagged `bag` (from the vig pool, capped by it; left out of calibration). A FAIL becomes a
 finding "REGRESSION: ..." naming the spec's previous pass.
@@ -96,10 +96,11 @@ def draw(root, rows: list[dict], cfg: dict, lane: str, c: dict, now, echo=print)
     ts) break by spec id; there is no cheap "touched by the latest change" signal (the specs do not name the files
     they cover), upgrade path: a `touches = [...]` list per spec checked against `git diff` of the checkout under test."""
     cands, known = [], specmod.scenarios(root, cfg)
-    lane_inv = (backoff_until(rows, lane, c) or (None, 0))[1]      # one cause hits every spec on the lane: the invalid streak is lane-wide
+    bo = backoff_until(rows, lane, c)                                # one cause hits every spec on the lane: the invalid streak is lane-wide,
+    lane_inv = bo[1] if bo and bo[0] > now else 0                    # but only while its backoff runs, so an expired backoff lifts it
     for p in files(root, c):
         s = specmod.load(p)
-        errs = specmod.validate({**s, "lane": lane, "id": s.get("id", p.stem)}, cfg["lanes"], known)
+        errs = specmod.validate({**({"budget_usd": c["budget_usd"]} if "budget_usd" in c else {}), **s, "lane": lane, "id": s.get("id", p.stem)}, cfg["lanes"], known, cfg.get("bench", {}).get("drivers"))
         if errs:
             echo(f"bag {lane}: skip {p.name}: {'; '.join(errs)}")
         elif s.get("max_per_day") is not None and spec_today(rows, s["id"], now) >= s["max_per_day"]:
@@ -120,7 +121,7 @@ def post(lg: L.Ledger, cfg: dict, s: dict, lane: str, c: dict, stamp: str) -> di
     """Append the house's node and its PASS stake(s); returns the posted spec."""
     taken = {r["id"] for r in bag_jobs(lg.rows())}
     jid = next(j for j in (f"bag-{s['id']}-{stamp}", *(f"bag-{s['id']}-{stamp}-{n}" for n in range(2, 99))) if j not in taken)
-    spec = {**{k: c[k] for k in ("budget_usd", "budget_s") if k in c},      # lane budget is the fallback; the spec's own wins
+    spec = {**({"budget_usd": c["budget_usd"]} if "budget_usd" in c else {}),      # lane budget is the fallback; the spec's own wins
             **s, "id": jid, "lane": lane, "expect": "pass", "proposer": B.HOUSE, "bag": True, "bag_spec": s["id"]}
     lg.append({"t": "node", "kind": "job", "id": jid, "spec": spec})
     for v in B.variants(spec):

@@ -8,10 +8,10 @@ from pathlib import Path
 from pit import autopilot as A, bag, lanes, ledger as L, book as B
 
 LANES = """
-[tokens]
-uncached_per_m = 0.24
-cache_read_per_m = 0.05
-out_per_m = 2.20
+[prices]
+usd_per_mtok_in = 0.24
+usd_per_mtok_cached = 0.05
+usd_per_mtok_out = 2.20
 [reflect]
 rows = 100000
 [lanes.gpu-small]
@@ -27,14 +27,13 @@ max_usd_per_hour = 40
 specs = ["bag/*.toml"]
 max_per_day = 2
 budget_usd = 2
-budget_s = 300
 house_stake = 0.25
 """
 
 
 def bag_spec(sid, verdict="pass", extra=""):
     return (f'id = "{sid}"\nquestion = "{sid} holds?"\nexpect = "pass"\nif_pass = "ok"\nif_fail = "bisect"\nlane = "gpu-small"\n'
-            f'budget_s = 5\nbudget_usd = 9\nrun = "echo \'pit: verdict={verdict}\'"\n{extra}')
+            f'budget_usd = 9\nrun = "echo \'pit: verdict={verdict}\'"\n{extra}')
 
 
 class Bag(unittest.TestCase):
@@ -68,7 +67,7 @@ class Bag(unittest.TestCase):
         self.tick()
         (n,) = self.nodes()
         s = n["spec"]
-        self.assertEqual((s["proposer"], s["bag"], s["bag_spec"], s["budget_usd"], s["budget_s"]), ("house", True, "a", 9, 5))      # the spec's own budget beats the lane's fallback
+        self.assertEqual((s["proposer"], s["bag"], s["bag_spec"], s["budget_usd"]), ("house", True, "a", 9))      # the spec's own budget beats the lane's fallback
         (b,) = [r for r in self.lg.rows() if r["t"] == "bet"]
         self.assertEqual((b["agent"], b["book"], b["side"], b["usd"], b["tags"], b["job"]), ("house", "house", "pass", 0.25, ["bag"], n["id"]))
         st = L.fold(self.lg.rows())

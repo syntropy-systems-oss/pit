@@ -4,7 +4,6 @@ expect = "pass"
 if_pass = "rehearse the release"
 if_fail = "address the review first"
 lane = "any"
-budget_s = 900
 budget_usd = 2
 depends_on = ["ci-build"]
 

@@ -4,7 +4,6 @@ expect = "pass"
 if_pass = "ship the prompt set"
 if_fail = "fix the failing prompts first"
 lane = "gpu-large"
-budget_s = 3600
 budget_usd = 100
 run = "python3 sweep.py --prompts 1-10"
 

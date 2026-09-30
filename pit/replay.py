@@ -88,10 +88,11 @@ def simulate(jobs: dict, nodes: list, cfg: dict):
             r = running.pop(jid)
             verdict = "fail" if r["stop"] else a["verdict"]
             cost = lanes.cost_line(cfg, s["lane"], wall_s=sim[jid]["wall"])
-            cost["usd"] = sim[jid]["usd"]   # the documented $ (tokens included), cut at the stop when one fired
+            cost["usd"] = sim[jid]["usd"]   # the documented $ (meters included), cut at the stop when one fired
             note = f"{a['stop_rule']}: {a.get('stop_note', '')}" if r["stop"] else ""
+            fund = B.funding_row(lg.rows(), s, cost["usd"])
             lg.append({"t": "result", "job": jid, "verdict": verdict, "cost": cost,
-                       "result": a.get("result", {}), "note": note}, ts(t))
+                       "result": a.get("result", {}), "note": note, **({"funding": fund} if fund else {})}, ts(t))
             L.settle(lg, s, verdict, ts(t))
             B.settle_due(lg, cfg)
     for n in (n for n in nodes if n.get("t") == "reflect"):

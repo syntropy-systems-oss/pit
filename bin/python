@@ -1,0 +1,3 @@
+#!/bin/sh
+# python on PATH for autopilot runs and agent turns: a Python >= 3.11 with pit importable (scripts/py.sh)
+exec "$(dirname "$0")/../scripts/py.sh" "$@"
