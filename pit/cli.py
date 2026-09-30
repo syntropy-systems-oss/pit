@@ -144,6 +144,8 @@ def cmd_agent(a):
     else:
         if not a.brief:
             sys.exit("q agent add <id> --brief '<a capability or research goal to prove or refute>'")
+        if why := B.room_for(book, cfg, a.id):
+            sys.exit(why)
         row = lg.append({**B.agent_row(book, a.id, a.brief, a.parent, a.runtime, a.model), **({"by": a.by} if a.by else {})})
     (root / "agents").mkdir(exist_ok=True)
     (root / "agents" / f"{a.id}.toml").write_text(

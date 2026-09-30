@@ -655,7 +655,7 @@ class Autopilot(unittest.TestCase):
         sub = ap.subs[B.REFLECT][0]
         ap.wait()
         prompt = (self.root / "autopilot" / "logs" / f"{sub}.prompt").read_text()
-        facts = json.loads(prompt.split("Agents on the book: ", 1)[1].split("\n\n", 1)[0])
+        facts = json.loads(prompt.split("Agents on the book (", 1)[1].split("): ", 1)[1].split("\n\n", 1)[0])
         self.assertEqual(set(facts), {"a", "b", B.REFLECT})
         self.assertEqual(facts["a"]["record"], {"posts_won": 1, "posts_lost": 1, "bets_won": 0, "bets_lost": 0})
         self.assertEqual(facts["b"]["record"], {"posts_won": 0, "posts_lost": 0, "bets_won": 1, "bets_lost": 1})
@@ -807,6 +807,20 @@ class Autopilot(unittest.TestCase):
 
 class Retire(unittest.TestCase):
     setUp, restore, ap, auto = Autopilot.setUp, Autopilot.restore, Autopilot.ap, Autopilot.auto
+
+    def test_max_agents_caps_planting_until_a_retirement(self):
+        from argparse import Namespace as N
+        from unittest import mock
+        from pit import cli
+        cfg = {**self.cfg, "pit": {**self.cfg["pit"], "max_agents": 2}}     # a and b are active
+        add = lambda i: cli.cmd_agent(N(verb="add", id=i, brief=f"{i} holds", parent=None, runtime=None, model=None, reason=None, by="reflect"))
+        with mock.patch.object(cli, "ctx", lambda: (self.root, self.lg, cfg)), mock.patch.object(cli, "sync", lambda *a: None):
+            with self.assertRaises(SystemExit) as e:
+                add("c")
+            self.assertEqual(str(e.exception), "2 agents active (max 2): retire one first (q agent retire <id> --reason '…')")
+            cli.cmd_agent(N(verb="retire", id="b", brief=None, parent=None, reason="goal met", by="b"))
+            add("c")
+        self.assertEqual(B.Book(self.lg.rows()).active(), ["a", "c"])
 
     def test_retired_agent_gets_no_wake_and_no_drip(self):
         from argparse import Namespace as N

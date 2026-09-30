@@ -623,7 +623,9 @@ class Autopilot:
                             f"You are {sub}, a sub of reflect (`--as {sub}` books to reflect). "
                             f"The CLI is {REPO}/bin/q (PIT_ROOT is set). The loop records this pass when you exit, "
                             "covering the rows in this digest; if you record it yourself, the loop keeps your record.",
-                            STRUCTURE, "Agents on the book: " + json.dumps(reflect.agent_facts(rows)),
+                            STRUCTURE, f"Agents on the book ({len(B.Book(rows).active())} active"
+                            + (f", max {B.conf(self.cfg)['max_agents']}: planting needs a retirement first" if B.conf(self.cfg)["max_agents"] else "")
+                            + "): " + json.dumps(reflect.agent_facts(rows)),
                             BOOTSTRAP_LOOP, "agents/BOOTSTRAP.md now:\n" + bootstrap(self.root),
                             "Newcomer (most recently registered agent) bootstrap cost: " + json.dumps(B.newcomer_cost(rows)),
                             "Digest (q reflect --since-last):\n" + reflect.digest(rows)])

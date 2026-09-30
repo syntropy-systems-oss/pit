@@ -29,7 +29,7 @@ SIDES = ("pass", "fail")
 
 def conf(cfg: dict) -> dict:
     return {"enabled": False, "default_stake": 0.25, "vig_rate": 0.02, "house_seed": 1.0, "rank": "matched", "mint": 1.0,
-            "max_posts_per_hour": 0, "stake_share": 0.25, "blind": True, **cfg.get("pit", {})}
+            "max_posts_per_hour": 0, "stake_share": 0.25, "blind": True, "max_agents": 0, **cfg.get("pit", {})}
 
 
 def blind(cfg: dict) -> bool:
@@ -197,6 +197,15 @@ def runtime_fields(runtime: str | None, model: str | None) -> dict:
     if runtime and runtime not in RUNTIMES:
         raise SystemExit(f"unknown runtime {runtime} (one of {', '.join(RUNTIMES)})")
     return {**({"runtime": runtime} if runtime else {}), **({"model": model} if model else {})}
+
+
+def room_for(book: Book, cfg: dict, aid: str) -> str | None:
+    """Why `aid` cannot be planted now: [pit] max_agents (0 = no cap) counts active persistent agents; a new one needs a
+    retirement first. What agents do is uncapped; how many run at once is the bounding box."""
+    cap, active = conf(cfg)["max_agents"], book.active()
+    if cap and aid not in book.agents and len(active) >= cap:
+        return f"{len(active)} agents active (max {cap}): retire one first (q agent retire <id> --reason '…')"
+    return None
 
 
 def agent_row(book: Book, aid: str, brief: str, parent: str | None = None, runtime: str | None = None,
