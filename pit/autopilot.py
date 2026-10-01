@@ -197,6 +197,7 @@ class Autopilot:
             self.c["max_subagent_runs_per_hour"] = sub_cap
         self.dir = self.root / "autopilot"
         self.runs: dict[str, tuple] = {}     # job -> (lane, Popen)
+        self.slots: dict[str, int] = {}      # job -> the lane slot the loop handed its run (PIT_SLOT)
         self.subs: dict[str, tuple] = {}     # wallet agent -> (sub id, Popen, reflection record or None)
         self.seen: dict[str, int] = {}       # wallet agent -> ledger row index it has processed up to
         self.base: int | None = None         # first tick: agents with no wake on the tape start here, not at row 0
@@ -316,7 +317,12 @@ class Autopilot:
                        f"matched ${m:.2f} / budget ${s['budget_usd']} = {m / max(s['budget_usd'], 0.01):.3f} per $")
                 self.echo(f"{head} gate {gate} · pick {j} ({why}) · claim + run, funded ${s['budget_usd']} ({specmod.funded_seconds(s, self.cfg['lanes'])}s)")
                 self.auto("dispatch", why, lane, j, book.proposers.get(j))
-                self.runs[j] = (lane, self.spawn_run(j, now))
+                # two runs dispatched in one tick would both read the ledger before either claim lands and take the same
+                # slot; the loop hands each its slot from what the ledger and its own live children hold
+                taken = {int((st.jobs[x].get("claim") or {}).get("slot", 0)) for x in st.running()
+                         if (st.jobs[x].get("claim") or {}).get("lane") == lane} | {self.slots[x] for x, (l, _) in self.runs.items() if l == lane and x in self.slots}
+                self.slots[j] = next(i for i in range(slots + 1) if i not in taken)
+                self.runs[j] = (lane, self.spawn_run(j, now, slot=self.slots[j]))
 
     def idle_lanes(self, now, over: float = 0) -> dict[str, float]:
         """lane -> idle seconds for lanes with no run (ledger or this loop's children) idle more than `over`. The first
@@ -717,7 +723,7 @@ class Autopilot:
         (self.dir / "logs").mkdir(parents=True, exist_ok=True)
         return self.dir / "logs" / name
 
-    def spawn_run(self, jid: str, now: datetime):
+    def spawn_run(self, jid: str, now: datetime, slot: int | None = None):
         if self.dry:
             return None
         log = self.log(f"run-{jid}-{stamp(now)}.log")
@@ -725,7 +731,8 @@ class Autopilot:
             # own session: a Ctrl-C of the loop never kills a run between its claim and its result
             return subprocess.Popen([sys.executable, "-m", "pit.cli", "--root", str(self.root), "run", jid],
                                     stdout=out, stderr=subprocess.STDOUT, cwd=self.root,
-                                    env={**self.env(), "PIT_RUN_LOG": str(log.relative_to(self.root))},
+                                    env={**self.env(), "PIT_RUN_LOG": str(log.relative_to(self.root)),
+                                         **({"PIT_SLOT": str(slot)} if slot is not None else {})},
                                     start_new_session=True)
 
     def permission_mode(self) -> str:
@@ -847,6 +854,7 @@ class Autopilot:
             if p is None or p.poll() is not None:
                 self.echo(f"run {j} on {lane} exited {p.returncode if p else 'dry'}")
                 del self.runs[j]
+                self.slots.pop(j, None)
         for agent, (sub, p, record) in list(self.subs.items()):
             if p is not None and p.poll() is None:
                 continue

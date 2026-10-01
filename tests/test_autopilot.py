@@ -103,6 +103,18 @@ class Autopilot(unittest.TestCase):
         self.assertEqual(st.jobs["o"]["result"]["note"], "orphaned claim (no live run)")
         self.assertEqual([(r["reason"], r["job"]) for r in self.auto("note")], [("orphan", "o")])
 
+    def test_two_runs_dispatched_in_one_tick_take_distinct_slots(self):
+        self.cfg["lanes"]["gpu-small"]["slots"] = 2
+        self.post(slow("p1"), "a")
+        self.post(slow("p2"), "b")
+        ap = self.ap()
+        ap.tick()
+        self.assertEqual({r["job"] for r in self.auto("dispatch")}, {"p1", "p2"})
+        ap.wait()
+        slots = {r["job"]: r.get("slot") for r in self.lg.rows() if r["t"] == "claim"}
+        self.assertEqual(slots, {"p1": 0, "p2": 1} if slots.get("p1") == 0 else {"p1": 1, "p2": 0})   # never the same slot
+        self.assertEqual(ap.slots, {})                                                               # released on reap
+
     def test_tick_dispatches_every_free_lane_in_parallel_and_hands_back(self):
         self.post(slow("p1"), "a")
         self.post(slow("p2", budget_usd=2), "b")                  # same lane, ranked behind p1: waits

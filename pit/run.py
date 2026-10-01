@@ -190,7 +190,8 @@ def run_job(root, ledger: L.Ledger, cfg: dict, jid: str, lane: str | None = None
     push_ok = bool(cfg.get("git", {}).get("push", False))     # opt-in: private state is never pushed by accident
     if not push_ok or not L.has_remote(root):
         echo("no remote: local lock" if not L.has_remote(root) else "[git] push off: local lock")
-    extra["slot"] = free_slot(st, lane, cfg["lanes"].get(lane, {}).get("slots", 1))
+    # the loop hands a run its slot (PIT_SLOT); a run started by hand takes the lowest the ledger shows free
+    extra["slot"] = int(os.environ["PIT_SLOT"]) if os.environ.get("PIT_SLOT", "").isdigit() else free_slot(st, lane, cfg["lanes"].get(lane, {}).get("slots", 1))
     won, cid = L.claim(root, ledger, jid, lane, extra=extra, push_ok=push_ok)
     if not won:
         raise SystemExit(cid)
