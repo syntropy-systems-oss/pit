@@ -115,3 +115,19 @@ class RefProtocol(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Slots(unittest.TestCase):
+    def test_lowest_free_slot_from_running_claims(self):
+        from pit import ledger as L, run as runmod
+        lg = L.MemLedger()
+        for j in ("a", "b", "c"):
+            lg.append({"t": "node", "kind": "job", "id": j, "spec": {"id": j, "lane": "gpu", "budget_usd": 1}})
+        lg.append({"t": "claim", "job": "a", "lane": "gpu", "cid": "x:1", "slot": 0})
+        st = L.fold(lg.rows())
+        self.assertEqual(runmod.free_slot(st, "gpu", 2), 1)           # slot 0 is held by a
+        self.assertEqual(runmod.free_slot(st, "other", 2), 0)         # another lane: nothing held
+        lg.append({"t": "claim", "job": "b", "lane": "gpu", "cid": "x:2", "slot": 1})
+        self.assertEqual(runmod.free_slot(L.fold(lg.rows()), "gpu", 2), 2)   # full: the next index, never a collision
+        lg.append({"t": "result", "job": "a", "verdict": "pass", "cost": {"usd": 0, "lane": "gpu", "wall_s": 1}, "result": {}})
+        self.assertEqual(runmod.free_slot(L.fold(lg.rows()), "gpu", 2), 0)   # a finished: slot 0 is free again

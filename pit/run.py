@@ -72,6 +72,14 @@ def _read(lines, fail_on: list[str], stop, echo) -> tuple[list[str], dict, dict]
     return out, hit, report
 
 
+def free_slot(st, lane: str, slots: int) -> int:
+    """The lowest slot index (0..slots-1) no running job on `lane` holds, read off the running jobs' claim rows. With every
+    slot taken (the lane guard should have refused) the next index is returned rather than a collision."""
+    taken = {int((st.jobs[j].get("claim") or {}).get("slot", 0)) for j in st.running()
+             if (st.jobs[j].get("claim") or {}).get("lane") == lane}
+    return next(i for i in range(max(1, int(slots or 1)) + 1) if i not in taken)
+
+
 def execute(cmd: str, timeout_s: float, fail_on: list[str], cwd=None, echo=print, env=None) -> dict:
     """Run `cmd` with sh; kill on a stop signal or at timeout_s. Returns {rc, wall_s, stop, stop_text, report, output}."""
     t0 = time.monotonic()
@@ -182,12 +190,14 @@ def run_job(root, ledger: L.Ledger, cfg: dict, jid: str, lane: str | None = None
     push_ok = bool(cfg.get("git", {}).get("push", False))     # opt-in: private state is never pushed by accident
     if not push_ok or not L.has_remote(root):
         echo("no remote: local lock" if not L.has_remote(root) else "[git] push off: local lock")
+    extra["slot"] = free_slot(st, lane, cfg["lanes"].get(lane, {}).get("slots", 1))
     won, cid = L.claim(root, ledger, jid, lane, extra=extra, push_ok=push_ok)
     if not won:
         raise SystemExit(cid)
     echo(f"q run {jid} on {lane}: {cmd}")
     funded, l = specmod.funded_seconds(s, cfg["lanes"]), cfg["lanes"].get(lane, {})
     env = {**{k: str(v) for k, v in l.get("env", {}).items()}, "PIT_JOB": jid, "PIT_LANE": lane, "PIT_FUNDED_S": str(funded),
+           "PIT_SLOT": str(extra["slot"]),     # which of the lane's slots this run holds: a driver derives its ports from it
            "PIT_CLAIM": " ".join(s.get("claim", "").split())}      # a driver that judges the trace against the claim reads it here
     if l.get("repo"):
         env.update(PIT_ROOT=str(Path(root).resolve()), PIT_REF_NAME=s.get("ref_name", ""))
