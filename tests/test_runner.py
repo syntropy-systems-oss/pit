@@ -131,3 +131,7 @@ class Slots(unittest.TestCase):
         self.assertEqual(runmod.free_slot(L.fold(lg.rows()), "gpu", 2), 2)   # full: the next index, never a collision
         lg.append({"t": "result", "job": "a", "verdict": "pass", "cost": {"usd": 0, "lane": "gpu", "wall_s": 1}, "result": {}})
         self.assertEqual(runmod.free_slot(L.fold(lg.rows()), "gpu", 2), 0)   # a finished: slot 0 is free again
+
+    def test_lane_env_substitutes_the_slot(self):
+        from pit import run as runmod
+        self.assertEqual(str("5{slot}").replace("{slot}", "1"), "51")      # the substitution the env uses, slot 1 on base 5

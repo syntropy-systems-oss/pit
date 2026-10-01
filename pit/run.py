@@ -197,7 +197,8 @@ def run_job(root, ledger: L.Ledger, cfg: dict, jid: str, lane: str | None = None
         raise SystemExit(cid)
     echo(f"q run {jid} on {lane}: {cmd}")
     funded, l = specmod.funded_seconds(s, cfg["lanes"]), cfg["lanes"].get(lane, {})
-    env = {**{k: str(v) for k, v in l.get("env", {}).items()}, "PIT_JOB": jid, "PIT_LANE": lane, "PIT_FUNDED_S": str(funded),
+    # a lane env value may carry {slot}: with slots > 1, each concurrent run's env differs where it must (ports, lanes)
+    env = {**{k: str(v).replace("{slot}", str(extra["slot"])) for k, v in l.get("env", {}).items()}, "PIT_JOB": jid, "PIT_LANE": lane, "PIT_FUNDED_S": str(funded),
            "PIT_SLOT": str(extra["slot"]),     # which of the lane's slots this run holds: a driver derives its ports from it
            "PIT_CLAIM": " ".join(s.get("claim", "").split())}      # a driver that judges the trace against the claim reads it here
     if l.get("repo"):

@@ -22,6 +22,7 @@
 - `[autopilot] runtimes.<rt>.turns_per_hour`: a hard hourly cap on turns per runtime (0 = none); a hand-back whose runtime is at cap waits for the hour to roll, it is not refused.
 - `[pit.seats]`: the population's composition by `runtime/model`. `q agent add` without a runtime takes the first seat with room; with one, refuses when that seat is full. Reflect is told the seats and vacancies. Retire an Opus agent and the replacement is Opus.
 - `[autopilot] reflect.notes`: a file under the state root the reflection pass reads verbatim, for what an operator's own gate says the product fails and the directions that follow; the operator keeps it, the pass decides.
+- `[lanes.X.env]` values may carry `{slot}`, replaced by the run's slot index, so a launcher that bypasses the lane's runner still gets a distinct lane per concurrent run.
 - `PIT_SLOT`: a run on a lane with `slots > 1` gets the lowest free slot index (handed by the loop, which also counts its own children dispatched this tick; recorded on its claim row), so a driver can derive distinct ports and worlds per concurrent run.
 - An agent's turn prompt and reflection's agent facts say how many commits the agent's branch is behind the lanes' base (`behind_base`); what to do about it is the agent's.
 - A run on a lane without `repo` executes in the state root whoever dispatches it (an agent's `q run` from its own tree no longer changes what a relative path means).
