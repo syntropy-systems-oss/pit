@@ -135,6 +135,7 @@ runtimes.claude.model = "sonnet"        # an agent with no model of its own, on 
 # runtimes.codex.args = ["--skip-git-repo-check", "--sandbox", "workspace-write", "-c", 'approval_policy="never"']   # the default
 # reflect.runtime = "claude"            # autonomous reflection: claude (default) or codex
 # reflect.model = "opus"                # override; default opus on claude, runtimes.codex.model on codex
+# reflect.notes = "agents/GATE.md"      # a file the operator keeps; every pass reads it verbatim (what an outside gate says fails, directions)
 # If runtimes.codex.model is also unset, codex uses its own CLI configuration.
 # Runs and agent turns get <this repo>/bin first on PATH: `q`, and `python3` = scripts/py.sh (a Python >= 3.11 with pit
 # importable). Put your own tools on PATH before starting autopilot.

@@ -628,7 +628,10 @@ class Autopilot:
                             + "): " + json.dumps(reflect.agent_facts(rows)),
                             BOOTSTRAP_LOOP, "agents/BOOTSTRAP.md now:\n" + bootstrap(self.root),
                             "Newcomer (most recently registered agent) bootstrap cost: " + json.dumps(B.newcomer_cost(rows)),
-                            "Digest (q reflect --since-last):\n" + reflect.digest(rows)])
+                            "Digest (q reflect --since-last):\n" + reflect.digest(rows)]
+                           + ([f"Operator notes ({rc['notes']}), verbatim: what the operator's own gate says the product "
+                               f"fails on questions nobody here wrote, and the directions that follow from it:\n"
+                               + (self.root / rc["notes"]).read_text()] if rc.get("notes") and (self.root / rc["notes"]).exists() else []))
         self.subs[B.REFLECT] = (sub, self.spawn(sub, who, text), reflect.record_row(rows, agent=sub))
 
     # ---- children -----------------------------------------------------------------------------------

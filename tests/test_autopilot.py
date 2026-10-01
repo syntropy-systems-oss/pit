@@ -649,6 +649,19 @@ class Autopilot(unittest.TestCase):
             ap.handback(datetime.now(timezone.utc))
         self.assertEqual([a for a in ap.subs], [])
 
+    def test_reflect_pass_reads_the_operator_notes_verbatim(self):
+        self.cfg["reflect"] = {"rows": 1}
+        self.cfg["autopilot"]["reflect"] = {**self.cfg["autopilot"].get("reflect", {}), "notes": "agents/GATE.md"}
+        (self.root / "agents").mkdir(exist_ok=True)
+        (self.root / "agents" / "GATE.md").write_text("# Gate\n- scenario Q fails on dev: counting unit lost\n")
+        self.lg.append({"t": "node", "kind": "finding", "id": "F0", "text": "evidence"})
+        ap = self.ap()
+        texts = []
+        ap.spawn = lambda sub, who, text: (texts.append(text), None)[1]
+        ap.reflection(datetime.now(timezone.utc))
+        self.assertIn("Operator notes (agents/GATE.md), verbatim", texts[0])
+        self.assertIn("- scenario Q fails on dev: counting unit lost", texts[0])
+
     def test_pass_end_endows_planted_agents_from_retired_balances(self):
         self.cfg["reflect"] = {"rows": 1}
         self.lg.append({"t": "node", "kind": "finding", "id": "F0", "text": "evidence"})
