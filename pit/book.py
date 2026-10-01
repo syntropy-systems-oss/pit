@@ -292,7 +292,8 @@ def endow_row(rows: list[dict], start: int, by: str) -> dict | None:
     """What a reflection pass leaves the agents it planted: the balances of the agents it retired plus the vig on every
     bet settled since the previous pass, split equally, paid by the house. None when it planted nobody or there is nothing."""
     window, book = rows[start:], Book(rows)
-    planted = [r["id"] for r in window if r["t"] == "agent" and r["kind"] == "persistent" and str(r.get("by", "")).startswith(REFLECT)]
+    planted = [r["id"] for r in window if r["t"] == "agent" and r["kind"] == "persistent" and str(r.get("by", "")).startswith(REFLECT)
+               and r["id"] not in book.retired]          # planted and retired within the same pass: nothing to endow
     # stakes placed before a retirement settle after it: sweep whatever a retired wallet holds now, into the same pool
     swept = {a: round(book.balance(a), 4) for a in book.retired if book.balance(a) > 0}
     pool = round(sum(r.get("usd", 0) for r in window if r["t"] == "retire")

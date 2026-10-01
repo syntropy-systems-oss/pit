@@ -217,7 +217,7 @@ kbd{font:12px/16px var(--mono);padding:0 4px;border:1px solid var(--line2);borde
 <div id="main">
   <section class="panel" id="p-lanes"><div class="ph">Lanes <span class="n" id="n-lanes"></span><span class="r">queue by matched/$</span></div><div class="pb" id="lanes"></div></section>
   <section class="panel" id="p-mkt"><div class="ph" id="mkt-h">Markets</div><div class="pb" id="mkt"></div></section>
-  <section class="panel" id="p-agents"><div class="ph">Agents <span class="n" id="n-agents"></span><span class="r">wallet</span></div><div class="pb" id="agents"></div></section>
+  <section class="panel" id="p-agents"><div class="ph">Agents <span class="n" id="n-agents"></span><span class="r"><label title="show retired agents"><input type="checkbox" id="showret"> retired</label> wallet</span></div><div class="pb" id="agents"></div></section>
 </div>
 <section id="tape"><div class="ph"><button class="btn" id="tapet" aria-expanded="true" aria-controls="tl" title="show / hide the tape">&#9662;</button>Tape <span class="n" id="tcount"></span><input id="flt" placeholder="filter: type, agent, job or text  ( / )" aria-label="filter the tape"></div><div id="tl" role="log" aria-live="off"></div></section>
 <footer id="ft">
@@ -273,7 +273,7 @@ const COLS = [
 const NARROW = [[matchMedia("(max-width: 900px)"), ["lane", "pass", "fail", "budget", "score", "age_s"]], [matchMedia("(max-width: 1100px)"), ["lane"]]];
 const shown = () => { const off = new Set(NARROW.filter(([q]) => q.matches).flatMap(([, ks]) => ks)); return COLS.map((c, i) => [c, i]).filter(([c]) => !off.has(c[0])); };
 NARROW.forEach(([q]) => q.addEventListener("change", () => { if (S.m) { S.last.mkt = null; renderMarkets(S.m); } }));
-const S = {m: null, sel: null, open: null, agent: null, agentSel: -1, sort: 8, dir: -1, live: true, upto: 0, playing: false, filter: "", last: {}, ok: null, at: null};
+const S = {m: null, sel: null, open: null, agent: null, agentSel: -1, sort: 8, dir: -1, live: true, upto: 0, playing: false, filter: "", last: {}, ok: null, showRetired: false, at: null};
 let busy = false;
 
 function setHTML(id, html) { if (S.last[id] !== html) { S.last[id] = html; const el = $(id), st = el.scrollTop; el.innerHTML = html; el.scrollTop = st; } }
@@ -401,12 +401,13 @@ const ago = s => s < 3600 ? Math.round(s / 60) + "m" : s < 86400 ? (s / 3600).to
 function agentList(m) {
   const kids = id => m.agents.filter(a => a.parent === id), out = [];
   const walk = (a, d) => { out.push([a, d]); kids(a.id).forEach(k => walk(k, d + 1)); };
-  m.agents.filter(a => !a.parent).sort((a, b) => b.balance - a.balance || a.id.localeCompare(b.id)).forEach(a => walk(a, 0));
+  m.agents.filter(a => !a.parent && (S.showRetired || !a.retired)).sort((a, b) => b.balance - a.balance || a.id.localeCompare(b.id)).forEach(a => walk(a, 0));
   return out;
 }
 function renderAgents(m) {
   const list = agentList(m), cal = Object.fromEntries(m.calibration.map(c => [c.agent, c]));
-  $("n-agents").textContent = `${list.length} agents · ${m.top.subs || 0} turns`;
+  const active = m.agents.filter(a => a.kind === "persistent" && !a.retired).length, retired = m.agents.filter(a => a.kind === "persistent" && a.retired).length;
+  $("n-agents").textContent = `${active} active${retired ? ` · ${retired} retired` : ""} · ${m.top.subs || 0} turns`;
   const ags = list.map(([a, d]) => {
     const c = cal[a.wallet], own = a.kind === "persistent";
     return `<div class="ag${d ? " sub" : ""}${a.retired ? " ret" : ""}${S.agent === a.id ? " sel" : ""}" data-agent="${esc(a.id)}" tabindex="0" role="button" aria-label="open ${esc(a.id)}'s thread">` +
@@ -484,6 +485,8 @@ $("play").onclick = () => { S.playing = !S.playing; if (S.playing && S.live) see
 const tapeT = open => { $("tape").classList.toggle("closed", !open); document.body.classList.toggle("tape-closed", !open); $("tapet").setAttribute("aria-expanded", open); $("tapet").innerHTML = open ? "&#9662;" : "&#9656;"; };
 $("tapet").onclick = () => { const open = $("tape").classList.contains("closed"); tapeT(open); savedTape = open ? "1" : "0"; try { localStorage.setItem("pit-tape", open ? "1" : "0"); } catch (e) {} };
 const isLight = () => document.documentElement.dataset.theme === "light" || (!document.documentElement.dataset.theme && matchMedia("(prefers-color-scheme: light)").matches);
+$("showret").onchange = e => { S.showRetired = e.target.checked; try { localStorage.setItem("pit-showret", S.showRetired ? "1" : "0"); } catch (_) {} if (S.m) renderAgents(S.m); };
+try { S.showRetired = localStorage.getItem("pit-showret") === "1"; $("showret").checked = S.showRetired; } catch (_) {}
 $("theme").onclick = () => { const t = isLight() ? "dark" : "light"; document.documentElement.dataset.theme = t; try { localStorage.setItem("pit-theme", t); } catch (e) {} };
 const help = on => { $("help").classList.toggle("on", on); if (on) $("help").querySelector(".box").focus?.(); };
 $("helpb").onclick = () => help(true);

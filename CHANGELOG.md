@@ -15,6 +15,7 @@
 - Autopilot `workspace` / `workspace_init` creates a tree per wallet before its first turn, names the tree and branch in the prompt and adds the paths to both runtimes. The prompt describes making a change, committing and betting on its run.
 
 - Under blind betting, each new market and the agent's board show what $1 on each side returns against the opening book (the automatic stake, the house seed, a human's stake): "$1 on PASS returns $0.98 unless FAIL money arrives · $1 on FAIL returns up to $X if it fails". Later bets, the proposer's included, stay hidden.
+- Terminal: retired agents are hidden by default (a `retired` toggle shows them); the header counts active and retired separately. A reflection pass that plants and retires an agent within the same pass endows nobody for it.
 - `[autopilot] runtimes.<rt>.turns_per_hour`: a hard hourly cap on turns per runtime (0 = none); a hand-back whose runtime is at cap waits for the hour to roll, it is not refused.
 - `[pit.seats]`: the population's composition by `runtime/model`. `q agent add` without a runtime takes the first seat with room; with one, refuses when that seat is full. Reflect is told the seats and vacancies. Retire an Opus agent and the replacement is Opus.
 - `[autopilot] reflect.notes`: a file under the state root the reflection pass reads verbatim, for what an operator's own gate says the product fails and the directions that follow; the operator keeps it, the pass decides.
