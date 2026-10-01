@@ -625,6 +625,8 @@ class Autopilot:
                             "covering the rows in this digest; if you record it yourself, the loop keeps your record.",
                             STRUCTURE, f"Agents on the book ({len(B.Book(rows).active())} active"
                             + (f", max {B.conf(self.cfg)['max_agents']}: planting needs a retirement first" if B.conf(self.cfg)["max_agents"] else "")
+                            + (("; seats " + ", ".join(f"{k} {B.seats_taken(B.Book(rows), self.cfg).get(k, 0)}/{n}" for k, n in B.conf(self.cfg)["seats"].items())
+                                + ": a new agent takes a free seat's runtime and model unless you name one that has room") if B.conf(self.cfg)["seats"] else "")
                             + "): " + json.dumps(reflect.agent_facts(rows)),
                             BOOTSTRAP_LOOP, "agents/BOOTSTRAP.md now:\n" + bootstrap(self.root),
                             "Newcomer (most recently registered agent) bootstrap cost: " + json.dumps(B.newcomer_cost(rows)),

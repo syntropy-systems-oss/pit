@@ -863,6 +863,26 @@ class Retire(unittest.TestCase):
             add("c")
         self.assertEqual(B.Book(self.lg.rows()).active(), ["a", "c"])
 
+    def test_seats_fix_the_population_composition(self):
+        from argparse import Namespace as N
+        from unittest import mock
+        from pit import cli
+        cfg = {**self.cfg, "pit": {**self.cfg["pit"], "seats": {"claude/sonnet": 2, "claude/opus": 1}},
+               "autopilot": {**self.cfg["autopilot"], "runtimes": {"claude": {"model": "sonnet"}}}}
+        add = lambda i, rt=None, m=None: cli.cmd_agent(N(verb="add", id=i, brief=f"{i} holds", parent=None, runtime=rt, model=m, reason=None, by="reflect"))
+        with mock.patch.object(cli, "ctx", lambda: (self.root, self.lg, cfg)), mock.patch.object(cli, "sync", lambda *a: None):
+            add("o1")                                                   # a and b fill claude/sonnet: the free seat is opus
+            self.assertEqual(B.Book(self.lg.rows()).agents["o1"]["model"], "opus")
+            with self.assertRaises(SystemExit) as e:
+                add("x")
+            self.assertIn("every seat is full", str(e.exception))
+            cli.cmd_agent(N(verb="retire", id="o1", brief=None, parent=None, reason="goal met", by="o1"))
+            with self.assertRaises(SystemExit) as e:
+                add("s3", "claude", "sonnet")                           # the sonnet seats are still full
+            self.assertIn("seat claude/sonnet is full", str(e.exception))
+            add("o2")                                                   # the vacated opus seat is what a new agent gets
+            self.assertEqual(B.Book(self.lg.rows()).agents["o2"]["model"], "opus")
+
     def test_retired_agent_gets_no_wake_and_no_drip(self):
         from argparse import Namespace as N
         from unittest import mock

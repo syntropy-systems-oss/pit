@@ -29,7 +29,7 @@ SIDES = ("pass", "fail")
 
 def conf(cfg: dict) -> dict:
     return {"enabled": False, "default_stake": 0.25, "vig_rate": 0.02, "house_seed": 1.0, "rank": "matched", "mint": 1.0,
-            "max_posts_per_hour": 0, "stake_share": 0.25, "blind": True, "max_agents": 0, **cfg.get("pit", {})}
+            "max_posts_per_hour": 0, "stake_share": 0.25, "blind": True, "max_agents": 0, "seats": {}, **cfg.get("pit", {})}
 
 
 def blind(cfg: dict) -> bool:
@@ -205,6 +205,48 @@ def runtime_fields(runtime: str | None, model: str | None) -> dict:
     if runtime and runtime not in RUNTIMES:
         raise SystemExit(f"unknown runtime {runtime} (one of {', '.join(RUNTIMES)})")
     return {**({"runtime": runtime} if runtime else {}), **({"model": model} if model else {})}
+
+
+def seat_key(cfg: dict, runtime: str | None, model: str | None) -> str:
+    """'runtime/model' with the site's defaults filled in: the unit [pit] seats counts."""
+    rt = runtime or "claude"
+    rts = cfg.get("autopilot", {}).get("runtimes", {})
+    m = model or rts.get(rt, {}).get("model") or ("sonnet" if rt == "claude" else "")
+    return f"{rt}/{m}"
+
+
+def seats_taken(book: Book, cfg: dict) -> dict[str, int]:
+    """Active persistent agents per seat key (reflect, the structural agent, holds no seat)."""
+    out: dict[str, int] = {}
+    for a in book.active():
+        if a == REFLECT:
+            continue
+        k = seat_key(cfg, book.agents[a].get("runtime"), book.agents[a].get("model"))
+        out[k] = out.get(k, 0) + 1
+    return out
+
+
+def seat_for(book: Book, cfg: dict, runtime: str | None, model: str | None) -> tuple[str | None, str | None]:
+    """The (runtime, model) a new agent takes under [pit] seats = {"runtime/model" = n, …}: the asked seat if it has room,
+    else the first seat with room when nothing was asked; SystemExit when every seat is full or the asked one is. No seats
+    configured: whatever was asked. The composition of the population is the bounding box; the briefs are not."""
+    seats = conf(cfg)["seats"]
+    if not seats:
+        return runtime, model
+    taken = seats_taken(book, cfg)
+    free = [k for k, n in seats.items() if taken.get(k, 0) < n]
+    if runtime or model:
+        k = seat_key(cfg, runtime, model)
+        if k not in seats:
+            raise SystemExit(f"no seat for {k}: [pit] seats = {', '.join(f'{k}={n}' for k, n in seats.items())}")
+        if k not in free:
+            raise SystemExit(f"seat {k} is full ({taken.get(k, 0)}/{seats[k]}): retire one of its agents first, or take "
+                             + (f"a free seat: {', '.join(free)}" if free else "nothing: every seat is full"))
+        return runtime, model
+    if not free:
+        raise SystemExit("every seat is full: " + ", ".join(f"{k} {taken.get(k, 0)}/{n}" for k, n in seats.items()))
+    rt, m = free[0].split("/", 1)
+    return rt, (m or None)
 
 
 def room_for(book: Book, cfg: dict, aid: str) -> str | None:
