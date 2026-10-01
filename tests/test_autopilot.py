@@ -666,11 +666,34 @@ class Autopilot(unittest.TestCase):
         self.cfg["reflect"] = {"rows": 1}
         self.lg.append({"t": "node", "kind": "finding", "id": "F0", "text": "evidence"})
         ap = self.ap()
-        ap.auto("reflect", "rows 1", agent="old-pass")
+        ap.auto("reflect", "rows 1", agent="reflect-old")
         ap.reflection(datetime.now(timezone.utc))
         ap.wait()
         self.assertEqual(len(self.auto("reflect")), 2)
         self.assertEqual(len([r for r in self.lg.rows() if r["t"] == "reflect"]), 1)
+
+    def test_an_earlier_loops_running_pass_is_not_doubled_and_its_endowment_is_adopted(self):
+        self.cfg["reflect"] = {"rows": 1}
+        self.lg.append({"t": "node", "kind": "finding", "id": "F0", "text": "evidence"})
+        ap = self.ap()
+        ap.auto("reflect", "rows 1", agent="reflect-old")
+        (ap.dir / "logs").mkdir(parents=True, exist_ok=True)
+        (ap.dir / "logs" / "reflect-old.log").write_text("working\n")      # a live pass writes its log
+        ap.reflection(datetime.now(timezone.utc))
+        self.assertEqual(len(self.auto("reflect")), 1)                     # no second pass while the first writes
+        self.assertNotIn(B.REFLECT, ap.subs)
+        # the orphan plants an agent and records itself; a retirement before it leaves a pool
+        self.lg.append({"t": "agent", "id": "old", "kind": "persistent", "brief": "x", "by": "reflect-old"})
+        self.lg.append({"t": "agent", "id": "fresh", "kind": "persistent", "brief": "y", "by": "reflect-old"})
+        self.lg.append({"t": "retire", "agent": "old", "reason": "stale", "by": "reflect-old", "usd": 3.0})
+        self.lg.append({"t": "reflect", "agent": "reflect-old", "note": "done", "rows_covered": 5})
+        ap.reflection(datetime.now(timezone.utc))
+        ap.wait()
+        endows = [r for r in self.lg.rows() if r["t"] == "endow"]
+        self.assertEqual(len(endows), 1)
+        self.assertEqual(endows[0]["by"], "reflect-old")
+        ap.reflection(datetime.now(timezone.utc)); ap.wait()
+        self.assertEqual(len([r for r in self.lg.rows() if r["t"] == "endow"]), 1)      # paid once
 
     def test_runtime_turns_per_hour_caps_spawns_and_the_handback_waits(self):
         from unittest import mock

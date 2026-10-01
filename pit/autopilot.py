@@ -626,14 +626,48 @@ class Autopilot:
             self.echo(f"agent {a} -> wake ({why})")
             self.lg.append({"t": "wake", "agent": a, "reason": why}, B.iso(now))
 
+    def orphan_pass(self, rows: list[dict], now: datetime) -> str | None:
+        """A pass spawned by an earlier loop (a restart mid-pass) that is still running: its spawn row has no later record
+        or note, it is under two hours old, and its log was written in the last fifteen minutes. The loop cannot hold its
+        process, so the log is the pulse. When it records itself, adopt_endow pays what it left."""
+        spawn = next((r for r in reversed(rows) if r["t"] == "auto" and r["type"] == "reflect" and r.get("agent")), None)
+        if not spawn or spawn["agent"] in {s for s, _, _ in self.subs.values()}:
+            return None
+        sub, i = spawn["agent"], rows.index(spawn)
+        if any((r["t"] == "reflect" and r.get("agent") in (sub, B.REFLECT)) or (r["t"] == "auto" and r["type"] == "note" and r.get("agent") == sub)
+               for r in rows[i + 1:]):
+            return None
+        log = self.dir / "logs" / f"{sub}.log"
+        if (now - B.parse_t(spawn["ts"])).total_seconds() > 7200 or not log.exists() or not log.stat().st_size:
+            return None        # a pass that never wrote a line is not alive, it is lost
+        return sub if (now.timestamp() - log.stat().st_mtime) < 900 else None
+
+    def adopt_endow(self, rows: list[dict]) -> None:
+        """A pass an earlier loop spawned that recorded itself: pay its endowment once, as reap would have."""
+        spawn = next((r for r in reversed(rows) if r["t"] == "auto" and r["type"] == "reflect" and r.get("agent")), None)
+        if not spawn or spawn["agent"] in {s for s, _, _ in self.subs.values()}:
+            return
+        sub, start = spawn["agent"], rows.index(spawn)
+        recorded = any(r["t"] == "reflect" and r.get("agent") in (sub, B.REFLECT) for r in rows[start + 1:])
+        paid = any(r["t"] == "endow" and r.get("by") == sub for r in rows[start + 1:])
+        if recorded and not paid:
+            since = max((i for i, r in enumerate(rows[:start]) if r["t"] == "reflect"), default=-1) + 1
+            if endow := B.endow_row(rows, since, sub):
+                self.lg.append(endow)
+                self.echo(f"endowed {', '.join(endow['to'])} with ${sum(endow['to'].values()):.2f} (adopted {sub}, an earlier loop's pass)")
+
     def reflection(self, now):
         rows = self.lg.rows()
+        self.adopt_endow(rows)
         why = reflect.due(rows, now, self.cfg)
         if not why:
             self.echo("reflection: not due")
             return
         if B.REFLECT in self.subs:
             self.echo(f"reflection: due ({why}); {self.subs[B.REFLECT][0]} is still running")
+            return
+        if orphan := self.orphan_pass(rows, now):          # an earlier loop's pass, still writing its log: not a second one
+            self.echo(f"reflection: due ({why}); {orphan} (an earlier loop's pass) is still running")
             return
         if len(self.subs) >= self.max_subs():
             self.echo(f"reflection: due ({why}); REFUSED, subagents at cap")
