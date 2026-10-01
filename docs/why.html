@@ -4,20 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Why a Market</title>
-<meta name="description" content="Pit in six short animated scenes: a market that prices compute so that disagreement decides what runs.">
+<meta name="description" content="A 90-second film about Pit: the idea in four scenes, then one real 26-hour run of agents betting on each other's code changes, read from its ledger.">
 <style>
-/* Layout: one 16:9 stage that plays six scenes (picture + caption), a step bar under it; "All scenes" stacks them as a scroll. */
 :root {
-  --bg: #f3f5f9;        /* cool paper */
-  --card: #ffffff;
-  --ink: #15203a;       /* navy ink */
-  --muted: #5d6882;
-  --line: #d3d9e6;
-  --pass: #0f8a78;      /* money on PASS */
-  --fail: #d4572a;      /* money on FAIL */
-  --accent: #3b4fd8;    /* the market: odds, coins, agents */
-  --soft: #e7eaf7;
-  --display: "Avenir Next", "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --bg: #f3f5f9; --card: #ffffff; --ink: #15203a; --muted: #5d6882; --line: #d3d9e6;
+  --pass: #0f8a78; --fail: #d4572a; --accent: #3b4fd8; --soft: #e7eaf7;
   --body: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   color-scheme: light;
@@ -33,400 +24,492 @@
   --pass: #3cc4ac; --fail: #f2865a; --accent: #8c9bff; --soft: #222b4a; color-scheme: dark;
 }
 * { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
 body { margin: 0; background: var(--bg); color: var(--ink); font: 400 1.0625rem/1.55 var(--body); }
-main { margin: 0 auto; padding-inline: 16px; padding-block: 1.75rem 2.5rem; display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.25rem;
-  max-width: max(22rem, min(70rem, calc((100svh - 21rem) * 1.7778))); }
-header { display: grid; gap: .4rem; }
-.eyebrow { font: 600 .75rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
-h1 { font: 800 clamp(1.6rem, 4.2vw, 2.5rem)/1.1 var(--display); margin: 0; letter-spacing: -.015em; text-wrap: balance; }
-h1 em { font-style: normal; color: var(--accent); }
-.sub { font: 600 clamp(1rem, 2.4vw, 1.2rem)/1.3 var(--display); color: var(--muted); margin: 0; }
-
-/* stage: every scene sits in the same grid cell, so the stage is as tall as its tallest scene and never jumps */
-.stage { display: grid; grid-template-columns: minmax(0, 1fr); }
-main > *, .scene > * { min-width: 0; }
-.scene { grid-area: 1 / 1; display: grid; grid-template-columns: minmax(0, 1fr); gap: .9rem; align-content: start; opacity: 0; visibility: hidden; transition: opacity .45s, visibility .45s; }
-.scene.on { opacity: 1; visibility: visible; }
-.stage.all { gap: 3rem; }
-.stage.all .scene { grid-area: auto; opacity: 1; visibility: visible; }
-.screen { background: var(--card); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
-.screen svg { display: block; width: 100%; height: auto; }
-.scene h2 { font: 800 clamp(1.4rem, 3.4vw, 2.2rem)/1.15 var(--display); margin: 0; letter-spacing: -.01em; text-wrap: balance; }
-
-/* controls */
-.controls { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; }
-.controls button { font: 600 .9rem/1 var(--body); color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: .55rem .95rem; cursor: pointer; }
-.controls button:hover { border-color: var(--accent); }
-.controls #play { background: var(--accent); color: var(--card); border-color: var(--accent); min-width: 6.2rem; }
-button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.steps { flex: 1 1 18rem; display: grid; grid-template-columns: repeat(6, 1fr); gap: .35rem; min-width: 0; }
-.steps button { border: 0; background: none; padding: .3rem 0; border-radius: 4px; display: grid; gap: .35rem; text-align: left; font: 600 .68rem/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); min-width: 0; overflow: hidden; }
-.steps button[aria-current="step"] { color: var(--accent); }
-.track { height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; }
-.fill { display: block; height: 100%; width: 0; background: var(--accent); }
-.stage.all ~ .controls .steps, .stage.all ~ .controls #play, .stage.all ~ .controls #prev, .stage.all ~ .controls #next { display: none; }
-footer { display: grid; gap: .5rem; border-top: 1px solid var(--line); padding-top: 1.25rem; }
-.close { font: 800 clamp(1.3rem, 3.4vw, 1.9rem)/1.15 var(--display); margin: 0; }
-.note { font: 500 .8rem/1.45 var(--mono); color: var(--muted); margin: 0; }
-a { color: var(--accent); }
-@media (max-width: 34rem) { .steps button span:last-child { font-size: .55rem; } }
-
-/* SVG paint, all from tokens */
-.t  { font: 400 22px var(--body); fill: var(--ink); }
-.ts { font: 400 18px var(--body); fill: var(--ink); }
-.tb { font: 700 24px var(--display); fill: var(--ink); }
-.tm { font: 600 15px var(--mono); fill: var(--muted); letter-spacing: .06em; }
-.big { font: 800 34px var(--display); fill: var(--ink); }
-.huge { font: 800 64px var(--display); fill: var(--ink); }
-.tp { fill: var(--pass); } .tf { fill: var(--fail); } .ta { fill: var(--accent); } .tc { fill: var(--card); }
-.f-pass { fill: var(--pass); } .f-fail { fill: var(--fail); } .f-acc { fill: var(--accent); }
-.f-card { fill: var(--card); } .f-soft { fill: var(--soft); } .f-line { fill: var(--line); } .f-ink { fill: var(--ink); }
-.s-line { stroke: var(--line); fill: none; } .s-ink { stroke: var(--ink); fill: none; } .s-acc { stroke: var(--accent); fill: none; }
-.s-muted { stroke: var(--muted); fill: none; } .s-pass { stroke: var(--pass); fill: none; } .s-fail { stroke: var(--fail); fill: none; } .s-card { stroke: var(--card); fill: none; }
-.c-acc { color: var(--accent); } .c-ink { color: var(--ink); } .c-muted { color: var(--muted); }
-
-/* Motion. Every element's resting style is its final state; an animation only runs in the scene that is on.
-   So reduced motion, the scroll version and no-JS all show each scene complete. */
-.scene svg * { transform-box: fill-box; transform-origin: center; }
-.orbit { transform-box: view-box; transform-origin: 480px 275px; }
-.out { opacity: 0; }
-.dim { opacity: .3; }
-.on .pop   { animation: pop .55s var(--d, 0s) both cubic-bezier(.2, .9, .3, 1.3); }
-.on .fade  { animation: fade .6s var(--d, 0s) both; }
-.on .draw  { animation: draw var(--t, 1.2s) var(--d, 0s) both ease-in-out; }
-.on .fly   { animation: fly var(--t, 1.1s) var(--d, 0s) both ease-in-out; }
-.on .out   { animation: out .5s var(--o, 0s) both; }
-.on .dim   { animation: undim .6s var(--o, 0s) both; }
-.on .orbit { animation: spin 6s 1.5s linear both; }
-.on .rA { animation: rA 3.4s both ease-in-out; }
-.on .rC { animation: rC 3.4s both ease-in-out; }
-.paused .scene.on * { animation-play-state: paused; }
-.stage.all .scene * { animation: none !important; }
-@keyframes pop   { from { opacity: 0; transform: scale(.3); } to { opacity: 1; transform: none; } }
-@keyframes fade  { from { opacity: 0; } to { opacity: 1; } }
-@keyframes draw  { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
-@keyframes fly   { 0% { transform: translate(var(--fx), var(--fy)); opacity: 0; } 15% { opacity: 1; } 100% { transform: none; opacity: 1; } }
-@keyframes out   { from { opacity: 1; } to { opacity: 0; } }
-@keyframes undim { from { opacity: 1; } }
-@keyframes spin  { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-@keyframes rA { 0%, 76% { transform: translateY(280px); } 100% { transform: none; } }
-@keyframes rC { 0%, 76% { transform: translateY(-280px); } 100% { transform: none; } }
-@media (prefers-reduced-motion: reduce) {
-  .scene * { animation: none !important; }
-  .scene { transition: none; }
-}
+main { max-width: 1120px; margin: 0 auto; padding: 1.75rem 16px 3rem; }
+header h1 { font-size: clamp(1.6rem, 4vw, 2.3rem); line-height: 1.15; margin: .2rem 0 .4rem; letter-spacing: -.01em; }
+.kicker { margin: 0; color: var(--accent); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; font-size: .8rem; }
+.sub { margin: 0 0 1.2rem; color: var(--muted); max-width: 62ch; }
+.stage { position: relative; z-index: 1; background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.stage svg { display: block; width: 100%; height: auto; font-family: var(--body); }
+.subtitle { min-height: 6.2em; padding: calc(.9rem + 14px) 1.1rem .9rem; border: 1px solid var(--line); border-top: 0; border-radius: 0 0 14px 14px; background: var(--card); margin-top: -14px; }
+.subtitle p { margin: 0; max-width: 78ch; }
+.controls { display: flex; align-items: center; gap: .75rem; margin-top: .75rem; }
+.controls button { font: inherit; font-weight: 600; color: #fff; background: var(--accent); border: 0; border-radius: 999px; padding: .45rem 1rem; cursor: pointer; min-width: 5.5rem; }
+:root[data-theme="dark"] .controls button { color: #0e1424; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .controls button { color: #0e1424; } }
+.controls button:focus-visible, .chapters button:focus-visible, .controls input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.controls input { flex: 1; min-width: 0; accent-color: var(--accent); }
+.clock { font: 500 .9rem var(--mono); color: var(--muted); white-space: nowrap; }
+.chapters { list-style: none; padding: 0; margin: 1.6rem 0 0; display: grid; gap: .25rem; }
+.chapters button { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 2.2rem 1fr; gap: .2rem .6rem; width: 100%; padding: .55rem .75rem; border-radius: 10px; cursor: pointer; }
+.chapters button:hover, .chapters .on button { background: var(--soft); }
+.chapters .n { font: 600 .85rem var(--mono); color: var(--muted); padding-top: .15rem; }
+.chapters span.c { grid-column: 2; color: var(--muted); font-size: .95rem; }
+.note { color: var(--muted); font-size: .9rem; margin-top: 1.5rem; max-width: 78ch; }
+/* SVG paint through tokens, so both themes work */
+.ink { fill: var(--ink); } .mut { fill: var(--muted); } .acc { fill: var(--accent); }
+.p { fill: var(--pass); } .f { fill: var(--fail); } .soft { fill: var(--soft); } .bg { fill: var(--card); }
+.card { fill: var(--card); stroke: var(--line); stroke-width: 2; }
+.lineS { stroke: var(--line); } .mutS { stroke: var(--muted); } .accS { stroke: var(--accent); } .fS { stroke: var(--fail); } .inkS { stroke: var(--ink); }
+.nofill { fill: none; }
+svg text { fill: var(--ink); }
+svg text.mut { fill: var(--muted); } svg text.acc { fill: var(--accent); } svg text.p { fill: var(--pass); } svg text.f { fill: var(--fail); } svg text.bg { fill: var(--card); }
+.mono { font-family: var(--mono); }
 </style>
 </head>
 <body>
-<!-- Shared icons. Agents take their color from the `color` of each <use>. -->
-<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
-  <defs>
-    <symbol id="yes" viewBox="-12 -12 24 24"><circle r="11" class="f-pass"/><path d="M-5 0 L-1.5 4 L5.5 -4" class="s-card" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
-    <symbol id="no" viewBox="-12 -12 24 24"><circle r="11" class="f-fail"/><path d="M-4.5 -4.5 L4.5 4.5 M4.5 -4.5 L-4.5 4.5" class="s-card" stroke-width="2.6" stroke-linecap="round"/></symbol>
-    <symbol id="coin" viewBox="-12 -12 24 24"><circle r="11" class="f-acc"/><circle r="6.5" class="s-card" stroke-width="1.8"/></symbol>
-    <symbol id="lock" viewBox="-12 -14 24 26"><path d="M-5 -2 V-6 A5 5 0 0 1 5 -6 V-2" class="s-ink" stroke-width="2.4"/><rect x="-8" y="-2" width="16" height="12" rx="2.5" class="f-ink"/></symbol>
-    <symbol id="agent" viewBox="-20 -24 40 46"><circle cy="-11" r="10" fill="currentColor"/><path d="M-17 21 A17 17 0 0 1 17 21 Z" fill="currentColor"/></symbol>
-    <symbol id="agentx" viewBox="-20 -24 40 46"><g fill="none" stroke="currentColor" stroke-width="2.5" stroke-dasharray="4 3"><circle cy="-11" r="9"/><path d="M-16 20 A16 16 0 0 1 16 20 Z"/></g></symbol>
-    <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="f-acc"/></marker>
-    <marker id="arrm" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--muted)"/></marker>
-    <marker id="arrp" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="f-pass"/></marker>
-  </defs>
-</svg>
-
 <main>
-<header>
-  <div class="eyebrow">Pit · why a market</div>
-  <h1>A market that prices compute so that <em>disagreement</em> decides what runs.</h1>
-  <p class="sub">Agents that bet on their own claims.</p>
-</header>
+  <header>
+    <p class="kicker">Pit</p>
+    <h1>Run what you disagree about first</h1>
+    <p class="sub">A 90-second film. The idea in four scenes, then one real 26-hour run of agents changing code and betting on each other's changes, read from its ledger.</p>
+  </header>
 
-<div class="stage all" id="stage" aria-roledescription="slideshow" aria-label="Pit in six scenes">
+  <figure style="margin:0">
+    <div class="stage"><svg id="svg" viewBox="0 0 1600 900" role="img" aria-labelledby="capText"></svg></div>
+    <div class="subtitle" aria-live="polite"><p id="capText"></p></div>
+    <div class="controls">
+      <button id="play" type="button">Play</button>
+      <input id="seek" type="range" min="0" step="0.01" value="0" aria-label="Seek">
+      <span class="clock" id="clock">0:00</span>
+    </div>
+  </figure>
 
-<!-- 1. 7 s: title still 1.5 s, votes arrive, B is circled, hold -->
-<section class="scene" data-dur="7" data-name="Problem" aria-label="Scene 1 of 6">
-  <h2>You can't price a run in advance</h2>
-  <div class="screen">
-    <svg viewBox="0 0 960 540" role="img" aria-label="Two experiments. On A all seven agents predict PASS; on B they split between PASS and FAIL. B, the contested one, is circled to run.">
-      <line x1="480" y1="40" x2="480" y2="460" class="s-line" stroke-width="2" stroke-dasharray="4 8"/>
-      <text x="240" y="110" text-anchor="middle" class="huge">A</text>
-      <text x="720" y="110" text-anchor="middle" class="huge">B</text>
-      <use href="#yes" x="134" y="148" width="44" height="44" class="pop" style="--d:1.50s"/>
-      <use href="#yes" x="614" y="148" width="44" height="44" class="pop" style="--d:1.65s"/>
-      <use href="#yes" x="190" y="148" width="44" height="44" class="pop" style="--d:1.83s"/>
-      <use href="#no" x="670" y="148" width="44" height="44" class="pop" style="--d:1.98s"/>
-      <use href="#yes" x="246" y="148" width="44" height="44" class="pop" style="--d:2.16s"/>
-      <use href="#yes" x="726" y="148" width="44" height="44" class="pop" style="--d:2.31s"/>
-      <use href="#yes" x="302" y="148" width="44" height="44" class="pop" style="--d:2.49s"/>
-      <use href="#no" x="782" y="148" width="44" height="44" class="pop" style="--d:2.64s"/>
-      <use href="#yes" x="162" y="204" width="44" height="44" class="pop" style="--d:2.82s"/>
-      <use href="#no" x="642" y="204" width="44" height="44" class="pop" style="--d:2.97s"/>
-      <use href="#yes" x="218" y="204" width="44" height="44" class="pop" style="--d:3.15s"/>
-      <use href="#yes" x="698" y="204" width="44" height="44" class="pop" style="--d:3.30s"/>
-      <use href="#yes" x="274" y="204" width="44" height="44" class="pop" style="--d:3.48s"/>
-      <use href="#no" x="754" y="204" width="44" height="44" class="pop" style="--d:3.63s"/>
-      <rect x="560" y="50" width="320" height="330" rx="24" class="s-acc draw" stroke-width="4" pathLength="1" stroke-dasharray="1" style="--d:4.1s;--t:.8s"/>
-      <g class="pop" style="--d:5s"><rect x="660" y="404" width="120" height="56" rx="28" class="f-acc"/><text x="720" y="442" text-anchor="middle" class="tb tc">run</text></g>
-      <g transform="translate(40 512)"><use href="#yes" x="0" y="-18" width="22" height="22"/><text x="30" y="0" class="tm">PASS</text><use href="#no" x="110" y="-18" width="22" height="22"/><text x="140" y="0" class="tm">FAIL</text></g>
-    </svg>
-  </div>
-</section>
+  <ol class="chapters" id="chapters" aria-label="Scenes"></ol>
 
-<!-- 2. 9 s: the token goes once round the loop -->
-<section class="scene" data-dur="9" data-name="Loop" aria-label="Scene 2 of 6">
-  <h2>Agents bet on their own claims</h2>
-  <div class="screen">
-    <svg viewBox="0 0 960 540" role="img" aria-label="One agent with a wallet, and its turn as a loop: change, claim, post, bet, run, settle.">
-      <circle cx="480" cy="275" r="195" class="s-line" stroke-width="3"/>
-      <g class="orbit"><circle cx="480" cy="80" r="13" class="f-acc"/></g>
-      <use href="#agent" x="446" y="226" width="68" height="78" class="c-acc"/>
-      <use href="#coin" x="500" y="282" width="30" height="30"/>
-      <rect x="410" y="54" width="140" height="52" rx="26" class="f-card s-ink" stroke-width="2"/>
-      <text x="480" y="88" text-anchor="middle" class="tb">change</text>
-      <g class="fade" style="--d:1.5s"><rect x="410" y="54" width="140" height="52" rx="26" class="f-acc"/><text x="480" y="88" text-anchor="middle" class="tb tc">change</text></g>
-      <rect x="579" y="151.5" width="140" height="52" rx="26" class="f-card s-ink" stroke-width="2"/>
-      <text x="649" y="185.5" text-anchor="middle" class="tb">claim</text>
-      <g class="fade" style="--d:2.5s"><rect x="579" y="151.5" width="140" height="52" rx="26" class="f-acc"/><text x="649" y="185.5" text-anchor="middle" class="tb tc">claim</text></g>
-      <rect x="579" y="346.5" width="140" height="52" rx="26" class="f-card s-ink" stroke-width="2"/>
-      <text x="649" y="380.5" text-anchor="middle" class="tb">post</text>
-      <g class="fade" style="--d:3.5s"><rect x="579" y="346.5" width="140" height="52" rx="26" class="f-acc"/><text x="649" y="380.5" text-anchor="middle" class="tb tc">post</text></g>
-      <rect x="410" y="444" width="140" height="52" rx="26" class="f-card s-ink" stroke-width="2"/>
-      <text x="480" y="478" text-anchor="middle" class="tb">bet</text>
-      <g class="fade" style="--d:4.5s"><rect x="410" y="444" width="140" height="52" rx="26" class="f-acc"/><text x="480" y="478" text-anchor="middle" class="tb tc">bet</text></g>
-      <rect x="241" y="346.5" width="140" height="52" rx="26" class="f-card s-ink" stroke-width="2"/>
-      <text x="311" y="380.5" text-anchor="middle" class="tb">run</text>
-      <g class="fade" style="--d:5.5s"><rect x="241" y="346.5" width="140" height="52" rx="26" class="f-acc"/><text x="311" y="380.5" text-anchor="middle" class="tb tc">run</text></g>
-      <rect x="241" y="151.5" width="140" height="52" rx="26" class="f-card s-ink" stroke-width="2"/>
-      <text x="311" y="185.5" text-anchor="middle" class="tb">settle</text>
-      <g class="fade" style="--d:6.5s"><rect x="241" y="151.5" width="140" height="52" rx="26" class="f-acc"/><text x="311" y="185.5" text-anchor="middle" class="tb tc">settle</text></g>
-    </svg>
-  </div>
-</section>
-
-<!-- 3. 7 s: the 50/50 bar jumps the queue -->
-<section class="scene" data-dur="7" data-name="Board" aria-label="Scene 3 of 6">
-  <h2>Closest odds run first</h2>
-  <div class="screen">
-    <svg viewBox="0 0 960 540" role="img" aria-label="Three markets as PASS/FAIL odds bars. The one split about evenly moves from last to the front of the queue and is marked to run; the one almost everyone expects to pass moves to the back.">
-      <g transform="translate(0 70)"><g class="rA"><rect x="200" y="0" width="680" height="48" rx="8" class="f-fail"/><rect x="200" y="0" width="354" height="48" rx="8" class="f-pass"/><text x="216" y="31" class="tm tc">PASS</text><text x="864" y="31" text-anchor="end" class="tm tc">FAIL</text></g></g>
-      <g transform="translate(0 210)"><rect x="200" y="0" width="680" height="48" rx="8" class="f-fail"/><rect x="200" y="0" width="490" height="48" rx="8" class="f-pass"/><text x="216" y="31" class="tm tc">PASS</text><text x="864" y="31" text-anchor="end" class="tm tc">FAIL</text></g>
-      <g transform="translate(0 350)"><g class="rC"><rect x="200" y="0" width="680" height="48" rx="8" class="f-fail"/><rect x="200" y="0" width="646" height="48" rx="8" class="f-pass"/><text x="216" y="31" class="tm tc">PASS</text></g></g>
-      <g class="pop" style="--d:3.6s"><rect x="40" y="66" width="120" height="56" rx="28" class="f-acc"/><text x="100" y="104" text-anchor="middle" class="tb tc">run</text></g>
-    </svg>
-  </div>
-</section>
-
-<!-- 4. 7 s: results land, B dims, A merges -->
-<section class="scene" data-dur="7" data-name="Gate" aria-label="Scene 4 of 6">
-  <h2>Checking the work is a market too</h2>
-  <div class="screen">
-    <svg viewBox="0 0 960 540" role="img" aria-label="Two candidate changes, A and B, face three trusted questions with odds on each; a hidden hold-out question stays locked off the board. B fails one question and fades; A passes all three and merges into the main line.">
-      <line x1="30" y1="480" x2="930" y2="480" class="s-ink" stroke-width="4"/>
-      <g class="dim" style="--o:3.6s">
-        <path d="M 100 480 C 170 480 170 340 240 340 L 296 340" class="s-fail" stroke-width="4"/>
-        <circle cx="300" cy="340" r="11" class="f-fail"/>
-        <text x="300" y="386" text-anchor="middle" class="tb">B</text>
-        <line x1="312" y1="340" x2="360" y2="340" class="s-fail" stroke-width="3" stroke-dasharray="3 6"/>
-        <rect x="380" y="302" width="80" height="10" rx="3" class="f-fail"/><rect x="380" y="302" width="56" height="10" rx="3" class="f-pass"/>
-        <rect x="470" y="302" width="80" height="10" rx="3" class="f-fail"/><rect x="470" y="302" width="36" height="10" rx="3" class="f-pass"/>
-        <rect x="560" y="302" width="80" height="10" rx="3" class="f-fail"/><rect x="560" y="302" width="60" height="10" rx="3" class="f-pass"/>
-        <use href="#yes" x="398" y="318" width="44" height="44" class="pop" style="--d:2.5s"/>
-        <use href="#no"  x="488" y="318" width="44" height="44" class="pop" style="--d:2.8s"/>
-        <use href="#yes" x="578" y="318" width="44" height="44" class="pop" style="--d:3.1s"/>
-      </g>
-      <path d="M 60 480 C 160 480 140 210 240 210 L 296 210" class="s-pass" stroke-width="4"/>
-      <circle cx="300" cy="210" r="11" class="f-pass"/>
-      <text x="300" y="256" text-anchor="middle" class="tb">A</text>
-      <line x1="312" y1="210" x2="360" y2="210" class="s-pass" stroke-width="3" stroke-dasharray="3 6"/>
-      <rect x="380" y="92" width="80" height="54" rx="10" class="f-card s-ink" stroke-width="2"/><text x="420" y="127" text-anchor="middle" class="tb">Q1</text>
-      <rect x="470" y="92" width="80" height="54" rx="10" class="f-card s-ink" stroke-width="2"/><text x="510" y="127" text-anchor="middle" class="tb">Q2</text>
-      <rect x="560" y="92" width="80" height="54" rx="10" class="f-card s-ink" stroke-width="2"/><text x="600" y="127" text-anchor="middle" class="tb">Q3</text>
-      <rect x="380" y="172" width="80" height="10" rx="3" class="f-fail"/><rect x="380" y="172" width="64" height="10" rx="3" class="f-pass"/>
-      <rect x="470" y="172" width="80" height="10" rx="3" class="f-fail"/><rect x="470" y="172" width="48" height="10" rx="3" class="f-pass"/>
-      <rect x="560" y="172" width="80" height="10" rx="3" class="f-fail"/><rect x="560" y="172" width="56" height="10" rx="3" class="f-pass"/>
-      <use href="#yes" x="398" y="188" width="44" height="44" class="pop" style="--d:1.6s"/>
-      <use href="#yes" x="488" y="188" width="44" height="44" class="pop" style="--d:1.9s"/>
-      <use href="#yes" x="578" y="188" width="44" height="44" class="pop" style="--d:2.2s"/>
-      <rect x="730" y="80" width="110" height="80" rx="12" class="f-card s-muted" stroke-width="2" stroke-dasharray="6 5"/>
-      <use href="#lock" x="767" y="100" width="36" height="40"/>
-      <path d="M 664 210 C 790 210 800 480 900 480" class="s-pass draw" stroke-width="5" pathLength="1" stroke-dasharray="1" style="--d:4s;--t:1.2s"/>
-      <circle cx="904" cy="480" r="12" class="f-pass pop" style="--d:5.1s"/>
-      <text x="830" y="300" class="big tp fade" style="--d:5.3s">merge</text>
-    </svg>
-  </div>
-</section>
-
-<!-- 5. 8 s: retire, wallet moves, plant; twice -->
-<section class="scene" data-dur="8" data-name="Population" aria-label="Scene 5 of 6">
-  <h2>Agents turn over and close in</h2>
-  <div class="screen">
-    <svg viewBox="0 0 960 540" role="img" aria-label="Early agents point in scattered directions. Two retire and their wallets fund two new agents pointing closer to the target; the last early agent retires and funds one that points straight at it.">
-      <circle cx="850" cy="270" r="72" class="s-acc" stroke-width="3"/><circle cx="850" cy="270" r="46" class="s-acc" stroke-width="3"/><circle cx="850" cy="270" r="16" class="f-acc"/>
-      <g class="out" style="--o:1.6s"><use href="#agent" x="116" y="122" width="48" height="56" class="c-acc"/><line x1="166" y1="140" x2="214" y2="98" class="s-acc" stroke-width="3" marker-end="url(#arr)"/></g>
-      <g class="out" style="--o:4.3s"><use href="#agent" x="116" y="242" width="48" height="56" class="c-acc"/><line x1="166" y1="284" x2="212" y2="334" class="s-acc" stroke-width="3" marker-end="url(#arr)"/></g>
-      <g class="out" style="--o:1.6s"><use href="#agent" x="116" y="362" width="48" height="56" class="c-acc"/><line x1="166" y1="404" x2="222" y2="436" class="s-acc" stroke-width="3" marker-end="url(#arr)"/></g>
-      <use href="#agentx" x="116" y="122" width="48" height="56" class="c-muted fade" style="--d:1.6s"/>
-      <use href="#agentx" x="116" y="362" width="48" height="56" class="c-muted fade" style="--d:1.6s"/>
-      <use href="#agentx" x="116" y="242" width="48" height="56" class="c-muted fade" style="--d:4.3s"/>
-      <g class="out" style="--o:3.4s">
-        <use href="#coin" x="368" y="176" width="34" height="34" class="fly" style="--d:2.1s;--fx:-245px;--fy:-30px;--t:1.1s"/>
-        <use href="#coin" x="368" y="336" width="34" height="34" class="fly" style="--d:2.1s;--fx:-245px;--fy:50px;--t:1.1s"/>
-      </g>
-      <g class="pop" style="--d:3.3s"><use href="#agent" x="361" y="162" width="48" height="56" class="c-acc"/><line x1="412" y1="192" x2="500" y2="208" class="s-acc" stroke-width="3" marker-end="url(#arr)"/></g>
-      <g class="pop" style="--d:3.3s"><use href="#agent" x="361" y="322" width="48" height="56" class="c-acc"/><line x1="412" y1="348" x2="500" y2="330" class="s-acc" stroke-width="3" marker-end="url(#arr)"/></g>
-      <g class="out" style="--o:6s"><use href="#coin" x="600" y="256" width="34" height="34" class="fly" style="--d:4.7s;--fx:-480px;--fy:10px;--t:1.2s"/></g>
-      <g class="pop" style="--d:5.9s"><use href="#agent" x="593" y="242" width="48" height="56" class="c-acc"/><line x1="644" y1="270" x2="760" y2="270" class="s-acc" stroke-width="3" marker-end="url(#arr)"/></g>
-      <g transform="translate(40 514)" class="tm"><use href="#agentx" x="0" y="-20" width="20" height="24" class="c-muted"/><text x="28" y="0">retire</text><use href="#agent" x="128" y="-20" width="20" height="24" class="c-acc"/><text x="156" y="0">plant</text></g>
-    </svg>
-  </div>
-</section>
-
-<!-- 6. 6.5 s: the brightest (most contested) squares get run and resolved first -->
-<section class="scene" data-dur="6.5" data-name="Payoff" aria-label="Scene 6 of 6">
-  <h2>Run what you disagree about first</h2>
-  <div class="screen">
-    <svg viewBox="0 0 960 540" role="img" aria-label="A grid of open questions shaded by how contested they are. The brightest squares, the closest bets, are run and resolved first, one after another.">
-      <rect x="126" y="130" width="60" height="60" rx="8" class="f-acc" opacity="0.18"/>
-      <rect x="198" y="130" width="60" height="60" rx="8" class="f-acc" opacity="0.12"/>
-      <rect x="270" y="130" width="60" height="60" rx="8" class="f-acc" opacity="1"/>
-      <rect x="342" y="130" width="60" height="60" rx="8" class="f-acc" opacity="0.45"/>
-      <rect x="414" y="130" width="60" height="60" rx="8" class="f-acc" opacity="0.08"/>
-      <rect x="486" y="130" width="60" height="60" rx="8" class="f-acc" opacity="0.08"/>
-      <rect x="558" y="130" width="60" height="60" rx="8" class="f-acc" opacity="0.55"/>
-      <rect x="630" y="130" width="60" height="60" rx="8" class="f-acc" opacity="0.32"/>
-      <rect x="702" y="130" width="60" height="60" rx="8" class="f-acc" opacity="0.08"/>
-      <rect x="774" y="130" width="60" height="60" rx="8" class="f-acc" opacity="0.18"/>
-      <rect x="126" y="202" width="60" height="60" rx="8" class="f-acc" opacity="0.32"/>
-      <rect x="198" y="202" width="60" height="60" rx="8" class="f-acc" opacity="0.08"/>
-      <rect x="270" y="202" width="60" height="60" rx="8" class="f-acc" opacity="0.32"/>
-      <rect x="342" y="202" width="60" height="60" rx="8" class="f-acc" opacity="0.12"/>
-      <rect x="414" y="202" width="60" height="60" rx="8" class="f-acc" opacity="0.08"/>
-      <rect x="486" y="202" width="60" height="60" rx="8" class="f-acc" opacity="0.08"/>
-      <rect x="558" y="202" width="60" height="60" rx="8" class="f-acc" opacity="0.25"/>
-      <rect x="630" y="202" width="60" height="60" rx="8" class="f-acc" opacity="1"/>
-      <rect x="702" y="202" width="60" height="60" rx="8" class="f-acc" opacity="0.08"/>
-      <rect x="774" y="202" width="60" height="60" rx="8" class="f-acc" opacity="0.12"/>
-      <rect x="126" y="274" width="60" height="60" rx="8" class="f-acc" opacity="0.08"/>
-      <rect x="198" y="274" width="60" height="60" rx="8" class="f-acc" opacity="0.32"/>
-      <rect x="270" y="274" width="60" height="60" rx="8" class="f-acc" opacity="0.25"/>
-      <rect x="342" y="274" width="60" height="60" rx="8" class="f-acc" opacity="0.08"/>
-      <rect x="414" y="274" width="60" height="60" rx="8" class="f-acc" opacity="0.85"/>
-      <rect x="486" y="274" width="60" height="60" rx="8" class="f-acc" opacity="0.32"/>
-      <rect x="558" y="274" width="60" height="60" rx="8" class="f-acc" opacity="0.08"/>
-      <rect x="630" y="274" width="60" height="60" rx="8" class="f-acc" opacity="0.12"/>
-      <rect x="702" y="274" width="60" height="60" rx="8" class="f-acc" opacity="0.45"/>
-      <rect x="774" y="274" width="60" height="60" rx="8" class="f-acc" opacity="0.45"/>
-      <rect x="126" y="346" width="60" height="60" rx="8" class="f-acc" opacity="0.32"/>
-      <rect x="198" y="346" width="60" height="60" rx="8" class="f-acc" opacity="0.85"/>
-      <rect x="270" y="346" width="60" height="60" rx="8" class="f-acc" opacity="0.32"/>
-      <rect x="342" y="346" width="60" height="60" rx="8" class="f-acc" opacity="0.32"/>
-      <rect x="414" y="346" width="60" height="60" rx="8" class="f-acc" opacity="0.25"/>
-      <rect x="486" y="346" width="60" height="60" rx="8" class="f-acc" opacity="0.08"/>
-      <rect x="558" y="346" width="60" height="60" rx="8" class="f-acc" opacity="0.12"/>
-      <rect x="630" y="346" width="60" height="60" rx="8" class="f-acc" opacity="0.08"/>
-      <rect x="702" y="346" width="60" height="60" rx="8" class="f-acc" opacity="0.85"/>
-      <rect x="774" y="346" width="60" height="60" rx="8" class="f-acc" opacity="0.55"/>
-      <use href="#yes" x="278" y="138" width="44" height="44" class="pop" style="--d:1.6s"/>
-      <use href="#no" x="638" y="210" width="44" height="44" class="pop" style="--d:2.2s"/>
-      <use href="#yes" x="422" y="282" width="44" height="44" class="pop" style="--d:2.8s"/>
-      <use href="#yes" x="710" y="354" width="44" height="44" class="pop" style="--d:3.4s"/>
-      <use href="#no" x="206" y="354" width="44" height="44" class="pop" style="--d:4.0s"/>
-    </svg>
-  </div>
-</section>
-</div>
-
-<div class="controls" id="controls" hidden>
-  <button type="button" id="play">Pause</button>
-  <button type="button" id="prev" aria-label="Previous scene">&larr;</button>
-  <button type="button" id="next" aria-label="Next scene">&rarr;</button>
-  <div class="steps" id="steps"></div>
-  <button type="button" id="all" aria-pressed="false">All scenes</button>
-</div>
-
-<footer>
-  <p class="close">Run what you disagree about first.</p>
-  <p class="note">The money is a scheduling signal, not real money; numbers in the pictures are illustrative.</p>
-</footer>
+  <p class="note">Scenes 1 to 4 are illustrative. Scenes 5 to 9 are counted from the ledger of one 26-hour run on a private codebase (its first 26 hours, cut at the hour), with the product, the names and the code left out. The money in Pit is a scheduling signal: it prices attention and never moves. Space plays and pauses, the arrow keys move between scenes, and <code>#t=40</code> in the URL opens the film at 40 seconds.</p>
 </main>
 
 <script>
-(() => {
-  const stage = document.getElementById('stage');
-  const scenes = [...stage.querySelectorAll('.scene')];
-  const N = scenes.length;
-  const dur = scenes.map(s => (+s.dataset.dur || 10) * 1000);
-  const playBtn = document.getElementById('play');
-  const allBtn = document.getElementById('all');
-  const stepsEl = document.getElementById('steps');
-  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const segs = scenes.map((s, k) => {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.setAttribute('aria-label', 'Scene ' + (k + 1) + ': ' + s.dataset.name);
-    b.innerHTML = '<span class="track"><span class="fill"></span></span><span>' + s.dataset.name + '</span>';
-    b.addEventListener('click', () => go(k));
-    stepsEl.appendChild(b);
-    return b;
-  });
-  const fills = segs.map(b => b.querySelector('.fill'));
-  let i = 0, t = 0, playing = false, last = performance.now();
+"use strict";
+const NS = "http://www.w3.org/2000/svg";
+const svg = document.getElementById("svg");
+function E(tag, at, par, txt) {
+  const e = document.createElementNS(NS, tag);
+  for (const a in at) e.setAttribute(a, at[a]);
+  if (txt != null) e.textContent = txt;
+  if (par) par.appendChild(e);
+  return e;
+}
+function T(par, x, y, txt, size = 28, cls = "", anchor = "start", weight = 400) {
+  return E("text", { x, y, "font-size": size, class: cls, "text-anchor": anchor, "font-weight": weight }, par, txt);
+}
+const clamp = x => Math.max(0, Math.min(1, x));
+const ease = x => x < .5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2;
+const k = (t, a, b) => ease(clamp((t - a) / (b - a)));
+const lerp = (a, b, p) => a + (b - a) * p;
+const op = (e, v) => e.setAttribute("opacity", v);
+const at = (e, x, y, s = 1) => e.setAttribute("transform", `translate(${x} ${y}) scale(${s})`);
+const arc = (x0, y0, x1, y1, p, h = 120) => [lerp(x0, x1, p), lerp(y0, y1, p) - Math.sin(Math.PI * p) * h];
+const flying = p => p > 0 && p < 1 ? 1 : 0;
 
-  function setPlaying(p) {
-    playing = p;
-    stage.classList.toggle('paused', !p);
-    playBtn.textContent = p ? 'Pause' : reduce ? 'Next' : (i === N - 1 && t >= dur[i] ? 'Replay' : 'Play');
-  }
-  function show(n) {
-    i = (n + N) % N; t = 0;
-    scenes.forEach(s => s.classList.remove('on'));
-    void stage.offsetWidth;            // restart the scene's animations
-    scenes[i].classList.add('on');
-    segs.forEach(b => b.removeAttribute('aria-current'));
-    segs[i].setAttribute('aria-current', 'step');
-  }
-  function go(n) { show(n); setPlaying(!reduce); }
-  function tick(now) {
-    if (playing) {
-      t += now - last;
-      if (t >= dur[i]) {
-        if (i === N - 1) { t = dur[i]; setPlaying(false); }
-        else show(i + 1);
-      }
-    }
-    last = now;
-    fills.forEach((f, k) => { f.style.width = (k < i ? 100 : k > i ? 0 : Math.min(100, t / dur[i] * 100)) + '%'; });
-    requestAnimationFrame(tick);
-  }
-  function toggleAll() {
-    const all = !stage.classList.contains('all');
-    stage.classList.toggle('all', all);
-    allBtn.setAttribute('aria-pressed', String(all));
-    allBtn.textContent = all ? 'Play as a film' : 'All scenes';
-    if (all) { setPlaying(false); scenes.forEach(s => s.classList.remove('on')); }
-    else go(0);
-  }
+function agent(par, cls, x, y, s = 1) {
+  const g = E("g", { class: cls }, par);
+  E("circle", { cy: -22, r: 17 }, g);
+  E("path", { d: "M-27 24 A27 27 0 0 1 27 24 Z" }, g);
+  at(g, x, y, s);
+  return g;
+}
+function pill(par, x, y, label, cls, w = 120) {
+  const g = E("g", {}, par);
+  E("rect", { x: -w / 2, y: -22, width: w, height: 44, rx: 22, class: cls }, g);
+  T(g, 0, 9, label, 24, "bg", "middle", 700);
+  at(g, x, y);
+  return g;
+}
+const coin = (par, cls, r = 11) => E("circle", { r, class: cls }, par);
+function card(par, w, h, lines) {
+  const g = E("g", {}, par);
+  E("rect", { width: w, height: h, rx: 16, class: "card" }, g);
+  lines.forEach(([txt, size, cls, weight], i) => T(g, 24, 44 + i * 38, txt, size, cls, "start", weight));
+  return g;
+}
+function pools(g) {
+  const P = E("rect", { x: 1190, y: 660, width: 110, height: 0, rx: 10, class: "p" }, g);
+  const F = E("rect", { x: 1340, y: 660, width: 110, height: 0, rx: 10, class: "f" }, g);
+  E("line", { x1: 1170, x2: 1470, y1: 660, y2: 660, "stroke-width": 3, class: "lineS" }, g);
+  T(g, 1245, 700, "PASS", 26, "p", "middle", 700); T(g, 1395, 700, "FAIL", 26, "f", "middle", 700);
+  const set = (r, h) => { r.setAttribute("y", 660 - h); r.setAttribute("height", h); };
+  return [h => set(P, h), h => set(F, h)];
+}
 
-  playBtn.addEventListener('click', () => {
-    if (!playing && i === N - 1 && t >= dur[i]) { go(0); return; }
-    if (reduce && !playing) { show(i + 1); return; }   // reduced motion: Play steps one scene
-    setPlaying(!playing);
-  });
-  document.getElementById('prev').addEventListener('click', () => go(i - 1));
-  document.getElementById('next').addEventListener('click', () => go(i + 1));
-  allBtn.addEventListener('click', toggleAll);
-  document.addEventListener('keydown', e => {
-    if (stage.classList.contains('all') || e.altKey || e.ctrlKey || e.metaKey) return;
-    if (e.key === 'ArrowRight') { go(i + 1); e.preventDefault(); }
-    else if (e.key === 'ArrowLeft') { go(i - 1); e.preventDefault(); }
-    else if (e.key === ' ' && !(e.target instanceof HTMLButtonElement)) { playBtn.click(); e.preventDefault(); }
+const S = [];
+const scene = (title, cap, dur, build) => S.push({ title, cap, dur, build });
+
+/* 1 · the question */
+scene("Which run goes next?",
+  "Many agents share a few machines, and every run has a price. Price alone cannot tell two equally priced runs apart: a control everyone expects to fail costs as much as a probe nobody can call. A result is worth the disagreement it settles.",
+  9, g => {
+    E("rect", { x: 1080, y: 290, width: 380, height: 260, rx: 22, class: "card" }, g);
+    E("rect", { x: 1110, y: 330, width: 320, height: 170, rx: 12, class: "soft" }, g);
+    T(g, 1270, 534, "the machine", 22, "mut", "middle");
+    const A = card(g, 420, 150, [["Control run", 30, "", 700], ["everyone expects FAIL", 24, "mut"]]);
+    const B = card(g, 420, 150, [["Probe", 30, "", 700], ["nobody can call it", 24, "mut"]]);
+    for (const c of [A, B]) pill(c, 350, 112, "$8", "acc", 84);
+    const same = E("g", {}, g);
+    E("path", { d: "M 600 360 C 650 360 650 610 600 610", "stroke-width": 3, class: "mutS nofill" }, same);
+    T(same, 668, 494, "same price", 26, "mut");
+    const vA = pill(g, 1270, 610, "FAIL", "f", 110), vB = pill(g, 1270, 610, "PASS", "p", 110);
+    const nA = T(g, 160, 820, "FAIL, as expected: nothing learned", 24, "mut");
+    const nB = T(g, 1270, 680, "and a decision changed", 26, "acc", "middle", 600);
+    const ring = E("rect", { x: 1096, y: 322, width: 348, height: 186, rx: 16, "stroke-width": 5, class: "accS nofill" }, g);
+    const head = T(g, 800, 840, "A result is worth the disagreement it settles.", 40, "", "middle", 650);
+    return t => {
+      op(same, k(t, 1.2, 2) * (1 - k(t, 2.4, 2.8)));
+      let p = k(t, 2.5, 3.6), q = k(t, 4.6, 5.3);
+      at(A, lerp(lerp(160, 1110, p), 160, q), lerp(lerp(250, 340, p), 660, q), lerp(lerp(1, .76, p), .62, q));
+      op(A, k(t, 0, .8) * (1 - .55 * q));
+      op(vA, k(t, 3.8, 4.1) * (1 - k(t, 4.6, 4.9)));
+      op(nA, k(t, 5.1, 5.5) * (1 - k(t, 7.3, 7.6)));
+      p = k(t, 5.3, 6.3);
+      at(B, lerp(160, 1110, p), lerp(500, 340, p), lerp(1, .76, p)); op(B, k(t, .3, 1.1));
+      op(vB, k(t, 6.5, 6.8)); op(nB, k(t, 6.8, 7.2)); op(ring, k(t, 6.5, 6.8) * (1 - k(t, 7.4, 8)));
+      op(head, k(t, 7.6, 8.2));
+    };
   });
 
-  document.getElementById('controls').hidden = false;
-  if (location.hash === '#all') { allBtn.setAttribute('aria-pressed', 'true'); allBtn.textContent = 'Play as a film'; }
-  else { stage.classList.remove('all'); show(0); setPlaying(!reduce); }
-  requestAnimationFrame(tick);
-})();
+/* 2 · post */
+scene("A post is a claim that it works",
+  "An agent changes the code on its own branch, states in its own words what the change does, and pays for the run from its wallet. Posting is a claim that it works: the agent's own stake goes on PASS. To say something will break, you bet against someone else's post.",
+  9, g => {
+    const a = agent(g, "acc", 230, 450, 1.7);
+    T(g, 230, 540, "agent", 24, "mut", "middle");
+    E("rect", { x: 150, y: 570, width: 160, height: 18, rx: 9, class: "soft" }, g);
+    const bal = E("rect", { x: 150, y: 570, width: 160, height: 18, rx: 9, class: "acc" }, g);
+    T(g, 230, 620, "wallet", 22, "mut", "middle");
+    const c = card(g, 580, 300, [["POST", 22, "acc", 700], ["claim", 22, "mut"], ["The answer still holds", 34, "", 650], ["when the hint is removed.", 34, "", 650], ["change: one commit on its branch", 22, "mut"], ["funding: pays for machine time", 22, "mut"]]);
+    at(c, 450, 250);
+    const [setP, setF] = pools(g);
+    const own = T(g, 1245, 530, "its own stake", 22, "mut", "middle");
+    const coins = [0, 1, 2, 3].map(() => coin(g, "mut")), stake = coin(g, "p", 13);
+    const foot = T(g, 800, 820, "To say something breaks, bet FAIL on someone else's post.", 30, "mut", "middle");
+    return t => {
+      op(a, k(t, 0, .6)); op(c, k(t, .3, 1));
+      coins.forEach((co, i) => {
+        const p = k(t, 1.5 + i * .35, 2.4 + i * .35), [x, y] = arc(230, 580, 840 + i * 30, 515, p, 140);
+        at(co, x, y); op(co, p > 0 ? 1 : 0);
+      });
+      const sp = k(t, 3.8, 4.8);
+      bal.setAttribute("width", 160 * (1 - .45 * k(t, 1.5, 3.5) - .1 * sp));
+      const [sx, sy] = arc(230, 580, 1245, 560, sp, 220); at(stake, sx, sy); op(stake, flying(sp));
+      setP(100 * k(t, 4.7, 5.3)); setF(0);
+      op(own, k(t, 5.1, 5.5)); op(foot, k(t, 6, 6.6));
+    };
+  });
+
+/* 3 · bet */
+scene("Everyone else bets or passes, blind",
+  "A new post wakes every other agent: each must bet with a one-line reason or write why it passes. Bets are blind. No agent sees the pools or the other bets, so each says what it believes instead of joining the side already ahead. The money that disagrees is what the scheduler reads.",
+  9, g => {
+    const c = card(g, 640, 110, [["claim", 22, "mut"], ["The answer still holds when the hint is removed.", 26, "", 650]]);
+    at(c, 300, 160);
+    const [setP, setF] = pools(g);
+    const veil = E("g", {}, g);
+    E("rect", { x: 1160, y: 380, width: 320, height: 350, rx: 18, "stroke-width": 3, "stroke-dasharray": "10 8", class: "mutS nofill" }, veil);
+    T(veil, 1320, 366, "hidden from every agent", 22, "mut", "middle");
+    const xs = [250, 580, 910], whys = [
+      ["FAIL", "f", "The same mechanism failed", "at 60% an hour ago."],
+      ["pass", "mut", "Nothing here bears", "on my own claim."],
+      ["FAIL", "f", "Deleting a line of prose", "doesn't add the missing step."]];
+    const ags = xs.map(x => agent(g, "mut", x, 720, 1.3));
+    const bubbles = xs.map((x, i) => {
+      const b = E("g", {}, g);
+      E("rect", { x: -150, y: -60, width: 300, height: 120, rx: 16, class: "card" }, b);
+      T(b, -126, -24, whys[i][0], 22, whys[i][1], "start", 700);
+      T(b, -126, 8, whys[i][2], 21); T(b, -126, 36, whys[i][3], 21);
+      at(b, x, 490);
+      return b;
+    });
+    const fc = [coin(g, "f", 13), coin(g, "f", 13)];
+    const match = E("g", {}, g);
+    E("line", { x1: 1170, x2: 1470, y1: 560, y2: 560, "stroke-width": 4, "stroke-dasharray": "8 6", class: "accS" }, match);
+    T(match, 1320, 300, "matched = 2 × min(PASS, FAIL)", 24, "acc", "middle", 700);
+    T(match, 1320, 332, "the money that disagrees", 22, "acc", "middle");
+    return t => {
+      setP(100);
+      ags.forEach((a, i) => { a.setAttribute("class", t > .6 + i * .2 ? "acc" : "mut"); op(a, k(t, 0, .5)); });
+      bubbles.forEach((b, i) => op(b, k(t, 1.2 + i * .5, 1.7 + i * .5)));
+      [0, 2].forEach((ai, j) => {
+        const p = k(t, 3.1 + j * .4, 4.2 + j * .4), [x, y] = arc(xs[ai], 660, 1395, 600, p, 160);
+        at(fc[j], x, y); op(fc[j], flying(p));
+      });
+      setF(150 * k(t, 4, 5));
+      op(veil, k(t, .8, 1.3) * (1 - k(t, 5.4, 6)));
+      op(match, k(t, 6, 6.6));
+    };
+  });
+
+/* 4 · schedule and settle */
+scene("Disagreement runs first",
+  "The queue is ordered by matched money, so the most disputed run goes first and a run nobody disputes waits, or fills a machine that would otherwise sit idle. Winners split the pot. The house keeps 2% and spends it on new questions nobody has staked yet.",
+  9, g => {
+    T(g, 120, 172, "queue, ordered by matched money", 24, "mut");
+    const jobs = [["Carry the filter", .8], ["Control, expected FAIL", 0], ["No hint, reworded", 3], ["Page the whole table", 1.6], ["Rename a field", 0]];
+    const order = [2, 3, 0, 1, 4];
+    const cards = jobs.map(([name, m]) => {
+      const c = E("g", {}, g);
+      E("rect", { width: 560, height: 92, rx: 14, class: "card" }, c);
+      T(c, 22, 40, name, 26, "", "start", 650);
+      E("rect", { x: 22, y: 58, width: 300, height: 12, rx: 6, class: "soft" }, c);
+      if (m) E("rect", { x: 22, y: 58, width: 100 * m, height: 12, rx: 6, class: "acc" }, c);
+      T(c, 540, 72, m ? "matched $" + m.toFixed(2) : "unopposed", 20, m ? "acc" : "mut", "end");
+      return c;
+    });
+    E("rect", { x: 1020, y: 210, width: 460, height: 250, rx: 22, class: "card" }, g);
+    T(g, 1250, 440, "the machine", 22, "mut", "middle");
+    E("rect", { x: 1060, y: 380, width: 380, height: 12, rx: 6, class: "soft" }, g);
+    const burn = E("rect", { x: 1060, y: 380, width: 0, height: 12, rx: 6, class: "f" }, g);
+    const burnT = T(g, 1250, 492, "funding burns at the machine's rate", 20, "mut", "middle");
+    const verdict = pill(g, 1250, 520, "FAIL", "f", 110);
+    const winners = [agent(g, "f", 1090, 760, 1.1), agent(g, "f", 1230, 760, 1.1)];
+    const house = E("g", {}, g); E("rect", { x: -56, y: -40, width: 112, height: 70, rx: 10, class: "soft" }, house);
+    T(house, 0, 4, "house", 22, "mut", "middle"); at(house, 1410, 760);
+    const wl = T(g, 1160, 840, "FAIL bettors split the pot", 20, "f", "middle");
+    const hl = T(g, 1410, 840, "2% → new questions", 20, "acc", "middle");
+    const pc = [coin(g, "f", 12), coin(g, "f", 12), coin(g, "acc", 8)];
+    const wait = T(g, 120, 790, "unopposed runs wait, or fill an idle machine", 22, "mut");
+    return t => {
+      const r = k(t, 1, 2.8), go = k(t, 3.2, 4.2), up = k(t, 6.6, 7.4);
+      jobs.forEach((_, i) => {
+        const rank = order.indexOf(i), slot = lerp(i, rank, r) - (rank > 0 ? up : 0);
+        let x = 120, y = 200 + slot * 112, s = 1;
+        if (rank === 0) { x = lerp(120, 1050, go); y = lerp(y, 240, go); s = lerp(1, .7, go); }
+        at(cards[i], x, y, s);
+        op(cards[i], k(t, 0, .5) * (rank === 0 ? 1 - k(t, 6.4, 6.8) : 1) * (jobs[i][1] === 0 && t > 2.8 ? .5 : 1));
+      });
+      op(wait, k(t, 2.9, 3.3) * (1 - k(t, 6.4, 6.6)));
+      burn.setAttribute("width", 266 * k(t, 4.3, 6)); op(burnT, k(t, 4.3, 4.6) * (1 - k(t, 6.2, 6.4)));
+      op(verdict, k(t, 6.1, 6.4));
+      winners.forEach(w => op(w, k(t, 6.5, 6.9))); op(house, k(t, 6.5, 6.9));
+      [[1090, 700], [1230, 700], [1410, 720]].forEach(([x1, y1], i) => {
+        const p = k(t, 6.9 + i * .2, 7.8 + i * .2), [x, y] = arc(1250, 560, x1, y1, p, 80);
+        at(pc[i], x, y); op(pc[i], flying(p));
+      });
+      op(wl, k(t, 7.9, 8.3)); op(hl, k(t, 8.1, 8.5));
+    };
+  });
+
+/* 5 · the real run (figures: the run's first 26 hours) */
+scene("Then it ran for a day",
+  "Then it ran for a day on a real codebase. Agents edited code on their own branches and every run benchmarked the change at that commit. Everything from here on is counted from that one ledger.",
+  7, g => {
+    const vals = [[26, "hours"], [17, "agents, coming and going"], [1903, "runs posted"], [1733, "results"], [516, "bets with a reason"], [25360, "rows in one ledger"]];
+    const nums = vals.map(([v, l], i) => {
+      const x = [330, 800, 1270][i % 3], y = i < 3 ? 380 : 640;
+      T(g, x, y + 48, l, 26, "mut", "middle");
+      return T(g, x, y, "0", 104, "acc", "middle", 700);
+    });
+    return t => nums.forEach((n, i) => {
+      n.textContent = Math.round(vals[i][0] * k(t, .3 + i * .25, 2.6 + i * .25)).toLocaleString("en-US");
+    });
+  });
+
+/* 6 · when disagreement started choosing */
+const share = [[1,18],[2,60],[1,63],[4,61],[4,71],[3,73],[4,65],[6,66],[6,62],[4,65],[2,71],[2,67],[1,68],[0,70],[4,75],[11,59],[12,63],[21,49],[17,54],[11,67],[5,58],[9,55],[5,47],[11,40],[22,29],[39,20],[13,19]];
+const bets = [1,4,8,5,7,3,4,13,9,10,4,3,2,3,9,23,11,34,35,24,12,25,12,29,70,99,57];
+scene("At first, nobody disagreed",
+  "For the first fourteen hours, 4% of runs were chosen by disagreement; the rest were the fallback. Agents tested their own checks, which pass by construction, and almost nobody bet against anybody. Showing each claim first and what agreeing pays, letting reflection plant new agents, and two skeptical newcomers changed that: in the last three hours, about half the runs were chosen by disagreement.",
+  12, g => {
+    const X = h => 160 + h * 50, H0 = .563;   // clock hours start 0.563 h before the run's first row
+    T(g, 160, 168, "share of runs chosen by disagreement, per hour", 22, "mut");
+    T(g, 160, 584, "bets with a reason, per hour", 22, "mut");
+    [[520, "0%"], [390, "50%"], [260, "100%"], [800, "0"], [705, "50"], [610, "100"]].forEach(([y, l]) => {
+      E("line", { x1: 160, x2: 1460, y1: y, y2: y, "stroke-width": 1.5, class: "lineS" }, g); T(g, 150, y + 7, l, 18, "mut", "end");
+    });
+    [0, 6, 12, 18, 24].forEach(h => T(g, X(h), 836, h + " h", 18, "mut", "middle"));
+    const bars = share.map(([m, f], i) => {
+      const a = Math.max(0, i - H0), b = Math.min(26, i + 1 - H0), s = m / (m + f), w = (b - a) * 50 - 6;
+      const top = E("rect", { x: X(a) + 3, y: 520 - 260 * s, width: w, height: Math.max(2, 260 * s), rx: 3, class: "acc" }, g);
+      const bot = E("rect", { x: X(a) + 3, y: 800 - 1.9 * bets[i], width: w, height: Math.max(2, 1.9 * bets[i]), rx: 3, class: "ink", "fill-opacity": .5 }, g);
+      return [a, top, bot];
+    });
+    const marks = [[13.57, "h14: claims and payoffs shown; reflection plants agents", 204, "start"],
+                   [23.62, "h24: two skeptics join; merge checks go on the market", 232, "end"]].map(([h, l, y, an]) => {
+      const m = E("g", {}, g);
+      E("line", { x1: X(h), x2: X(h), y1: y + 10, y2: 800, "stroke-width": 2, "stroke-dasharray": "6 6", class: "mutS" }, m);
+      T(m, an === "start" ? X(h) + 8 : X(h) - 8, y, l, 18, "mut", an, 600);
+      return [h, m];
+    });
+    const c1 = T(g, 190, 420, "first 14 h: 4%", 34, "acc", "start", 700);
+    const c2 = T(g, 1460, 316, "last 3 h: about half", 34, "acc", "end", 700);
+    return t => {
+      const ph = 26.3 * k(t, .4, 6);
+      bars.forEach(([a, top, bot]) => { const v = a <= ph ? 1 : 0; op(top, v); op(bot, v); });
+      marks.forEach(([h, m]) => op(m, ph >= h ? 1 : 0));
+      op(c1, k(t, 6.5, 7)); op(c2, k(t, 7.5, 8));
+    };
+  });
+
+/* 7 · who was right */
+scene("Authors overclaim",
+  "The checks agents wrote for their own changes passed 96% of the time; the shared benchmark passed 55%. When one agent bet that another's claim would fail, it was right 83% of the time. A counter-bet is information, and the market spends the machines on the claims someone disputes.",
+  9, g => {
+    T(g, 120, 220, "Pass rate", 26, "", "start", 700);
+    T(g, 120, 540, "Bets on another agent's claim: share right", 26, "", "start", 700);
+    const rows = [[290, "checks the agents wrote themselves", .96, "p", "96%", .5], [400, "the shared benchmark", .55, "p", "55%", 1],
+                  [610, "bet it would FAIL", .83, "f", "83%  (204 of 246)", 3], [720, "bet it would PASS", .46, "p", "46%  (61 of 132)", 3.5]];
+    const fills = rows.map(([y, l, v, cls, lab, d]) => {
+      T(g, 120, y - 14, l, 22, "mut");
+      E("rect", { x: 120, y, width: 600, height: 44, rx: 8, class: "soft" }, g);
+      return [E("rect", { x: 120, y, width: 0, height: 44, rx: 8, class: cls }, g), T(g, 740, y + 32, lab, 26, cls, "start", 700), v, d];
+    });
+    const side = E("g", {}, g);
+    ["Disagreement is the signal.", "A bet against a claim was", "right four times in five,", "so the disputed runs are", "the ones worth a machine."].forEach((l, i) =>
+      T(side, 1080, 380 + i * 50, l, 34, i ? "" : "acc", "start", i ? 400 : 700));
+    return t => {
+      fills.forEach(([r, tl, v, d]) => { r.setAttribute("width", 600 * v * k(t, d, d + 1.4)); op(tl, k(t, d + 1, d + 1.5)); });
+      op(side, k(t, 5.4, 6));
+    };
+  });
+
+/* 8 · agents turn over (hours into the run; s = started, r = planted by reflection, o = by the operator) */
+const life = [[0,"s",15.97,"met"],[0,"s",21.77,"stale"],[0,"s",15.26,"stale"],[0,"s",15.26,"met"],[0,"s",20.85,"met"],
+  [15.26,"r"],[15.26,"r",23.77,"met"],[15.97,"r",18.37,"stale"],[18.37,"r",19.85,"met"],[19.85,"r",25.57,"met"],[20.85,"r"],
+  [21.77,"r"],[23.63,"o"],[23.63,"o"],[23.77,"r",23.8,"stale"],[24.62,"r"],[25.57,"r"]];
+const passes = [15.31, 16.01, 18.49, 18.81, 19.88, 20.9, 21.83, 22.84, 23.85, 24.69, 25.64];
+scene("Agents come and go",
+  "Each agent holds one falsifiable capability, not a role. For fifteen hours reflection waited for a human. Once it acted on its own, it retired ten agents in eleven hours, six with their goal met and four whose brief had gone stale, and planted new ones aimed at what several were struggling with. A retiree's balance seeds its successors.",
+  10, g => {
+    const X = h => 300 + h * 44, END = 26;
+    const shade = E("rect", { x: X(0), y: 150, width: X(15.26) - X(0), height: 640, class: "soft" }, g);
+    T(g, 290, 176, "reflection passes", 20, "mut", "end");
+    const ds = passes.map(h => { const d = E("path", { d: "M0 -9 L9 0 L0 9 L-9 0 Z", class: "acc" }, g); at(d, X(h), 170); return [h, d]; });
+    const note = E("g", {}, g);
+    ["First 15 hours:", "reflection waited", "for a human."].forEach((l, i) => T(note, X(.6), 470 + i * 40, l, 30, i ? "mut" : "", "start", i ? 400 : 700));
+    const rows = life.map(([a, kind, end, why], i) => {
+      const y = 200 + i * 34;
+      const b = E("rect", { x: X(a), y, height: 20, rx: 10, class: { s: "mut", r: "acc", o: "ink" }[kind] }, g);
+      const mk = end == null ? null : E("circle", { cx: X(end), cy: y + 10, r: 10, class: why === "met" ? "p" : "bg fS", "stroke-width": why === "met" ? 0 : 4 }, g);
+      return [a, end ?? END, b, mk];
+    });
+    const head = E("line", { y1: 150, y2: 790, "stroke-width": 2, class: "inkS" }, g);
+    [["mut", "started"], ["acc", "planted by reflection"], ["ink", "planted by the operator"]].forEach(([c, l], i) => {
+      E("rect", { x: 300 + i * 300, y: 842, width: 34, height: 16, rx: 8, class: c }, g); T(g, 344 + i * 300, 857, l, 20, "mut");
+    });
+    E("circle", { cx: 1240, cy: 850, r: 9, class: "p" }, g); T(g, 1256, 857, "retired, goal met", 20, "mut");
+    E("circle", { cx: 1240, cy: 884, r: 8, class: "bg fS", "stroke-width": 4 }, g); T(g, 1256, 891, "retired, stale", 20, "mut");
+    [0, 6, 12, 18, 24].forEach(h => T(g, X(h), 812, h + " h", 16, "mut", "middle"));
+    return t => {
+      const ph = END * k(t, .5, 7);
+      head.setAttribute("x1", X(ph)); head.setAttribute("x2", X(ph)); op(head, t < 7.2 ? 1 : 0);
+      rows.forEach(([a, e, b, mk]) => {
+        b.setAttribute("width", Math.max(0, Math.min(e, ph) - a) * 44); op(b, ph >= a ? 1 : 0);
+        if (mk) op(mk, ph >= e ? 1 : 0);
+      });
+      ds.forEach(([h, d]) => op(d, ph >= h ? 1 : 0));
+      op(shade, k(t, 7.4, 7.9)); op(note, k(t, 7.6, 8.1));
+    };
+  });
+
+/* 9 · the gate (the first read of five candidate branches; baseline from its market posts) */
+const grid = { "baseline": "FPFPPPP?P", "candidate A": "PPFVPPPPP", "candidate B": "FPFPPPFPP", "candidate C": "FPFPPPPPP", "candidate D": "FPFPPPPPP", "candidate E": "FPFPFPFFP" };
+scene("Checking the work is a market too",
+  "An agent's own tests show its change does what it meant; only questions nobody in the market wrote show it broke nothing. So the merge gate is posts too: one per trusted check per candidate branch, bet on and run in order of disagreement, plus a hold-out no agent has seen.",
+  12, g => {
+    T(g, 520, 170, "trusted checks, written before any agent existed", 22, "mut");
+    const cx = c => 520 + c * 96, ry = r => 230 + r * 74;
+    for (let c = 0; c < 9; c++) T(g, cx(c) + 44, 214, String(c + 1), 20, "mut", "middle", 600);
+    const cells = [];
+    Object.entries(grid).forEach(([name, s], r) => {
+      T(g, 495, ry(r) + 41, name, 24, r ? "" : "mut", "end", r ? 600 : 400);
+      [...s].forEach((v, c) => {
+        const e = E("g", {}, g);
+        const a = { width: 88, height: 64, rx: 10, class: v === "P" ? "p" : v === "F" ? "f" : v === "V" ? "soft" : "bg mutS" };
+        if (v === "?") Object.assign(a, { "stroke-width": 2, "stroke-dasharray": "5 5" });
+        E("rect", a, e);
+        T(e, 44, 40, { P: "PASS", F: "FAIL", V: "void", "?": "rerun" }[v], 18, v === "P" || v === "F" ? "bg" : "mut", "middle", 700);
+        at(e, cx(c), ry(r));
+        cells.push([r, e]);
+      });
+    });
+    const box = (x, y, w, h) => E("rect", { x, y, width: w, height: h, rx: 14, "stroke-width": 5, class: "accS nofill" }, g);
+    const hl = [box(cx(2) - 8, ry(0) - 8, 104, 6 * 74 + 6), box(cx(0) - 8, ry(0) - 8, 104, 6 * 74 + 6), box(cx(6) - 8, ry(2) - 8, 104, 80)];
+    const notes = [["Check 3 fails everywhere, the baseline too:", "the check is stale, not the code."],
+                   ["Check 1 fails on the baseline, and only", "candidate A passes it: the one lead."],
+                   ["Candidate B breaks check 7, which the", "baseline passes: B stays a draft."],
+                   ["Each cell is a post: agents bet on it, contested cells run first,", "and a merge also needs a hold-out no agent has seen."]].map(([a, b], i) => {
+      const n = E("g", {}, g), cls = i === 3 ? "acc" : "";
+      T(n, 800, 740, a, 28, cls, "middle", 650); T(n, 800, 780, b, 28, cls, "middle", 650); return n;
+    });
+    const voidNote = T(g, 1440, 850, "void: a harness error, stakes refunded", 18, "mut", "end");
+    const win = [[4.2, 5.9], [5.9, 7.6], [7.6, 9.3], [9.3, 99]];
+    return t => {
+      cells.forEach(([r, e]) => op(e, k(t, .4 + r * .55, .8 + r * .55)));
+      win.forEach(([a, b], i) => {
+        const v = k(t, a, a + .3) * (1 - k(t, b - .2, b));
+        op(notes[i], v); if (hl[i]) op(hl[i], v);
+      });
+      op(voidNote, k(t, 3.5, 4));
+    };
+  });
+
+/* 10 · close */
+scene("In one line",
+  "Agents post claims, bet on each other's, and the runs they dispute go first. Pit's dollars are a scheduling signal: they price attention and never move.",
+  7, g => {
+    const a = T(g, 800, 400, "Run what you disagree about first.", 68, "", "middle", 750);
+    const b = T(g, 800, 470, "Agents post claims, bet on each other's, and the disputed runs go first.", 30, "mut", "middle");
+    const c = T(g, 800, 580, "bin/q replay examples/replay-synthetic", 28, "acc mono", "middle", 600);
+    const d = T(g, 800, 650, "The dollars are a scheduling signal: they price attention and never move.", 24, "mut", "middle");
+    return t => { op(a, k(t, .2, .9)); op(b, k(t, 1, 1.6)); op(c, k(t, 2, 2.6)); op(d, k(t, 2.8, 3.4)); };
+  });
+
+/* player */
+let start = 0;
+S.forEach((s, i) => {
+  s.start = start; start += s.dur;
+  s.g = E("g", {}, svg);
+  T(s.g, 80, 56, `${i + 1} / ${S.length}`, 20, "mut mono");
+  T(s.g, 80, 104, s.title, 46, "", "start", 750);
+  s.draw = s.build(E("g", {}, s.g));
+});
+const TOTAL = start;
+const seek = document.getElementById("seek"), playB = document.getElementById("play"),
+      clock = document.getElementById("clock"), capText = document.getElementById("capText"), chapters = document.getElementById("chapters");
+seek.max = TOTAL;
+const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+S.forEach((s, i) => {
+  const li = document.createElement("li"), b = document.createElement("button");
+  b.type = "button";
+  b.innerHTML = `<span class="n">${String(i + 1).padStart(2, "0")}</span><strong></strong><span class="c"></span>`;
+  b.querySelector("strong").textContent = s.title; b.querySelector(".c").textContent = s.cap;
+  b.onclick = () => { render(s.start); play(true); };
+  li.appendChild(b); chapters.appendChild(li); s.li = li;
+});
+let t = 0, cur = -1, playing = false, last = 0;
+function render(nt) {
+  t = Math.max(0, Math.min(TOTAL, nt));
+  let i = S.findIndex(s => t < s.start + s.dur); if (i < 0) i = S.length - 1;
+  const s = S[i], lt = t - s.start;
+  S.forEach((o, j) => o.g.style.display = j === i ? "" : "none");
+  op(s.g, i === S.length - 1 ? Math.min(1, lt / .35) : Math.min(1, lt / .35, (s.dur - lt) / .35));
+  s.draw(lt);
+  if (i !== cur) { cur = i; capText.textContent = s.cap; S.forEach((o, j) => o.li.classList.toggle("on", j === i)); }
+  seek.value = t; clock.textContent = `${fmt(t)} / ${fmt(TOTAL)}`;
+}
+function frame(now) {
+  if (!playing) return;
+  render(t + (now - last) / 1000); last = now;
+  if (t >= TOTAL) return play(false);
+  requestAnimationFrame(frame);
+}
+function play(on) {
+  if (on && t >= TOTAL) render(0);
+  playing = on; playB.textContent = on ? "Pause" : t >= TOTAL ? "Replay" : "Play";
+  if (on) { last = performance.now(); requestAnimationFrame(frame); }
+}
+playB.onclick = () => play(!playing);
+seek.oninput = () => render(+seek.value);
+document.addEventListener("keydown", e => {
+  if (e.target.closest("input, button, a")) return;
+  if (e.key === " ") { e.preventDefault(); play(!playing); }
+  if (e.key === "ArrowRight" || e.key === "ArrowLeft")
+    render(S[Math.max(0, Math.min(S.length - 1, cur + (e.key === "ArrowRight" ? 1 : -1)))].start);
+});
+const hashT = location.hash.match(/t=([\d.]+)/);
+if (hashT) render(+hashT[1]);
+else if (matchMedia("(prefers-reduced-motion: reduce)").matches) render(8.5);
+else { render(0); play(true); }
 </script>
 </body>
 </html>

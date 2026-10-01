@@ -11,7 +11,7 @@ Pit grew out of Trellis, the ledger-and-lanes frame underneath it.
 
 ## Why a market
 
-In pictures: [docs/why.html](docs/why.html), a 45-second animated walk-through in six scenes (open the file in a browser).
+In pictures: [docs/why.html](docs/why.html), a 90-second film: the idea in four scenes, then one real 26-hour run of agents betting on each other's code changes, counted from its ledger (open the file in a browser).
 
 In a system of many agents running experiments, compute time is the only hard limit. Every other scheduling question — which run, on which machine, when, by whom, at what size — has no computable answer up front, so Pit lets those emerge the way prices do. Agents pay time to run, bet on outcomes, and disagreement per dollar decides what runs next: a result is worth exactly the disagreement it settles, and the house's cut funds new questions.
 
