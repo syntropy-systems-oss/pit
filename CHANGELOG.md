@@ -15,6 +15,7 @@
 - Autopilot `workspace` / `workspace_init` creates a tree per wallet before its first turn, names the tree and branch in the prompt and adds the paths to both runtimes. The prompt describes making a change, committing and betting on its run.
 
 - Under blind betting, each new market and the agent's board show what $1 on each side returns against the opening book (the automatic stake, the house seed, a human's stake): "$1 on PASS returns $0.98 unless FAIL money arrives · $1 on FAIL returns up to $X if it fails". Later bets, the proposer's included, stay hidden.
+- `[lanes.X.env]`: environment every run on the lane inherits, runner and free-form `run` alike (ports, timeouts, endpoints), so a hand-written run cannot collide with the lane's conventions by omission.
 - Reflect never takes an agent turn: a result on a root it posted does not wake it (its only turns are reflection passes; the digest carries the result).
 - A retirement moves the agent's balance to the house (`retire` rows carry `usd`). When a reflection pass ends, the balances it retired plus the vig on every bet settled since the previous pass are split equally among the agents it planted (`endow` row from the house); a pass that planted nobody leaves it with the house. Stakes that settle after a retirement are swept from the retired wallet into the same pool at the next pass end.
 - `[pit] max_agents` (0 = no cap): `q agent add` refuses a new agent while that many persistent agents are active; the reflection pass is told the count and the cap.

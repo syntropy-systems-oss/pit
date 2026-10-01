@@ -352,6 +352,16 @@ class Claim(unittest.TestCase):
         L.commit(tmp, lg, "add j")
         return tmp, lg
 
+    def test_a_lane_environment_reaches_every_run(self):
+        import copy
+        tmp, lg = self.repo()
+        cfg = copy.deepcopy(CFG)
+        cfg["lanes"]["gpu-small"]["env"] = {"BENCH_PORT_BASE": 5}
+        add(lg, job("e", run="echo \"base=$BENCH_PORT_BASE lane=$PIT_LANE\"; echo 'pit: verdict=pass'"))
+        row = runmod.run_job(tmp, lg, cfg, "e", echo=lambda *_: None)
+        self.assertEqual(row["verdict"], "pass")
+        self.assertIn("base=5 lane=gpu-small", (tmp / row["log"]).read_text())
+
     def test_no_remote_runs_and_records(self):
         tmp, lg = self.repo()
         lines = []
