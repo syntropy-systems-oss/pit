@@ -67,6 +67,8 @@ def add_specs(root, lg, cfg, loaded):
             bad.append(f"refused {path}: {e}")
             continue
         errs = specmod.validate(s, cfg["lanes"], known, cfg.get("bench", {}).get("drivers"))
+        if not errs and (err := specmod.admit(s, cfg["lanes"], root)):
+            errs.append(err)
         if s.get("id") in st.jobs or s.get("id") in [x["id"] for _, x in specs]:
             errs.append(f"{s['id']} is already in the ledger (cancel or supersede it)")
         if "bag" in s:

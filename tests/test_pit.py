@@ -61,6 +61,14 @@ class Validator(unittest.TestCase):
         self.assertEqual(self.errs(depends_on=["b"], inputs={"x": "{{ jobs.b.result.k }}"}), [])
 
 
+class Admit(unittest.TestCase):
+    def test_lane_admit_refuses_with_last_line(self):
+        lanes = {"gpu-small": {**CFG["lanes"]["gpu-small"], "admit": "python3 -c 'import sys,json; s=json.load(sys.stdin); print(\"too cheap: \" + str(s[\"budget_usd\"])); sys.exit(s[\"budget_usd\"] < 2)'"}}
+        self.assertEqual(specmod.admit(job("a", budget_usd=1), lanes, "/tmp"), "admit on gpu-small: too cheap: 1")
+        self.assertIsNone(specmod.admit(job("a", budget_usd=3), lanes, "/tmp"))
+        self.assertIsNone(specmod.admit(job("a"), CFG["lanes"], "/tmp"))      # no admit on the lane
+
+
 class PostedClaims(unittest.TestCase):
     def setUp(self):
         from pit import cli

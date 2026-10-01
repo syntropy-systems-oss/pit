@@ -266,3 +266,19 @@ def render(spec: dict, ctx: dict) -> tuple[dict, str]:
     inputs = fill(spec.get("inputs", {}), ctx)
     # upstream values are data, not shell: quote them into the command
     return inputs, fill(spec.get("run", ""), {**ctx, "inputs": inputs}, quote=True)
+
+
+def admit(spec: dict, lanes: dict, root, env: dict | None = None) -> str | None:
+    """The lane's `admit` command, run at post time with the pinned spec as JSON on stdin and the lane's env; a nonzero exit
+    refuses the post with the command's last output line. Site checks that can be decided from the spec live there, not
+    in the text agents read. None when the lane has none or it passed."""
+    cmd = lanes.get(spec.get("lane"), {}).get("admit")
+    if not cmd:
+        return None
+    lane_env = {k: str(v) for k, v in lanes.get(spec["lane"], {}).get("env", {}).items()}
+    r = subprocess.run(cmd, shell=True, input=json.dumps(spec), text=True, capture_output=True, timeout=120,
+                       env={**os.environ, **(env or {}), **lane_env, "PIT_ROOT": str(root), "PIT_LANE": spec["lane"]})
+    if r.returncode == 0:
+        return None
+    lines = [x for x in (r.stdout + r.stderr).strip().splitlines() if x.strip()]
+    return f"admit on {spec['lane']}: " + (lines[-1] if lines else f"exit {r.returncode}")

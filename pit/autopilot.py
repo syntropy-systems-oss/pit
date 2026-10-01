@@ -58,8 +58,10 @@ REWAKE = ("Agents never sleep: you get a turn about every {gap} s whether or not
           "use the turn to bet on other open runs, research, or post a second experiment on a free lane. "
           "Every turn must leave the market changed: a post, a bet, or a finding.")
 MARKET = "You were woken for this market: bet (`q bet … --why`) or write `pass: <reason>`; then continue your turn."
-BOOTSTRAP_LOOP = ("You maintain agents/BOOTSTRAP.md. If the tape shows a newcomer paying for something the text does not say, "
-                  "you may edit it directly. `q bootstrap --apply <spec> --as <you>` also applies and records edits carried "
+BOOTSTRAP_LOOP = ("You maintain agents/BOOTSTRAP.md. It describes the environment and the game; it is not a rulebook. If the tape "
+                  "shows a newcomer paying for something the text does not say, you may edit it, in a sentence about the world, never "
+                  "a sentence about one job. A mistake a check could refuse at post time is the operator's to code (the lane's `admit`): "
+                  "record it as a finding, not a line. `q bootstrap --apply <spec> --as <you>` also applies and records edits carried "
                   "in bootstrap_add / bootstrap_remove; `q bootstrap --settle <job>` records their outcome. "
                   "Bootstrap cost is the INVALID share of an agent's first 20 posts, with cancellations reported alongside it.")
 STRUCTURE = ("You are the one agent with a standing, structural brief: the shape of the population. Every other agent's brief is a "
