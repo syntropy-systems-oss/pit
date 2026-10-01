@@ -453,8 +453,8 @@ class Autopilot:
             self.echo("hand-backs: none due")
         for agent, items in due.items():
             what = "; ".join(ref for ref, _, _ in items)
-            if agent in book.retired:
-                continue                   # retired: its results settle, nobody is woken for them
+            if agent in book.retired or agent == B.REFLECT:
+                continue                   # retired: its results settle, nobody is woken; reflect: its only turns are reflection passes
             if agent in self.subs:
                 self.echo(f"hand-back {agent}: waits, {self.subs[agent][0]} is still running ({what})")
             elif len(self.subs) >= self.max_subs():

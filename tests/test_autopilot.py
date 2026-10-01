@@ -637,6 +637,18 @@ class Autopilot(unittest.TestCase):
         self.assertEqual(len(self.auto("reflect")), 2)
         self.assertEqual(len([r for r in self.lg.rows() if r["t"] == "reflect"]), 1)
 
+    def test_a_result_on_a_reflect_post_never_wakes_reflect_as_an_agent(self):
+        """Reflect's only turns are reflection passes: a result on a root it posted is the next pass's business."""
+        from unittest import mock
+        book = B.Book(self.lg.rows())
+        book.agents[B.REFLECT] = self.lg.append(B.agent_row(book, B.REFLECT, "reflection", None))
+        self.lg.append({"t": "node", "kind": "job", "id": "root", "spec": {**job("root"), "proposer": B.REFLECT, "seed": True}})
+        self.lg.append({"t": "result", "job": "root", "verdict": "fail", "cost": {"usd": 0.1, "lane": "gpu-small"}, "result": {}})
+        ap = self.ap()
+        with mock.patch.object(ap, "spawn", side_effect=AssertionError("reflect was spawned for a hand-back")) as sp:
+            ap.handback(datetime.now(timezone.utc))
+        self.assertEqual([a for a in ap.subs], [])
+
     def test_pass_end_endows_planted_agents_from_retired_balances(self):
         self.cfg["reflect"] = {"rows": 1}
         self.lg.append({"t": "node", "kind": "finding", "id": "F0", "text": "evidence"})
