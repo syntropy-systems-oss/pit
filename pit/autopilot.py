@@ -288,6 +288,13 @@ class Autopilot:
             if lane != "any" and (why := lanes.busy(self.cfg, lane, on)):
                 self.echo(f"{head} {why}" if why.startswith("busy") else f"lane {lane}: {why}")
                 continue
+            # `yields_to`: a filler lane takes nothing while a lane it yields to has runnable work of its own (they share a
+            # device; the one that matters goes first, the filler runs in the gaps)
+            waiting = [x for x in self.cfg["lanes"].get(lane, {}).get("yields_to", [])
+                       if any(st.jobs[j]["spec"]["lane"] == x and j not in self.runs for j in order)]
+            if waiting:
+                self.echo(f"lane {lane}: yields to {', '.join(waiting)} (runnable work there)")
+                continue
             if lane == "any" and len(busy) >= slots:
                 self.echo(f"{head} busy ({', '.join(sorted(busy))})")
                 continue

@@ -103,6 +103,21 @@ class Autopilot(unittest.TestCase):
         self.assertEqual(st.jobs["o"]["result"]["note"], "orphaned claim (no live run)")
         self.assertEqual([(r["reason"], r["job"]) for r in self.auto("note")], [("orphan", "o")])
 
+    def test_a_lane_yields_to_another_with_runnable_work(self):
+        self.cfg["lanes"]["lens"] = {"usd_per_h": 2, "slots": 1, "gate": "true", "device": "gpu0"}
+        self.cfg["lanes"]["gpu-small"]["device"] = "gpu0"
+        self.cfg["lanes"]["gpu-small"]["yields_to"] = ["lens"]
+        self.post(slow("f1"), "a")                              # filler on gpu-small
+        self.post(slow("r1", lane="lens"), "b")                 # the lane that matters
+        ap = self.ap()
+        said = []
+        ap.echo = said.append
+        ap.tick(); ap.wait()
+        self.assertEqual({r["job"] for r in self.auto("dispatch")}, {"r1"})       # lens first; gpu-small yielded
+        self.assertTrue(any("yields to lens" in x for x in said))
+        ap.tick(); ap.wait()
+        self.assertIn("f1", {r["job"] for r in self.auto("dispatch")})            # the filler runs once the lens is quiet
+
     def test_two_runs_dispatched_in_one_tick_take_distinct_slots(self):
         self.cfg["lanes"]["gpu-small"]["slots"] = 2
         self.post(slow("p1"), "a")

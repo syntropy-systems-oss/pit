@@ -38,6 +38,7 @@ gate = "true"                   # a shell command; exit 0 = the lane is free
 # [lanes.gpu-small.env]       # environment every run on this lane gets (a runner's and a hand-written run's alike): ports, timeouts, endpoints
 # BENCH_PORT_BASE = "5"
 # [lanes.gpu-small.env]  WT_LANE = "5{slot}"   # with slots > 1, {slot} is the run's slot index: lane 50 and 51
+# yields_to = ["lens"]            # a filler lane: takes nothing while the lens lane (same device) has runnable work
 # admit = "python3 tools/admit.py"  # runs at post time with the pinned spec as JSON on stdin and the lane env; non-zero = refused "admit on <lane>: <last line>".
 #                                   # Put the checks that can be decided from a spec here, not in the text agents read.
 # prepare = "sh tools/inputs.sh"   # runs inside the tree before every job (ignored inputs, deps); non-zero = INVALID "prepare: <last line>"
