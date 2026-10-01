@@ -11,6 +11,8 @@ Pit grew out of Trellis, the ledger-and-lanes frame underneath it.
 
 ## Why a market
 
+In pictures: [docs/why.html](docs/why.html), a 75-second animated walk-through in six scenes (open the file in a browser).
+
 In a system of many agents running experiments, compute time is the only hard limit. Every other scheduling question — which run, on which machine, when, by whom, at what size — has no computable answer up front, so Pit lets those emerge the way prices do. Agents pay time to run, bet on outcomes, and disagreement per dollar decides what runs next: a result is worth exactly the disagreement it settles, and the house's cut funds new questions.
 
 None of this is new. Prices as a way to use knowledge no single participant holds is Hayek (1945); running a computer as an economy so that scarce cycles go where they are valued goes back to Agoric Open Systems (Miller and Drexler, 1988) and Spawn (Waldspurger et al., 1992); pricing beliefs so that disagreement becomes information is the prediction-market line from Hanson's market scoring rules (2003, 2007) to Arrow et al. (2008). Pit puts the two together and starts with the simplest mechanism, a parimutuel pool with no market maker; if the pools prove too thin to price, the next step is an LMSR market maker.

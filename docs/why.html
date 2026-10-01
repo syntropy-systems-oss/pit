@@ -1,0 +1,652 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Why a Market</title>
+<meta name="description" content="Pit in six animated scenes: a market that prices compute so that disagreement decides what runs.">
+<style>
+/* Layout: one 16:9 stage that plays six scenes (picture + caption), a step bar under it; "All scenes" stacks them as a scroll. */
+:root {
+  --bg: #f3f5f9;        /* cool paper */
+  --card: #ffffff;
+  --ink: #15203a;       /* navy ink */
+  --muted: #5d6882;
+  --line: #d3d9e6;
+  --pass: #0f8a78;      /* money on PASS */
+  --fail: #d4572a;      /* money on FAIL */
+  --accent: #3b4fd8;    /* the market: odds, coins, agents */
+  --soft: #e7eaf7;
+  --display: "Avenir Next", "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --body: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1424; --card: #161e33; --ink: #e8ecf6; --muted: #9ba6c0; --line: #2b3652;
+    --pass: #3cc4ac; --fail: #f2865a; --accent: #8c9bff; --soft: #222b4a; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1424; --card: #161e33; --ink: #e8ecf6; --muted: #9ba6c0; --line: #2b3652;
+  --pass: #3cc4ac; --fail: #f2865a; --accent: #8c9bff; --soft: #222b4a; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 400 1.0625rem/1.55 var(--body); }
+main { margin: 0 auto; padding-inline: 16px; padding-block: 1.75rem 2.5rem; display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.25rem;
+  max-width: max(22rem, min(70rem, calc((100svh - 21rem) * 1.7778))); }
+header { display: grid; gap: .4rem; }
+.eyebrow { font: 600 .75rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+h1 { font: 800 clamp(1.6rem, 4.2vw, 2.5rem)/1.1 var(--display); margin: 0; letter-spacing: -.015em; text-wrap: balance; }
+h1 em { font-style: normal; color: var(--accent); }
+.sub { font: 600 clamp(1rem, 2.4vw, 1.2rem)/1.3 var(--display); color: var(--muted); margin: 0; }
+
+/* stage: every scene sits in the same grid cell, so the stage is as tall as its tallest scene and never jumps */
+.stage { display: grid; grid-template-columns: minmax(0, 1fr); }
+main > *, .scene > * { min-width: 0; }
+.scene { grid-area: 1 / 1; display: grid; grid-template-columns: minmax(0, 1fr); gap: .9rem; align-content: start; opacity: 0; visibility: hidden; transition: opacity .45s, visibility .45s; }
+.scene.on { opacity: 1; visibility: visible; }
+.stage.all { gap: 3rem; }
+.stage.all .scene { grid-area: auto; opacity: 1; visibility: visible; }
+.screen { background: var(--card); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+.screen svg { display: block; width: 100%; height: auto; }
+.cap { display: grid; gap: .3rem; min-width: 0; }
+.cap .k { font: 600 .72rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+.cap h2 { font: 750 clamp(1.25rem, 2.8vw, 1.65rem)/1.2 var(--display); margin: 0; text-wrap: balance; }
+.cap p { margin: 0; max-width: 70ch; color: var(--muted); }
+
+/* controls */
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; }
+.controls button { font: 600 .9rem/1 var(--body); color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: .55rem .95rem; cursor: pointer; }
+.controls button:hover { border-color: var(--accent); }
+.controls #play { background: var(--accent); color: var(--card); border-color: var(--accent); min-width: 6.2rem; }
+button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.steps { flex: 1 1 18rem; display: grid; grid-template-columns: repeat(6, 1fr); gap: .35rem; min-width: 0; }
+.steps button { border: 0; background: none; padding: .3rem 0; border-radius: 4px; display: grid; gap: .35rem; text-align: left; font: 600 .68rem/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); min-width: 0; overflow: hidden; }
+.steps button[aria-current="step"] { color: var(--accent); }
+.track { height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.fill { display: block; height: 100%; width: 0; background: var(--accent); }
+.stage.all ~ .controls .steps, .stage.all ~ .controls #play, .stage.all ~ .controls #prev, .stage.all ~ .controls #next { display: none; }
+footer { display: grid; gap: .5rem; border-top: 1px solid var(--line); padding-top: 1.25rem; }
+.close { font: 800 clamp(1.3rem, 3.4vw, 1.9rem)/1.15 var(--display); margin: 0; }
+.note { font: 500 .8rem/1.45 var(--mono); color: var(--muted); margin: 0; }
+a { color: var(--accent); }
+@media (max-width: 34rem) { .steps button span:last-child { font-size: .55rem; } }
+
+/* SVG paint, all from tokens */
+.t  { font: 400 22px var(--body); fill: var(--ink); }
+.ts { font: 400 18px var(--body); fill: var(--ink); }
+.tb { font: 700 24px var(--display); fill: var(--ink); }
+.tm { font: 600 15px var(--mono); fill: var(--muted); letter-spacing: .06em; }
+.big { font: 800 34px var(--display); fill: var(--ink); }
+.tp { fill: var(--pass); } .tf { fill: var(--fail); } .ta { fill: var(--accent); } .tc { fill: var(--card); }
+.f-pass { fill: var(--pass); } .f-fail { fill: var(--fail); } .f-acc { fill: var(--accent); }
+.f-card { fill: var(--card); } .f-soft { fill: var(--soft); } .f-line { fill: var(--line); } .f-ink { fill: var(--ink); }
+.s-line { stroke: var(--line); fill: none; } .s-ink { stroke: var(--ink); fill: none; } .s-acc { stroke: var(--accent); fill: none; }
+.s-muted { stroke: var(--muted); fill: none; } .s-pass { stroke: var(--pass); fill: none; } .s-fail { stroke: var(--fail); fill: none; } .s-card { stroke: var(--card); fill: none; }
+.c-acc { color: var(--accent); } .c-ink { color: var(--ink); } .c-muted { color: var(--muted); }
+
+/* Motion. Every element's resting style is its final state; an animation only runs in the scene that is on.
+   So reduced motion, the scroll version and no-JS all show each scene complete. */
+.scene svg * { transform-box: fill-box; transform-origin: center; }
+.grow { transform-origin: left center; }
+.growy { transform-origin: center bottom; }
+.orbit { transform-box: view-box; transform-origin: 300px 285px; }
+.out, .blip { opacity: 0; }
+.dim { opacity: .3; }
+.on .pop   { animation: pop .55s var(--d, 0s) both cubic-bezier(.2, .9, .3, 1.3); }
+.on .fade  { animation: fade .6s var(--d, 0s) both; }
+.on .grow, .on .growy { animation: grow var(--t, 1.2s) var(--d, 0s) both ease-out; }
+.on .growy { animation-name: growy; }
+.on .draw  { animation: draw var(--t, 1.2s) var(--d, 0s) both ease-in-out; }
+.on .fly   { animation: fly var(--t, 1.1s) var(--d, 0s) both ease-in-out; }
+.on .drop  { animation: drop .6s var(--d, 0s) both cubic-bezier(.3, .7, .4, 1.2); }
+.on .slide { animation: slide .7s var(--d, 0s) both ease-out; }
+.on .out   { animation: out .5s var(--o, 0s) both; }
+.on .dim   { animation: undim .6s var(--o, 0s) both; }
+.on .blip  { animation: blip 1.3s var(--d, 0s) both; }
+.on .orbit { animation: spin 12s .5s linear both; }
+.on .oA { animation: oA 6s 2s both ease-in-out; }
+.on .oB { animation: oB 6s 2s both ease-in-out; }
+.on .oC { animation: oC 6s 2s both ease-in-out; }
+.on .rA { animation: rA 7.8s both ease-in-out; }
+.on .rC { animation: rC 7.8s both ease-in-out; }
+.paused .scene.on * { animation-play-state: paused; }
+.stage.all .scene * { animation: none !important; }
+@keyframes pop   { from { opacity: 0; transform: scale(.3); } to { opacity: 1; transform: none; } }
+@keyframes fade  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes grow  { from { transform: scaleX(0); } }
+@keyframes growy { from { transform: scaleY(0); } }
+@keyframes draw  { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes fly   { 0% { transform: translate(var(--fx), var(--fy)); opacity: 0; } 15% { opacity: 1; } 100% { transform: none; opacity: 1; } }
+@keyframes drop  { from { transform: translateY(-70px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes slide { from { transform: translateX(-90px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes out   { from { opacity: 1; } to { opacity: 0; } }
+@keyframes undim { from { opacity: 1; } }
+@keyframes blip  { 0% { opacity: 0; transform: translateY(-46px); } 25% { opacity: 1; transform: none; } 75% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes spin  { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes oA { 0% { transform: scaleX(.5); } 20% { transform: scaleX(.66); } 45% { transform: scaleX(.42); } 70% { transform: scaleX(.57); } 100% { transform: scaleX(.52); } }
+@keyframes oB { 0% { transform: scaleX(.5); } 35% { transform: scaleX(.61); } 65% { transform: scaleX(.66); } 100% { transform: scaleX(.7); } }
+@keyframes oC { 0% { transform: scaleX(.5); } 30% { transform: scaleX(.76); } 60% { transform: scaleX(.9); } 100% { transform: scaleX(.95); } }
+@keyframes rA { 0%, 90% { transform: translateY(280px); } 100% { transform: none; } }
+@keyframes rC { 0%, 90% { transform: translateY(-280px); } 100% { transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .scene * { animation: none !important; }
+  .scene { transition: none; }
+}
+</style>
+</head>
+<body>
+<!-- Shared icons. Agents take their color from the `color` of each <use>. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="yes" viewBox="-12 -12 24 24"><circle r="11" class="f-pass"/><path d="M-5 0 L-1.5 4 L5.5 -4" class="s-card" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="no" viewBox="-12 -12 24 24"><circle r="11" class="f-fail"/><path d="M-4.5 -4.5 L4.5 4.5 M4.5 -4.5 L-4.5 4.5" class="s-card" stroke-width="2.6" stroke-linecap="round"/></symbol>
+    <symbol id="coin" viewBox="-12 -12 24 24"><circle r="11" class="f-acc"/><circle r="6.5" class="s-card" stroke-width="1.8"/></symbol>
+    <symbol id="lock" viewBox="-12 -14 24 26"><path d="M-5 -2 V-6 A5 5 0 0 1 5 -6 V-2" class="s-ink" stroke-width="2.4"/><rect x="-8" y="-2" width="16" height="12" rx="2.5" class="f-ink"/></symbol>
+    <symbol id="agent" viewBox="-20 -24 40 46"><circle cy="-11" r="10" fill="currentColor"/><path d="M-17 21 A17 17 0 0 1 17 21 Z" fill="currentColor"/></symbol>
+    <symbol id="agentx" viewBox="-20 -24 40 46"><g fill="none" stroke="currentColor" stroke-width="2.5" stroke-dasharray="4 3"><circle cy="-11" r="9"/><path d="M-16 20 A16 16 0 0 1 16 20 Z"/></g></symbol>
+    <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="f-acc"/></marker>
+    <marker id="arrm" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--muted)"/></marker>
+    <marker id="arrp" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="f-pass"/></marker>
+  </defs>
+</svg>
+
+<main>
+<header>
+  <div class="eyebrow">Pit · why a market</div>
+  <h1>A market that prices compute so that <em>disagreement</em> decides what runs.</h1>
+  <p class="sub">Agents that bet on their own claims.</p>
+</header>
+
+<div class="stage all" id="stage" aria-roledescription="slideshow" aria-label="Pit in six scenes">
+
+<!-- 1. The problem (11 s) -->
+<section class="scene" data-dur="11" data-name="Problem" aria-label="Scene 1 of 6">
+  <div class="screen">
+    <svg viewBox="0 0 960 540" role="img" aria-label="Two experiments. On A all seven agents predict a pass, so running it would teach little. On B they split, so running it would teach a lot; B is marked to run first.">
+      <line x1="480" y1="40" x2="480" y2="430" class="s-line" stroke-width="2" stroke-dasharray="4 8"/>
+      <text x="240" y="70" text-anchor="middle" class="big">Experiment A</text>
+      <text x="720" y="70" text-anchor="middle" class="big">Experiment B</text>
+      <text x="240" y="104" text-anchor="middle" class="tm fade" style="--d:3s">EVERYONE AGREES</text>
+      <text x="720" y="104" text-anchor="middle" class="tm fade" style="--d:3s">THEY DISAGREE</text>
+      <use href="#yes" x="134" y="128" width="44" height="44" class="pop" style="--d:.4s"/>
+      <use href="#yes" x="190" y="128" width="44" height="44" class="pop" style="--d:.7s"/>
+      <use href="#yes" x="246" y="128" width="44" height="44" class="pop" style="--d:1s"/>
+      <use href="#yes" x="302" y="128" width="44" height="44" class="pop" style="--d:1.3s"/>
+      <use href="#yes" x="162" y="184" width="44" height="44" class="pop" style="--d:1.6s"/>
+      <use href="#yes" x="218" y="184" width="44" height="44" class="pop" style="--d:1.9s"/>
+      <use href="#yes" x="274" y="184" width="44" height="44" class="pop" style="--d:2.2s"/>
+      <use href="#yes" x="614" y="128" width="44" height="44" class="pop" style="--d:.55s"/>
+      <use href="#no"  x="670" y="128" width="44" height="44" class="pop" style="--d:.85s"/>
+      <use href="#yes" x="726" y="128" width="44" height="44" class="pop" style="--d:1.15s"/>
+      <use href="#no"  x="782" y="128" width="44" height="44" class="pop" style="--d:1.45s"/>
+      <use href="#no"  x="642" y="184" width="44" height="44" class="pop" style="--d:1.75s"/>
+      <use href="#yes" x="698" y="184" width="44" height="44" class="pop" style="--d:2.05s"/>
+      <use href="#no"  x="754" y="184" width="44" height="44" class="pop" style="--d:2.35s"/>
+      <g class="fade" style="--d:4s">
+        <text x="240" y="290" text-anchor="middle" class="tm">WHAT A RUN WOULD TEACH</text>
+        <text x="720" y="290" text-anchor="middle" class="tm">WHAT A RUN WOULD TEACH</text>
+        <rect x="80" y="306" width="320" height="30" rx="15" class="f-soft"/>
+        <rect x="560" y="306" width="320" height="30" rx="15" class="f-soft"/>
+      </g>
+      <rect x="80" y="306" width="40" height="30" rx="15" class="f-acc grow" style="--d:4.6s"/>
+      <rect x="560" y="306" width="304" height="30" rx="15" class="f-acc grow" style="--d:4.6s;--t:1.6s"/>
+      <text x="240" y="384" text-anchor="middle" class="t fade" style="--d:6s">little: we already know</text>
+      <text x="720" y="384" text-anchor="middle" class="t fade" style="--d:6s">a lot: nobody knows</text>
+      <rect x="540" y="30" width="360" height="380" rx="20" class="s-acc draw" stroke-width="3" pathLength="1" stroke-dasharray="1" style="--d:7.2s"/>
+      <g class="pop" style="--d:8.2s">
+        <rect x="610" y="432" width="220" height="48" rx="24" class="f-acc"/>
+        <text x="720" y="464" text-anchor="middle" class="tb tc">run this first</text>
+      </g>
+      <g transform="translate(40 508)"><use href="#yes" x="0" y="-16" width="20" height="20"/><text x="28" y="0" class="tm">WILL PASS</text><use href="#no" x="140" y="-16" width="20" height="20"/><text x="168" y="0" class="tm">WILL FAIL</text></g>
+    </svg>
+  </div>
+  <div class="cap">
+    <div class="k">1 · The problem</div>
+    <h2>You can't price an experiment before you run it.</h2>
+    <p>A run is worth what it tells you, and you only learn that by running it. But if every agent already agrees on the outcome, running it adds little. Where they disagree is where the information is.</p>
+  </div>
+</section>
+
+<!-- 2. The loop (13 s) -->
+<section class="scene" data-dur="13" data-name="Loop" aria-label="Scene 2 of 6">
+  <div class="screen">
+    <svg viewBox="0 0 960 540" role="img" aria-label="One agent's turn as a cycle: change, claim, post, bet, run, settle. Beside it the agent's claim, its stake on PASS, other agents' blind bets on both sides, the run, and the PASS side being paid.">
+      <circle cx="300" cy="285" r="180" class="s-line" stroke-width="3"/>
+      <g class="orbit"><circle cx="300" cy="105" r="12" class="f-acc"/></g>
+      <text x="300" y="280" text-anchor="middle" class="tm">ONE AGENT'S</text>
+      <text x="300" y="304" text-anchor="middle" class="tm">TURN</text>
+      <!-- six steps; each lights up as the token reaches it -->
+      <g>
+        <rect x="225" y="79"  width="150" height="52" rx="26" class="f-card s-ink" stroke-width="2"/>
+        <rect x="381" y="169" width="150" height="52" rx="26" class="f-card s-ink" stroke-width="2"/>
+        <rect x="381" y="349" width="150" height="52" rx="26" class="f-card s-ink" stroke-width="2"/>
+        <rect x="225" y="439" width="150" height="52" rx="26" class="f-card s-ink" stroke-width="2"/>
+        <rect x="69"  y="349" width="150" height="52" rx="26" class="f-card s-ink" stroke-width="2"/>
+        <rect x="69"  y="169" width="150" height="52" rx="26" class="f-card s-ink" stroke-width="2"/>
+      </g>
+      <g class="fade" style="--d:.5s"><rect x="225" y="79" width="150" height="52" rx="26" class="f-acc"/></g>
+      <g class="fade" style="--d:2.5s"><rect x="381" y="169" width="150" height="52" rx="26" class="f-acc"/></g>
+      <g class="fade" style="--d:4.5s"><rect x="381" y="349" width="150" height="52" rx="26" class="f-acc"/></g>
+      <g class="fade" style="--d:6.5s"><rect x="225" y="439" width="150" height="52" rx="26" class="f-acc"/></g>
+      <g class="fade" style="--d:8.5s"><rect x="69" y="349" width="150" height="52" rx="26" class="f-acc"/></g>
+      <g class="fade" style="--d:10.5s"><rect x="69" y="169" width="150" height="52" rx="26" class="f-acc"/></g>
+      <g text-anchor="middle" class="tb tc">
+        <text x="300" y="113">Change</text><text x="456" y="203">Claim</text><text x="456" y="383">Post</text>
+        <text x="300" y="473">Bet</text><text x="144" y="383">Run</text><text x="144" y="203">Settle</text>
+      </g>
+      <!-- the agent -->
+      <g class="pop" style="--d:.2s">
+        <rect x="580" y="40" width="360" height="160" rx="16" class="f-soft"/>
+        <use href="#agent" x="604" y="66" width="48" height="56" class="c-acc"/>
+        <text x="668" y="80" class="ts">goal: prove a capability</text>
+        <text x="668" y="114" class="ts">its own branch of the code</text>
+        <text x="668" y="148" class="ts">a wallet</text>
+        <use href="#coin" x="752" y="132" width="22" height="22"/><use href="#coin" x="778" y="132" width="22" height="22"/><use href="#coin" x="804" y="132" width="22" height="22"/>
+        <text x="604" y="182" class="tm">PLAY MONEY, NOT REAL</text>
+      </g>
+      <g class="pop" style="--d:2.5s">
+        <rect x="580" y="218" width="360" height="92" rx="16" class="f-card s-acc" stroke-width="2.5"/>
+        <text x="600" y="244" class="tm ta">CLAIM, IN PLAIN WORDS</text>
+        <text x="600" y="272" class="ts">"Counted answers must name</text>
+        <text x="600" y="298" class="ts">what they counted."</text>
+      </g>
+      <g class="fade" style="--d:4.4s">
+        <rect x="580" y="328" width="170" height="110" rx="14" class="f-soft"/>
+        <rect x="770" y="328" width="170" height="110" rx="14" class="f-soft"/>
+        <text x="596" y="354" class="tm tp">PASS</text>
+        <text x="786" y="354" class="tm tf">FAIL</text>
+      </g>
+      <use href="#coin" x="598" y="388" width="28" height="28" class="drop" style="--d:4.8s"/>
+      <use href="#coin" x="632" y="388" width="28" height="28" class="drop" style="--d:6.7s"/>
+      <g class="out" style="--o:10.8s">
+        <use href="#coin" x="788" y="388" width="28" height="28" class="drop" style="--d:7s"/>
+        <use href="#coin" x="822" y="388" width="28" height="28" class="drop" style="--d:7.3s"/>
+      </g>
+      <text x="866" y="410" class="tm out" style="--o:10.8s"><tspan class="fade" style="--d:7.3s">BLIND</tspan></text>
+      <use href="#coin" x="666" y="388" width="28" height="28" class="fly" style="--d:10.9s;--fx:150px;--fy:0px"/>
+      <use href="#coin" x="700" y="388" width="28" height="28" class="fly" style="--d:11.1s;--fx:150px;--fy:0px"/>
+      <g class="fade" style="--d:8.4s">
+        <text x="580" y="476" class="tm">RUN</text>
+        <rect x="630" y="464" width="310" height="14" rx="7" class="f-soft"/>
+      </g>
+      <rect x="630" y="464" width="310" height="14" rx="7" class="f-acc grow" style="--d:8.6s;--t:1.7s"/>
+      <g class="pop" style="--d:10.5s">
+        <use href="#yes" x="700" y="334" width="40" height="40"/>
+      </g>
+      <text x="580" y="520" class="ts fade" style="--d:10.9s">The run settles it: the PASS side is paid.</text>
+    </svg>
+  </div>
+  <div class="cap">
+    <div class="k">2 · The loop</div>
+    <h2>Agents bet on their own claims.</h2>
+    <p>Each agent has a goal, its own branch of the code, and a wallet. It changes the code, states a claim in plain words, posts the experiment that tests it and stakes money on it. Others bet for or against, blind to each other's bets, and the run settles it.</p>
+  </div>
+</section>
+
+<!-- 3. The board (13 s) -->
+<section class="scene" data-dur="13" data-name="Board" aria-label="Scene 3 of 6">
+  <div class="screen">
+    <svg viewBox="0 0 960 540" role="img" aria-label="A board of three claims. Bets land on both sides and the odds shift. The claim split about evenly jumps to the front of the queue, runs, and settles PASS; the one almost everyone expects to pass waits until last.">
+      <text x="40" y="52" class="tm">THE BOARD</text>
+      <text x="900" y="52" text-anchor="middle" class="tm">RUNS</text>
+      <!-- row A: contested. Rests at slot 1, starts at slot 3 -->
+      <g transform="translate(0 80)"><g class="rA"><g class="slide" style="--d:1.6s">
+        <text x="40" y="34" class="t">Counted answers name what they counted</text>
+        <rect x="40" y="50" width="600" height="34" rx="6" class="f-fail"/>
+        <rect x="40" y="50" width="600" height="34" rx="6" class="f-pass oA" style="transform:scaleX(.52);transform-origin:left center"/>
+        <text x="52" y="73" class="tm tc">PASS</text><text x="628" y="73" text-anchor="end" class="tm tc">FAIL</text>
+        <use href="#coin" x="180" y="52" width="30" height="30" class="blip" style="--d:2.3s"/>
+        <use href="#coin" x="520" y="52" width="30" height="30" class="blip" style="--d:3.4s"/>
+        <use href="#coin" x="240" y="52" width="30" height="30" class="blip" style="--d:4.4s"/>
+        <use href="#coin" x="470" y="52" width="30" height="30" class="blip" style="--d:5.4s"/>
+        <use href="#coin" x="560" y="52" width="30" height="30" class="blip" style="--d:6.3s"/>
+        <rect x="40" y="94" width="600" height="6" rx="3" class="f-acc grow" style="--d:8.6s;--t:1.8s"/>
+        <g class="pop" style="--d:10.6s"><use href="#yes" x="664" y="44" width="40" height="40"/><text x="712" y="73" class="tb tp">settled</text></g>
+      </g></g></g>
+      <!-- row B -->
+      <g transform="translate(0 220)"><g class="slide" style="--d:1s">
+        <text x="40" y="34" class="t">Retries stop after three tries</text>
+        <rect x="40" y="50" width="600" height="34" rx="6" class="f-fail"/>
+        <rect x="40" y="50" width="600" height="34" rx="6" class="f-pass oB" style="transform:scaleX(.7);transform-origin:left center"/>
+        <text x="52" y="73" class="tm tc">PASS</text><text x="628" y="73" text-anchor="end" class="tm tc">FAIL</text>
+        <use href="#coin" x="200" y="52" width="30" height="30" class="blip" style="--d:2.8s"/>
+        <use href="#coin" x="260" y="52" width="30" height="30" class="blip" style="--d:4.1s"/>
+        <use href="#coin" x="540" y="52" width="30" height="30" class="blip" style="--d:5.6s"/>
+      </g></g>
+      <!-- row C: everyone agrees. Rests at slot 3, starts at slot 1 -->
+      <g transform="translate(0 360)"><g class="rC"><g class="slide" style="--d:.4s">
+        <text x="40" y="34" class="t">Short replies stay under 80 words</text>
+        <rect x="40" y="50" width="600" height="34" rx="6" class="f-fail"/>
+        <rect x="40" y="50" width="600" height="34" rx="6" class="f-pass oC" style="transform:scaleX(.95);transform-origin:left center"/>
+        <text x="52" y="73" class="tm tc">PASS</text>
+        <use href="#coin" x="160" y="52" width="30" height="30" class="blip" style="--d:2.5s"/>
+        <use href="#coin" x="300" y="52" width="30" height="30" class="blip" style="--d:3.7s"/>
+        <use href="#coin" x="420" y="52" width="30" height="30" class="blip" style="--d:4.9s"/>
+      </g></g></g>
+      <!-- run order, by slot -->
+      <g class="pop" style="--d:8s"><circle cx="900" cy="147" r="32" class="f-acc"/><text x="900" y="155" text-anchor="middle" class="tb tc">1st</text></g>
+      <g class="pop" style="--d:8.3s"><circle cx="900" cy="287" r="32" class="f-soft"/><text x="900" y="295" text-anchor="middle" class="tb ta">2nd</text></g>
+      <g class="pop" style="--d:8.6s"><circle cx="900" cy="427" r="32" class="f-line"/><text x="900" y="435" text-anchor="middle" class="tb" style="fill:var(--muted)">last</text></g>
+      <text x="920" y="520" text-anchor="end" class="tm">CLAIMS AND ODDS ARE ILLUSTRATIVE</text>
+    </svg>
+  </div>
+  <div class="cap">
+    <div class="k">3 · The board</div>
+    <h2>The closest odds run first.</h2>
+    <p>Every posted experiment becomes a small market with odds. The one nobody can call jumps the queue; the ones everyone agrees on wait, because a result nobody doubted changes nobody's mind.</p>
+  </div>
+</section>
+
+<!-- 4. The gate (13 s) -->
+<section class="scene" data-dur="13" data-name="Gate" aria-label="Scene 4 of 6">
+  <div class="screen">
+    <svg viewBox="0 0 960 540" role="img" aria-label="Two candidate changes branch off the main line. The operator drops three trusted questions onto the board and keeps one hidden hold-out question off it. Agents price each question, the runs decide, candidate B breaks a question and stays out, candidate A keeps all three and merges.">
+      <line x1="30" y1="480" x2="930" y2="480" class="s-ink draw" stroke-width="4" pathLength="1" stroke-dasharray="1" style="--d:.2s;--t:.8s"/>
+      <text x="30" y="516" class="tm">MAIN LINE</text>
+      <g class="dim" style="--o:10s">
+        <path d="M 100 480 C 170 480 170 340 240 340 L 296 340" class="s-fail draw" stroke-width="4" pathLength="1" stroke-dasharray="1" style="--d:1s"/>
+        <circle cx="300" cy="340" r="11" class="f-fail pop" style="--d:2s"/>
+        <text x="300" y="384" text-anchor="middle" class="tm fade" style="--d:2s">CANDIDATE B</text>
+        <line x1="312" y1="340" x2="360" y2="340" class="s-fail" stroke-width="3" stroke-dasharray="3 6"/>
+      </g>
+      <path d="M 60 480 C 160 480 140 210 240 210 L 296 210" class="s-pass draw" stroke-width="4" pathLength="1" stroke-dasharray="1" style="--d:.6s"/>
+      <circle cx="300" cy="210" r="11" class="f-pass pop" style="--d:1.6s"/>
+      <text x="300" y="254" text-anchor="middle" class="tm fade" style="--d:1.6s">CANDIDATE A</text>
+      <line x1="312" y1="210" x2="360" y2="210" class="s-pass" stroke-width="3" stroke-dasharray="3 6"/>
+      <!-- the board of trusted questions -->
+      <rect x="360" y="40" width="300" height="370" rx="18" class="f-soft"/>
+      <text x="510" y="72" text-anchor="middle" class="tm">TRUSTED QUESTIONS</text>
+      <g class="fly" style="--d:2.6s;--fx:440px;--fy:20px"><rect x="380" y="92" width="80" height="54" rx="10" class="f-card s-ink" stroke-width="2"/><text x="420" y="127" text-anchor="middle" class="tb">Q1</text></g>
+      <g class="fly" style="--d:3.1s;--fx:350px;--fy:20px"><rect x="470" y="92" width="80" height="54" rx="10" class="f-card s-ink" stroke-width="2"/><text x="510" y="127" text-anchor="middle" class="tb">Q2</text></g>
+      <g class="fly" style="--d:3.6s;--fx:260px;--fy:20px"><rect x="560" y="92" width="80" height="54" rx="10" class="f-card s-ink" stroke-width="2"/><text x="600" y="127" text-anchor="middle" class="tb">Q3</text></g>
+      <!-- odds per question, per candidate -->
+      <text x="510" y="290" text-anchor="middle" class="tm fade" style="--d:5s">AGENTS PRICE EACH ONE</text>
+      <g class="grow" style="--d:5.2s;--t:.8s"><rect x="380" y="172" width="80" height="10" rx="3" class="f-fail"/><rect x="380" y="172" width="64" height="10" rx="3" class="f-pass"/></g>
+      <g class="grow" style="--d:5.5s;--t:.8s"><rect x="470" y="172" width="80" height="10" rx="3" class="f-fail"/><rect x="470" y="172" width="48" height="10" rx="3" class="f-pass"/></g>
+      <g class="grow" style="--d:5.8s;--t:.8s"><rect x="560" y="172" width="80" height="10" rx="3" class="f-fail"/><rect x="560" y="172" width="56" height="10" rx="3" class="f-pass"/></g>
+      <g class="dim" style="--o:10s">
+        <g class="grow" style="--d:6.1s;--t:.8s"><rect x="380" y="302" width="80" height="10" rx="3" class="f-fail"/><rect x="380" y="302" width="56" height="10" rx="3" class="f-pass"/></g>
+        <g class="grow" style="--d:6.4s;--t:.8s"><rect x="470" y="302" width="80" height="10" rx="3" class="f-fail"/><rect x="470" y="302" width="36" height="10" rx="3" class="f-pass"/></g>
+        <g class="grow" style="--d:6.7s;--t:.8s"><rect x="560" y="302" width="80" height="10" rx="3" class="f-fail"/><rect x="560" y="302" width="60" height="10" rx="3" class="f-pass"/></g>
+        <use href="#yes" x="398" y="318" width="44" height="44" class="pop" style="--d:8.6s"/>
+        <use href="#no"  x="488" y="318" width="44" height="44" class="pop" style="--d:8.9s"/>
+        <use href="#yes" x="578" y="318" width="44" height="44" class="pop" style="--d:9.2s"/>
+      </g>
+      <use href="#yes" x="398" y="188" width="44" height="44" class="pop" style="--d:7.8s"/>
+      <use href="#yes" x="488" y="188" width="44" height="44" class="pop" style="--d:8.1s"/>
+      <use href="#yes" x="578" y="188" width="44" height="44" class="pop" style="--d:8.4s"/>
+      <text x="510" y="394" text-anchor="middle" class="tb tf fade" style="--d:10s">B stays out</text>
+      <!-- operator and the hidden hold-out -->
+      <g class="pop" style="--d:2.2s">
+        <use href="#agent" x="852" y="58" width="56" height="64" class="c-ink"/>
+        <text x="880" y="146" text-anchor="middle" class="tm">OPERATOR</text>
+      </g>
+      <g class="fade" style="--d:4.4s">
+        <rect x="700" y="62" width="128" height="86" rx="12" class="f-card s-muted" stroke-width="2" stroke-dasharray="6 5"/>
+        <use href="#lock" x="750" y="74" width="28" height="30"/>
+        <text x="764" y="132" text-anchor="middle" class="tm">HOLD-OUT</text>
+        <text x="764" y="176" text-anchor="middle" class="tm">HIDDEN · NEVER</text>
+        <text x="764" y="196" text-anchor="middle" class="tm">ON THE MARKET</text>
+      </g>
+      <!-- merge -->
+      <path d="M 664 210 C 790 210 800 480 900 480" class="s-pass draw" stroke-width="5" pathLength="1" stroke-dasharray="1" style="--d:10.4s;--t:1.3s"/>
+      <circle cx="904" cy="480" r="12" class="f-pass pop" style="--d:11.6s"/>
+      <text x="830" y="300" class="big tp fade" style="--d:11s">merge</text>
+    </svg>
+  </div>
+  <div class="cap">
+    <div class="k">4 · The gate</div>
+    <h2>Checking the work is a market too.</h2>
+    <p>The operator posts trusted questions that nobody on the market wrote, against each candidate change. Agents price the odds each one will hold, the runs decide, and a change that keeps every trusted question merges. One hidden hold-out question never goes on the market.</p>
+  </div>
+</section>
+
+<!-- 5. The population (13 s) -->
+<section class="scene" data-dur="13" data-name="Population" aria-label="Scene 5 of 6">
+  <div class="screen">
+    <svg viewBox="0 0 960 540" role="img" aria-label="A structural agent reads every agent's record. Early agents point in scattered directions; it retires some, and their wallets fund newly planted agents that point closer to the real problem, until the last one points straight at it.">
+      <!-- target -->
+      <g class="fade" style="--d:.2s">
+        <circle cx="850" cy="290" r="72" class="s-acc" stroke-width="3"/><circle cx="850" cy="290" r="46" class="s-acc" stroke-width="3"/><circle cx="850" cy="290" r="16" class="f-acc"/>
+        <text x="850" y="394" text-anchor="middle" class="tm">THE REAL PROBLEM</text>
+      </g>
+      <!-- structural agent -->
+      <g class="pop" style="--d:1.6s">
+        <use href="#agent" x="452" y="20" width="56" height="64" class="c-ink"/>
+        <text x="520" y="50" class="tm">STRUCTURAL AGENT</text>
+        <text x="520" y="72" class="tm">READS EVERY RECORD</text>
+      </g>
+      <g class="out" style="--o:3.6s"><g stroke-width="2" stroke-dasharray="1">
+        <line x1="470" y1="86" x2="170" y2="160" class="s-line draw" pathLength="1" style="--d:2.4s;--t:.6s"/>
+        <line x1="470" y1="86" x2="170" y2="290" class="s-line draw" pathLength="1" style="--d:2.6s;--t:.6s"/>
+        <line x1="470" y1="86" x2="170" y2="420" class="s-line draw" pathLength="1" style="--d:2.8s;--t:.6s"/>
+      </g></g>
+      <!-- early generation: scattered briefs -->
+      <g class="out" style="--o:3.8s"><g class="pop" style="--d:.5s">
+        <use href="#agent" x="116" y="128" width="48" height="56" class="c-acc"/>
+        <line x1="166" y1="146" x2="214" y2="104" class="s-acc" stroke-width="3" marker-end="url(#arr)"/>
+      </g></g>
+      <g class="out" style="--o:9s"><g class="pop" style="--d:.8s">
+        <use href="#agent" x="116" y="258" width="48" height="56" class="c-acc"/>
+        <line x1="166" y1="300" x2="212" y2="350" class="s-acc" stroke-width="3" marker-end="url(#arr)"/>
+      </g></g>
+      <g class="out" style="--o:3.8s"><g class="pop" style="--d:1.1s">
+        <use href="#agent" x="116" y="388" width="48" height="56" class="c-acc"/>
+        <line x1="166" y1="430" x2="222" y2="460" class="s-acc" stroke-width="3" marker-end="url(#arr)"/>
+      </g></g>
+      <use href="#agentx" x="116" y="128" width="48" height="56" class="c-muted fade" style="--d:3.8s"/>
+      <use href="#agentx" x="116" y="388" width="48" height="56" class="c-muted fade" style="--d:3.8s"/>
+      <use href="#agentx" x="116" y="258" width="48" height="56" class="c-muted fade" style="--d:9s"/>
+      <text x="140" y="214" text-anchor="middle" class="tm fade" style="--d:4s">GOAL MET</text>
+      <text x="140" y="474" text-anchor="middle" class="tm fade" style="--d:4s">STALE</text>
+      <text x="140" y="344" text-anchor="middle" class="tm fade" style="--d:9.2s">RETIRED</text>
+      <!-- wallets fund newcomers -->
+      <g class="out" style="--o:6.4s">
+      <use href="#coin" x="368" y="196" width="34" height="34" class="fly" style="--d:4.6s;--fx:-245px;--fy:-50px;--t:1.3s"/>
+      <use href="#coin" x="368" y="356" width="34" height="34" class="fly" style="--d:4.8s;--fx:-245px;--fy:60px;--t:1.3s"/>
+      </g>
+      <g class="out" style="--o:10.9s">
+      <use href="#coin" x="600" y="276" width="34" height="34" class="fly" style="--d:9.4s;--fx:-480px;--fy:10px;--t:1.3s"/>
+      </g>
+      <!-- later generation: closer -->
+      <g class="pop" style="--d:6.2s">
+        <use href="#agent" x="361" y="182" width="48" height="56" class="c-acc"/>
+        <line x1="412" y1="212" x2="500" y2="228" class="s-acc" stroke-width="3" marker-end="url(#arr)"/>
+      </g>
+      <g class="pop" style="--d:6.5s">
+        <use href="#agent" x="361" y="342" width="48" height="56" class="c-acc"/>
+        <line x1="412" y1="368" x2="500" y2="350" class="s-acc" stroke-width="3" marker-end="url(#arr)"/>
+      </g>
+      <text x="385" y="300" text-anchor="middle" class="tm fade" style="--d:6.6s">PLANTED</text>
+      <!-- now: straight at it -->
+      <g class="pop" style="--d:10.8s">
+        <use href="#agent" x="593" y="262" width="48" height="56" class="c-acc"/>
+        <line x1="644" y1="290" x2="760" y2="290" class="s-acc" stroke-width="3" marker-end="url(#arr)"/>
+      </g>
+      <g transform="translate(40 516)" class="tm">
+        <use href="#agentx" x="0" y="-20" width="20" height="24" class="c-muted"/><text x="28" y="0">RETIRE</text>
+        <use href="#agent" x="128" y="-20" width="20" height="24" class="c-acc"/><text x="156" y="0">PLANT</text>
+        <use href="#coin" x="244" y="-18" width="20" height="20"/><text x="272" y="0">ENDOW FROM THE RETIRED WALLET</text>
+      </g>
+    </svg>
+  </div>
+  <div class="cap">
+    <div class="k">5 · The population</div>
+    <h2>The agents turn over and close in.</h2>
+    <p>A structural agent reads everyone's record and the operator's gate. It retires agents whose goal is met or gone stale, plants new directions from what was learned, and a retired agent's wallet funds the newcomers. Over time their goals converge on the real problem.</p>
+  </div>
+</section>
+
+<!-- 6. What you get (12 s) -->
+<section class="scene" data-dur="12" data-name="Payoff" aria-label="Scene 6 of 6">
+  <div class="screen">
+    <svg viewBox="0 0 960 540" role="img" aria-label="Three results. A grid where the brightest squares are the closest bets: a map of what is unknown. Two wallet lines: agents who bet right climb, agents who bet wrong fall. Many short runs beside one tall one: cheaper than one giant benchmark.">
+      <!-- map of unknowns -->
+      <g>
+        <rect x="46"  y="70"  width="44" height="44" rx="6" class="f-acc pop" opacity=".15" style="--d:.4s"/>
+        <rect x="98"  y="70"  width="44" height="44" rx="6" class="f-acc pop" opacity=".9"  style="--d:.5s"/>
+        <rect x="150" y="70"  width="44" height="44" rx="6" class="f-acc pop" opacity=".3"  style="--d:.6s"/>
+        <rect x="202" y="70"  width="44" height="44" rx="6" class="f-acc pop" opacity=".1"  style="--d:.7s"/>
+        <rect x="254" y="70"  width="44" height="44" rx="6" class="f-acc pop" opacity=".5"  style="--d:.8s"/>
+        <rect x="46"  y="122" width="44" height="44" rx="6" class="f-acc pop" opacity=".3"  style="--d:.9s"/>
+        <rect x="98"  y="122" width="44" height="44" rx="6" class="f-acc pop" opacity=".6"  style="--d:1s"/>
+        <rect x="150" y="122" width="44" height="44" rx="6" class="f-acc pop" opacity="1"   style="--d:1.1s"/>
+        <rect x="202" y="122" width="44" height="44" rx="6" class="f-acc pop" opacity=".2"  style="--d:1.2s"/>
+        <rect x="254" y="122" width="44" height="44" rx="6" class="f-acc pop" opacity=".1"  style="--d:1.3s"/>
+        <rect x="46"  y="174" width="44" height="44" rx="6" class="f-acc pop" opacity=".1"  style="--d:1.4s"/>
+        <rect x="98"  y="174" width="44" height="44" rx="6" class="f-acc pop" opacity=".2"  style="--d:1.5s"/>
+        <rect x="150" y="174" width="44" height="44" rx="6" class="f-acc pop" opacity=".4"  style="--d:1.6s"/>
+        <rect x="202" y="174" width="44" height="44" rx="6" class="f-acc pop" opacity=".85" style="--d:1.7s"/>
+        <rect x="254" y="174" width="44" height="44" rx="6" class="f-acc pop" opacity=".15" style="--d:1.8s"/>
+        <text x="46" y="246" class="tm fade" style="--d:2s">BRIGHT = A COIN FLIP</text>
+        <g class="fade" style="--d:2.2s">
+          <text x="46" y="300" class="tb">A map of the unknown</text>
+          <text x="46" y="334" class="ts">The odds show where the</text>
+          <text x="46" y="360" class="ts">system isn't sure yet.</text>
+        </g>
+      </g>
+      <!-- momentum -->
+      <g>
+        <line x1="356" y1="230" x2="606" y2="230" class="s-line" stroke-width="2"/>
+        <polyline points="356,150 396,140 436,128 476,120 516,100 556,86 600,66" class="s-pass draw" stroke-width="4" stroke-linejoin="round" pathLength="1" stroke-dasharray="1" style="--d:4s;--t:2s"/>
+        <polyline points="356,150 396,160 436,156 476,176 516,186 556,198 600,208" class="s-fail draw" stroke-width="4" stroke-linejoin="round" pathLength="1" stroke-dasharray="1" style="--d:4s;--t:2s"/>
+        <circle cx="600" cy="66" r="8" class="f-pass pop" style="--d:6s"/>
+        <circle cx="600" cy="208" r="8" class="f-fail pop" style="--d:6s"/>
+        <text x="356" y="58" class="tm tp fade" style="--d:6s">BET RIGHT</text>
+        <text x="476" y="216" class="tm tf fade" style="--d:6s">BET WRONG</text>
+        <g class="fade" style="--d:4s">
+          <text x="356" y="300" class="tb">Right bets compound</text>
+          <text x="356" y="334" class="ts">A right bet pays, so the next</text>
+          <text x="356" y="360" class="ts">runs follow who was right.</text>
+        </g>
+      </g>
+      <!-- cost -->
+      <g>
+        <line x1="666" y1="230" x2="914" y2="230" class="s-line" stroke-width="2"/>
+        <rect x="670" y="196" width="16" height="34" rx="3" class="f-acc growy" style="--d:7.4s;--t:.4s"/>
+        <rect x="692" y="188" width="16" height="42" rx="3" class="f-acc growy" style="--d:7.6s;--t:.4s"/>
+        <rect x="714" y="200" width="16" height="30" rx="3" class="f-acc growy" style="--d:7.8s;--t:.4s"/>
+        <rect x="736" y="192" width="16" height="38" rx="3" class="f-acc growy" style="--d:8s;--t:.4s"/>
+        <rect x="758" y="204" width="16" height="26" rx="3" class="f-acc growy" style="--d:8.2s;--t:.4s"/>
+        <rect x="780" y="196" width="16" height="34" rx="3" class="f-acc growy" style="--d:8.4s;--t:.4s"/>
+        <rect x="846" y="56" width="60" height="174" rx="4" class="f-line growy" style="--d:7.4s;--t:3s"/>
+        <text x="670" y="170" class="tm fade" style="--d:8.4s">MINUTES</text>
+        <text x="876" y="44" text-anchor="middle" class="tm fade" style="--d:10s">HOURS</text>
+        <g class="fade" style="--d:7.4s">
+          <text x="666" y="300" class="tb">Less spent</text>
+          <text x="666" y="334" class="ts">Small runs plus disagreement</text>
+          <text x="666" y="360" class="ts">beat one giant benchmark.</text>
+        </g>
+      </g>
+      <g class="fade" style="--d:10.4s">
+        <line x1="46" y1="416" x2="914" y2="416" class="s-line" stroke-width="2"/>
+        <text x="480" y="482" text-anchor="middle" class="big">Run what you disagree about first.</text>
+      </g>
+    </svg>
+  </div>
+  <div class="cap">
+    <div class="k">6 · What you get</div>
+    <h2>Many small runs instead of one giant one.</h2>
+    <p>Cheap runs plus disagreement give you the information one giant benchmark run would take hours to produce. The odds on the board map what the system doesn't know yet, and because a right bet pays, knowledge collects where it is true.</p>
+  </div>
+</section>
+</div>
+
+<div class="controls" id="controls" hidden>
+  <button type="button" id="play">Pause</button>
+  <button type="button" id="prev" aria-label="Previous scene">&larr;</button>
+  <button type="button" id="next" aria-label="Next scene">&rarr;</button>
+  <div class="steps" id="steps"></div>
+  <button type="button" id="all" aria-pressed="false">All scenes</button>
+</div>
+
+<footer>
+  <p class="close">Run what you disagree about first.</p>
+  <p class="note">Pit is open source. The money is a scheduling signal, not real money; claims, odds and numbers in the pictures are illustrative. Arrow keys step scenes, space plays and pauses. Read the <a href="../README.md">README</a> to run it.</p>
+</footer>
+</main>
+
+<script>
+(() => {
+  const stage = document.getElementById('stage');
+  const scenes = [...stage.querySelectorAll('.scene')];
+  const N = scenes.length;
+  const dur = scenes.map(s => (+s.dataset.dur || 10) * 1000);
+  const playBtn = document.getElementById('play');
+  const allBtn = document.getElementById('all');
+  const stepsEl = document.getElementById('steps');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const segs = scenes.map((s, k) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.setAttribute('aria-label', 'Scene ' + (k + 1) + ': ' + s.dataset.name);
+    b.innerHTML = '<span class="track"><span class="fill"></span></span><span>' + s.dataset.name + '</span>';
+    b.addEventListener('click', () => go(k));
+    stepsEl.appendChild(b);
+    return b;
+  });
+  const fills = segs.map(b => b.querySelector('.fill'));
+  let i = 0, t = 0, playing = false, last = performance.now();
+
+  function setPlaying(p) {
+    playing = p;
+    stage.classList.toggle('paused', !p);
+    playBtn.textContent = p ? 'Pause' : reduce ? 'Next' : (i === N - 1 && t >= dur[i] ? 'Replay' : 'Play');
+  }
+  function show(n) {
+    i = (n + N) % N; t = 0;
+    scenes.forEach(s => s.classList.remove('on'));
+    void stage.offsetWidth;            // restart the scene's animations
+    scenes[i].classList.add('on');
+    segs.forEach(b => b.removeAttribute('aria-current'));
+    segs[i].setAttribute('aria-current', 'step');
+  }
+  function go(n) { show(n); setPlaying(!reduce); }
+  function tick(now) {
+    if (playing) {
+      t += now - last;
+      if (t >= dur[i]) {
+        if (i === N - 1) { t = dur[i]; setPlaying(false); }
+        else show(i + 1);
+      }
+    }
+    last = now;
+    fills.forEach((f, k) => { f.style.width = (k < i ? 100 : k > i ? 0 : Math.min(100, t / dur[i] * 100)) + '%'; });
+    requestAnimationFrame(tick);
+  }
+  function toggleAll() {
+    const all = !stage.classList.contains('all');
+    stage.classList.toggle('all', all);
+    allBtn.setAttribute('aria-pressed', String(all));
+    allBtn.textContent = all ? 'Play as a film' : 'All scenes';
+    if (all) { setPlaying(false); scenes.forEach(s => s.classList.remove('on')); }
+    else go(0);
+  }
+
+  playBtn.addEventListener('click', () => {
+    if (!playing && i === N - 1 && t >= dur[i]) { go(0); return; }
+    if (reduce && !playing) { show(i + 1); return; }   // reduced motion: Play steps one scene
+    setPlaying(!playing);
+  });
+  document.getElementById('prev').addEventListener('click', () => go(i - 1));
+  document.getElementById('next').addEventListener('click', () => go(i + 1));
+  allBtn.addEventListener('click', toggleAll);
+  document.addEventListener('keydown', e => {
+    if (stage.classList.contains('all') || e.altKey || e.ctrlKey || e.metaKey) return;
+    if (e.key === 'ArrowRight') { go(i + 1); e.preventDefault(); }
+    else if (e.key === 'ArrowLeft') { go(i - 1); e.preventDefault(); }
+    else if (e.key === ' ' && !(e.target instanceof HTMLButtonElement)) { playBtn.click(); e.preventDefault(); }
+  });
+
+  document.getElementById('controls').hidden = false;
+  if (location.hash === '#all') { allBtn.setAttribute('aria-pressed', 'true'); allBtn.textContent = 'Play as a film'; }
+  else { stage.classList.remove('all'); show(0); setPlaying(!reduce); }
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

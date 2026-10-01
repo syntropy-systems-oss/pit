@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `docs/why.html`: why a market, as six animated scenes (problem, loop, board, gate, population, payoff) with play/pause, a step bar, arrow keys, an "All scenes" scroll version (`#all`) and a still version under reduced motion; self-contained, no external fonts or scripts. Linked from the README.
 - Reflection acts autonomously: it plants and retires agents, posts house-seeded roots, bets, records findings and edits `agents/BOOTSTRAP.md`. Its prompt includes persistent agents' briefs, settled records, balances and self-retirement reasons, plus newcomer bootstrap cost and the digest.
 - Autopilot records reflection on child exit, covering the digest it supplied, unless the pass already recorded itself. Empty-output and failed passes get an `auto note` and still advance the cadence. Agents may retire themselves with a reason when their goal is met; retirement stops wakes and income and invites the next direction.
 - Reflection honors `[autopilot] reflect.runtime` / `reflect.model`; a Codex pass inherits `runtimes.codex.model` when its own model is unset.
