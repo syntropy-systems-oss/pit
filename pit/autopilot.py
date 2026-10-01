@@ -460,6 +460,8 @@ class Autopilot:
             elif len(self.subs) >= self.max_subs():
                 self.echo(f"hand-back {agent}: REFUSED, subagents at cap {self.max_subs()} ({what})")
                 self.auto("refuse", f"subagents at cap {self.max_subs()}", agent=agent)
+            elif (full := self.runtime_full(book.agents[agent], now)):
+                self.echo(f"hand-back {agent}: waits, {full} ({what})")      # the hour rolls on; the hand-back stays due
             else:
                 sub = self.register(agent, f"autopilot hand-back: {what}", now)
                 self.echo(f"hand-back {agent}: spawn {sub} ({self.label(book.agents[agent])}) for {what}")
@@ -713,6 +715,23 @@ class Autopilot:
             if mode:
                 return mode
         return "auto"
+
+    def runtime_turns(self, rt: str, now: datetime) -> int:
+        """Turns spawned on runtime `rt` in the last hour: sub rows whose parent agent runs on it."""
+        rows = self.lg.rows()
+        book, cut = B.Book(rows), B.iso(now - timedelta(hours=1))
+        return sum(1 for r in rows if r["t"] == "agent" and r.get("kind") == "sub" and r["ts"] >= cut
+                   and r.get("parent") in book.agents and self.model(book.agents[r["parent"]])[0] == rt)
+
+    def runtime_full(self, row: dict, now: datetime) -> str | None:
+        """[autopilot] runtimes.<rt>.turns_per_hour (0 = no cap): why this agent's runtime takes no more turns this hour.
+        A hard cap on turns, the one unit both runtimes meter, so a day's usage spreads instead of burning out by noon."""
+        rt = self.model(row)[0]
+        cap = self.c["runtimes"].get(rt, {}).get("turns_per_hour", 0)
+        if not cap:
+            return None
+        n = self.runtime_turns(rt, now)
+        return f"runtime {rt} at its hourly cap ({n}/{cap} turns)" if n >= cap else None
 
     def model(self, row: dict) -> tuple[str, str | None]:
         """(runtime, model) of an agent row: its own, else [autopilot] runtimes.<runtime>.model, else sonnet for

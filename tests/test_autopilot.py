@@ -637,6 +637,22 @@ class Autopilot(unittest.TestCase):
         self.assertEqual(len(self.auto("reflect")), 2)
         self.assertEqual(len([r for r in self.lg.rows() if r["t"] == "reflect"]), 1)
 
+    def test_runtime_turns_per_hour_caps_spawns_and_the_handback_waits(self):
+        from unittest import mock
+        self.cfg["autopilot"]["runtimes"] = {"claude": {"model": "sonnet", "turns_per_hour": 1}}
+        for jid, who in (("j1", "a"), ("j2", "b")):
+            self.post(job(jid), who)
+            self.lg.append({"t": "result", "job": jid, "verdict": "fail", "cost": {"usd": 0.1, "lane": "gpu-small"}, "result": {}})
+        ap = self.ap()
+        said = []
+        ap.echo = said.append
+        with mock.patch.object(ap, "spawn", return_value=None):
+            ap.handback(datetime.now(timezone.utc))
+        spawned = [r for r in self.lg.rows() if r["t"] == "agent" and r.get("kind") == "sub"]
+        self.assertEqual(len(spawned), 1)                                      # one claude turn this hour
+        self.assertTrue(any("waits, runtime claude at its hourly cap (1/1 turns)" in x for x in said))
+        self.assertEqual([r for r in self.auto("refuse")], [])                 # a wait, not a refusal
+
     def test_a_result_on_a_reflect_post_never_wakes_reflect_as_an_agent(self):
         """Reflect's only turns are reflection passes: a result on a root it posted is the next pass's business."""
         from unittest import mock

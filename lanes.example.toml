@@ -136,6 +136,8 @@ runtimes.claude.model = "sonnet"        # an agent with no model of its own, on 
 # runtimes.claude.args = []             # extra claude -p args
 # runtimes.codex.model = "<codex-model>"  # unset = the codex CLI's own configured default
 # runtimes.codex.args = ["--skip-git-repo-check", "--sandbox", "workspace-write", "-c", 'approval_policy="never"']   # the default
+# runtimes.claude.turns_per_hour = 12  # hard cap per runtime (0 = no cap): spreads a plan's usage over the day; a hand-back waits
+# runtimes.codex.turns_per_hour = 0
 # reflect.runtime = "claude"            # autonomous reflection: claude (default) or codex
 # reflect.model = "opus"                # override; default opus on claude, runtimes.codex.model on codex
 # reflect.notes = "agents/GATE.md"      # a file the operator keeps; every pass reads it verbatim (what an outside gate says fails, directions)
