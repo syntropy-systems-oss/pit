@@ -111,6 +111,9 @@ class Book:
         self.flows: dict[str, float] = {}                # wallet -> usd
         self.last_drip: dict | None = None
         self.funds: dict[str, tuple[str, float]] = {}    # job -> (wallet, usd) booked at result: + refund, - overage
+        self.resulted: set[str] = set()                  # jobs with a result row: their funding is settled by that row
+        self.specs_posted: dict[str, dict] = {}          # job -> spec, for the funding a cancel of an unrun post returns
+        self.refunded: set[str] = set()
         self.retired: dict[str, dict] = {}               # agent -> its retire row: on the book, no wakes, no drip
         closed: set[str] = set()                         # betting closes at claim
         for r in rows:
@@ -133,10 +136,18 @@ class Book:
                     self._add(a, usd)
             elif t == "node" and r.get("kind") == "job" and r["spec"].get("proposer"):
                 self.proposers[r["id"]] = r["spec"]["proposer"]
+                self.specs_posted[r["id"]] = r["spec"]
                 if self.payer(r["spec"]):
                     self._add(self.payer(r["spec"]), -r["spec"].get("budget_usd", 0))
-            elif t == "result" and r.get("funding"):
-                self.funds[r["job"]] = (r["funding"]["wallet"], r["funding"]["usd"])     # a corrected result replaces the earlier one
+            elif t == "result":
+                self.resulted.add(r["job"])
+                if r.get("funding"):
+                    self.funds[r["job"]] = (r["funding"]["wallet"], r["funding"]["usd"])     # a corrected result replaces the earlier one
+            elif t == "cancel" and r.get("id") in self.specs_posted and r["id"] not in self.resulted and r["id"] not in self.refunded:
+                # a post cancelled before it ran used nothing: its funding goes back to the payer (its wagers are voided by settle)
+                spec = self.specs_posted[r["id"]]
+                if self.payer(spec):
+                    self._add(self.payer(spec), spec.get("budget_usd", 0)); self.refunded.add(r["id"])
             elif t == "claim":
                 closed.add(r["job"])
             elif t == "bet" and r["job"] not in closed:

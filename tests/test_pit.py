@@ -69,6 +69,25 @@ class Admit(unittest.TestCase):
         self.assertIsNone(specmod.admit(job("a"), CFG["lanes"], "/tmp"))      # no admit on the lane
 
 
+class CancelRefund(unittest.TestCase):
+    def test_cancelling_an_unrun_post_returns_its_funding(self):
+        lg = L.MemLedger()
+        lg.append({"t": "agent", "id": "a", "kind": "persistent", "brief": "x"})
+        lg.append({"t": "drip", "to": {"a": 10.0}, "minutes": 1})
+        s = job("j1", budget_usd=4, proposer="a")
+        lg.append({"t": "node", "kind": "job", "id": "j1", "spec": s})
+        self.assertAlmostEqual(B.Book(lg.rows()).balance("a"), 6.0)              # the post escrowed $4
+        lg.append({"t": "cancel", "id": "j1", "reason": "never mind", "agent": "a"})
+        self.assertAlmostEqual(B.Book(lg.rows()).balance("a"), 10.0)             # nothing ran: the $4 is back
+        lg.append({"t": "cancel", "id": "j1", "reason": "again", "agent": "a"})
+        self.assertAlmostEqual(B.Book(lg.rows()).balance("a"), 10.0)             # once
+        s2 = job("j2", budget_usd=4, proposer="a")
+        lg.append({"t": "node", "kind": "job", "id": "j2", "spec": s2})
+        lg.append({"t": "result", "job": "j2", "verdict": "pass", "cost": {"usd": 1.0, "lane": "gpu-small", "wall_s": 1}, "result": {}, "funding": {"wallet": "a", "usd": 3.0}})
+        lg.append({"t": "cancel", "id": "j2", "reason": "late", "agent": "a"})
+        self.assertAlmostEqual(B.Book(lg.rows()).balance("a"), 9.0)              # a result settled j2's funding; the cancel adds nothing
+
+
 class PostedClaims(unittest.TestCase):
     def setUp(self):
         from pit import cli
