@@ -1117,6 +1117,20 @@ runtimes.codex.model = "gpt-x"
             B.agent_set_row(B.Book(lg.rows()), "a", "gpt")
 
 
+class Behind(unittest.TestCase):
+    def test_commits_behind_the_lanes_base(self):
+        import tempfile, subprocess
+        repo = Path(tempfile.mkdtemp())
+        def g(*a): return subprocess.run(["git", "-C", str(repo), *a], capture_output=True, text=True, check=True).stdout
+        g("init", "-q", "-b", "main"); g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "one")
+        g("branch", "agent"); g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "two")
+        g("checkout", "-q", "agent")
+        cfg = {"lanes": {"ci": {"repo": str(repo), "base": "main"}}}
+        self.assertEqual(A.behind(repo, cfg), (1, "main"))
+        self.assertIsNone(A.behind(repo, {"lanes": {"ci": {}}}))       # no repo lane base: no fact
+        self.assertIsNone(A.behind(repo / "missing", cfg))
+
+
 class Workspaces(unittest.TestCase):
     def setUp(self):
         from pit import trees

@@ -159,6 +159,18 @@ def skill(name: str) -> str:
     return text.replace('"${CLAUDE_PLUGIN_ROOT}/bin/q"', "q").replace("${CLAUDE_PLUGIN_ROOT}", str(REPO))
 
 
+def behind(workspace, cfg: dict) -> tuple[int, str] | None:
+    """(commits a working tree's HEAD lacks from the lanes' base, that base), or None without a repo lane base or a tree.
+    A fact for the agent and for reflection; what to do about it is theirs."""
+    base = next((l.get("base") for l in cfg.get("lanes", {}).values() if l.get("repo") and l.get("base")), None)
+    if not base or not Path(workspace).exists():
+        return None
+    try:
+        return int(trees.git(workspace, "rev-list", "--count", f"HEAD..{base}").strip()), base
+    except Exception:
+        return None
+
+
 def bootstrap(root) -> str:
     """agents/BOOTSTRAP.md: how to be a member of this market (reflection evolves it; `q bootstrap`)."""
     p = Path(root) / "agents" / "BOOTSTRAP.md"
@@ -643,7 +655,7 @@ class Autopilot:
                             + (f", max {B.conf(self.cfg)['max_agents']}: planting needs a retirement first" if B.conf(self.cfg)["max_agents"] else "")
                             + (("; seats " + ", ".join(f"{k} {B.seats_taken(B.Book(rows), self.cfg).get(k, 0)}/{n}" for k, n in B.conf(self.cfg)["seats"].items())
                                 + ": a new agent takes a free seat's runtime and model unless you name one that has room") if B.conf(self.cfg)["seats"] else "")
-                            + "): " + json.dumps(reflect.agent_facts(rows)),
+                            + "): " + json.dumps(self.facts_with_trees(rows)),
                             BOOTSTRAP_LOOP, "agents/BOOTSTRAP.md now:\n" + bootstrap(self.root),
                             "Newcomer (most recently registered agent) bootstrap cost: " + json.dumps(B.newcomer_cost(rows)),
                             "Digest (q reflect --since-last):\n" + reflect.digest(rows)]
@@ -757,6 +769,17 @@ class Autopilot:
         rt, model = self.model(row)
         return f"{rt}/{model or 'default'}"
 
+    def facts_with_trees(self, rows: list[dict]) -> dict:
+        """reflect.agent_facts plus, for each active agent with a working tree, how far its branch is behind the lanes' base."""
+        facts = reflect.agent_facts(rows)
+        for agent, f in facts.items():
+            if f["retired"] or not self.c.get("workspace") or agent == B.REFLECT:
+                continue
+            path = (self.root / Path(self.c["workspace"].format(agent=agent)).expanduser()).resolve()
+            if (b := behind(path, self.cfg)):
+                f["behind_base"] = {"commits": b[0], "base": b[1]}
+        return facts
+
     def workspace(self, agent: str) -> Path | None:
         """The wallet's working tree, created by workspace_init when missing; reflection has none."""
         template = self.c.get("workspace")
@@ -805,6 +828,9 @@ class Autopilot:
         if workspace:
             branch = trees.git(workspace, "rev-parse", "--abbrev-ref", "HEAD").strip() if workspace.exists() else "(initialized on first turn)"
             prompt += f"\n\nYour working tree: {workspace}, branch {branch}; commit there, then post with --ref"
+            if (b := behind(workspace, self.cfg)) and b[0]:
+                prompt += (f". Your branch is {b[0]} commit{'s' if b[0] > 1 else ''} behind {b[1]} (`git log --oneline HEAD..{b[1]}` "
+                           f"is what landed there); a run at your ref benches your branch as it is, and the gate reads heads against {b[1]}")
         exe = shutil.which(rt)
         if self.dry or not exe:
             self.echo(f"--- prompt for {sub} ({rt}/{model or 'default'}){'' if exe else f': {rt} is not on PATH'} ---\n"
