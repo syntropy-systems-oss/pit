@@ -69,6 +69,10 @@ def add_specs(root, lg, cfg, loaded):
         errs = specmod.validate(s, cfg["lanes"], known, cfg.get("bench", {}).get("drivers"))
         if not errs and (err := specmod.admit(s, cfg["lanes"], root)):
             errs.append(err)
+        if not errs and s.get("informs"):
+            j = st.jobs.get(s["informs"])
+            if not j or specmod.is_read(j["spec"]) or j["state"] != "queued":
+                errs.append(f"informs {s['informs']!r}: not an open market (a queued run that is not a read)")
         if s.get("id") in st.jobs or s.get("id") in [x["id"] for _, x in specs]:
             errs.append(f"{s['id']} is already in the ledger (cancel or supersede it)")
         if "bag" in s:
@@ -316,6 +320,8 @@ def cmd_show(a):
     root, lg, cfg = ctx()
     st = L.fold(lg.rows())
     print(describe(st, a.id))
+    for rid in specmod.informed_by(st.jobs, a.id):
+        print("  " + B.read_moves(lg.rows(), rid, a.id))
     up = st.upstream(a.id)
     if up:
         print("lineage (upstream):")

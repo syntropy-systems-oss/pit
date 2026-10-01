@@ -109,7 +109,7 @@ Experiments climb in rungs. Each job names the branch it needs from the one belo
 pit: verdict=pass wall_s=74.7 meters={"tok_in": 1200, "tok_out": 900, "tok_cached": 48000} result={"acc": 0.78}
 ```
 
-Every key is optional and `result=` comes last. A line matching a stop rule in the spec's `fail_on` (default `feedback_report`; `cache_miss` is available) fails the run with that line as the reason; running out of funding means FAIL (partial trace kept); exiting without a verdict makes it INVALID, which is for harness errors where nothing ran, and a driver that reports INVALID must name its cause. A non-run is not evidence. The job's id, lane and funded seconds reach the command as `PIT_JOB`, `PIT_LANE` and `PIT_FUNDED_S`.
+Every key is optional and `result=` comes last. A line matching a stop rule in the spec's `fail_on` (default `feedback_report`; `cache_miss` is available) fails the run with that line as the reason; running out of funding means FAIL (partial trace kept); exiting without a verdict makes it INVALID, which is for harness errors where nothing ran, and a driver that reports INVALID must name its cause. A non-run is not evidence. The job's id, lane, funded seconds and claim (on one line) reach the command as `PIT_JOB`, `PIT_LANE`, `PIT_FUNDED_S` and `PIT_CLAIM`; a driver that settles a run by judging its trace against what the post claimed reads the claim there.
 
 ### Agents
 
@@ -151,6 +151,8 @@ Everything else is house logic. `q tick` mints `[pit] mint` (default 1.0) x the 
 
 Reads are how you buy framing; markets are how you get paid for being right. A spec with `kind = "read"` is a funded run like any other: a lane, `budget_usd` escrowed and turned into funded seconds, meters priced, the unspent part refunded and the overage taken. It has no market: no automatic stake, no house seed, no bets (`q bet` refuses: "reads have no market"), no settle and no pass or fail. Its driver ends with `pit: verdict=read result={...}` carrying whatever it produced and, by convention, `readout` (a path or inline text); the result books verdict `read`, or `invalid` when the driver stops, runs out of funding or never reports. A read needs no `if_pass`/`if_fail`; it needs `then = "<what you will do with the reading>"`. Reads are not in any record (neither wins nor losses), rank among the zero-matched jobs by cost (cheapest first), and the terminal lists them in the lane queue and the market table with a `read` badge and no odds. The proposer's hand-back says "Your read is in: <readout or log>; write what it makes you expect, as a finding, before you post a rollout." A later job may depend on a read (plain `depends_on`, not `@pass`/`@fail`) and template its `result`.
 
+A read can name the run it is for: `informs = "<job>"`, an open market (a queued job that is not a read). Its claim is then required and is the reader's prediction, in words, of what that run will do, written before the readout exists. The informed run waits while the read is queued or running (`q why` says so), so its betting stays open until the readout is in; when the read lands, everyone with money on the run, its proposer included, is woken with the readout and the reader's claim (`wake` reason `read:<read>:<job>`). The stake stays on the run; the read never has one. What a reading was worth is on the tape: `q show <job>` prints the book on the run before and after each read that informs it landed.
+
 ```toml
 id = "lens-wording-b"
 kind = "read"
@@ -159,6 +161,8 @@ then = "post a rollout of B only if the reading names the tool it needs"
 lane = "lens"
 budget_usd = 0.5
 scenario = "wording-b"
+informs = "rollout-b"                  # optional: the open run this reading is for
+claim = "the model fills the parameter but still never writes it unprompted"   # required with informs
 ```
 
 ### Blind betting prevents cascades What an agent does see is the arithmetic: what $1 on each side returns against the opening book, which is the automatic stake, the house seed and a human's stake at posting, so backing the proposer visibly returns nothing unless someone bets the other way.

@@ -96,6 +96,16 @@ class PostedClaims(unittest.TestCase):
         p.write_text("\n".join(f"{k} = {json.dumps(v)}" for k, v in s.items()))
         return str(p)
 
+    def test_a_read_informs_only_an_open_market(self):
+        self.q("post", self.specfile("x", claim="x holds"), "--as", "a")
+        read = dict(kind="read", claim="the model will omit stage", then="read before x runs")
+        for target, why in (("ghost", "ghost"), ("x2", "x2")):
+            with self.assertRaisesRegex(SystemExit, f"informs '{why}': not an open market"):
+                self.q("post", self.specfile("r", informs=target, **read), "--as", "b")
+        self.q("post", self.specfile("r", informs="x", **read), "--as", "b")
+        with self.assertRaisesRegex(SystemExit, "informs 'r': not an open market"):          # a read informs a run, not a read
+            self.q("post", self.specfile("r2", informs="r", **read), "--as", "b")
+
     def test_post_requires_claim_and_cli_overrides_spec(self):
         for kw in ({}, {"claim": ""}, {"claim": " \n\t"}):
             with self.subTest(kw=kw):
@@ -997,6 +1007,33 @@ class Pit(unittest.TestCase):
         silent = runmod.record(self.lg, self.PCFG, rd, "gpu-small", {"report": {}, "wall_s": 1.0, "rc": 0})
         self.assertEqual(silent["verdict"], "invalid")                                   # a driver that never reported
         self.assertEqual(L.fold(self.lg.rows()).dep_reason("rd"), "rd ended invalid: not evidence; rerun or cancel")
+
+    def test_a_read_informs_one_open_run_and_holds_it_until_the_readout(self):
+        rd = job("rd", kind="read", claim="the model writes stage only once the question names a shelf", informs="x",
+                 then="read it before x runs", if_pass="", if_fail="")
+        self.assertEqual(specmod.validate(rd, CFG["lanes"]), [])
+        self.assertIn("a read that informs a run states its claim: what you expect that run to do, written before the readout",
+                      specmod.validate({**rd, "claim": ""}, CFG["lanes"]))
+        self.assertIn("informs is a read's: it names the run the reading is for", specmod.validate(job("y", informs="x"), CFG["lanes"]))
+        self.assertIn("informs must be a job id", specmod.validate({**rd, "informs": ["x"]}, CFG["lanes"]))
+        self.post(job("x"), "a")
+        self.bet("x", "fail", 2, "b", why="the wording moves the value, not the slot")
+        self.assertIn("x", L.fold(self.lg.rows()).frontier())
+        self.post(rd, "b", ts="2026-09-29T04:33:00Z")
+        st = L.fold(self.lg.rows())
+        self.assertNotIn("x", st.frontier())                                              # its bets stay open for the readout
+        self.assertEqual(st.why_blocked("x"), ["waits for rd, the read that informs it (queued)"])
+        self.assertIn("read rd: not landed; so far PASS $0.25 / FAIL $2.00 (2 bets)", B.read_moves(self.lg.rows(), "rd", "x"))
+        self.lg.append({"t": "result", "job": "rd", "verdict": "read", "result": {"readout": "reads/rd.md"},
+                        "cost": {"usd": 0.1, "wall_s": 60, "lane": "gpu-small"}}, "2026-09-29T04:40:00Z")
+        self.bet("x", "pass", 3, "b", why="the readout reads stage as written", ts="2026-09-29T04:41:00Z")
+        self.assertIn("x", L.fold(self.lg.rows()).frontier())
+        self.assertEqual(B.read_moves(self.lg.rows(), "rd", "x"),
+                         "read rd landed 2026-09-29T04:40:00Z (read): before PASS $0.25 / FAIL $2.00 (2 bets) · after PASS $3.00 / FAIL $0.00 (1 bets)")
+        self.post(job("z"), "a")
+        self.post(job("rd3", kind="read", claim="c", informs="z", then="t", if_pass="", if_fail=""), "b")
+        self.lg.append({"t": "cancel", "id": "rd3", "reason": "not needed"})
+        self.assertIn("z", L.fold(self.lg.rows()).frontier())                             # a cancelled read holds nothing
 
     def test_edge_refuses_missing_node(self):
         self.post(job("x"), "a")

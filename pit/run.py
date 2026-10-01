@@ -187,7 +187,8 @@ def run_job(root, ledger: L.Ledger, cfg: dict, jid: str, lane: str | None = None
         raise SystemExit(cid)
     echo(f"q run {jid} on {lane}: {cmd}")
     funded, l = specmod.funded_seconds(s, cfg["lanes"]), cfg["lanes"].get(lane, {})
-    env = {**{k: str(v) for k, v in l.get("env", {}).items()}, "PIT_JOB": jid, "PIT_LANE": lane, "PIT_FUNDED_S": str(funded)}
+    env = {**{k: str(v) for k, v in l.get("env", {}).items()}, "PIT_JOB": jid, "PIT_LANE": lane, "PIT_FUNDED_S": str(funded),
+           "PIT_CLAIM": " ".join(s.get("claim", "").split())}      # a driver that judges the trace against the claim reads it here
     if l.get("repo"):
         env.update(PIT_ROOT=str(Path(root).resolve()), PIT_REF_NAME=s.get("ref_name", ""))
     if l.get("url"):

@@ -27,11 +27,12 @@ class Runner(unittest.TestCase):
     def test_job_on_a_url_lane_runs_on_the_runner(self):
         (self.tmp / "ledger").mkdir()
         lg = L.Ledger(self.tmp / "ledger", "t")
-        add(lg, job("r", budget_usd=1, run="""echo "job $PIT_JOB for $PIT_FUNDED_S s in $(basename "$PWD")"; """
+        add(lg, job("r", budget_usd=1, run="""echo "job $PIT_JOB for $PIT_FUNDED_S s in $(basename "$PWD")"; echo "claim: $PIT_CLAIM"; """
                                             """echo 'pit: verdict=pass meters={"tok_out": 100000, "widgets": 3} result={"k": 1}'"""))
         out = []
         row = runmod.run_job(self.tmp, lg, self.cfg, "r", echo=out.append)
         self.assertIn("  | job r for 257 s in slot-0\n", [o + "\n" for o in out])      # env and the runner's own working dir
+        self.assertIn("  | claim: r holds", out)                                     # a driver may judge the trace against it
         self.assertEqual((row["verdict"], row["result"]), ("pass", {"k": 1}))
         c = row["cost"]
         self.assertLess(c["wall_s"], 5)                                               # the runner's wall_s line, not the client's

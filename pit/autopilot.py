@@ -444,6 +444,8 @@ class Autopilot:
                         f"`q result {jid} --verdict pass|fail --as <you>`. The question: {st.jobs[jid]['spec']['question']}\n"
                         + DESK if jid in st.jobs else f"You were woken: {r['reason']}." + (
                             " " + REWAKE.format(gap=f'{self.c["idle_wake_gap_s"]:.0f}') if r["reason"].startswith("rewake") else ""))
+                if r["reason"].startswith("read:") and r["reason"].count(":") == 2:
+                    text = read_landed(st, *r["reason"].split(":")[1:])
                 if jid in st.jobs:      # the k-th hand-back of this job: k-1 is the retry number
                     k = sum(1 for x in rows if x["t"] == "wake" and x["reason"] == r["reason"] and x["ts"] <= r["ts"])
                     if k > 1:
@@ -579,11 +581,21 @@ class Autopilot:
         rows = self.lg.rows()
         if self.mcur is None:
             self.mcur = len(rows)
-        book, new = B.Book(rows), []
+        book, st, new, reads = B.Book(rows), L.fold(rows), [], []
         for r in rows[self.mcur:]:
             if r["t"] == "node" and r.get("kind") == "job" and book.payer(r["spec"]) in book.agents:
                 new.append((r["id"], book.payer(r["spec"])))
+            if r["t"] == "result" and r.get("verdict") == "read" and r["job"] in st.jobs \
+                    and st.jobs[r["job"]]["spec"].get("informs") in st.jobs:
+                reads.append((r["job"], st.jobs[r["job"]]["spec"]))
         self.mcur = len(rows)
+        for rid, s in reads:      # a readout reaches everyone with money on the run it informs (the reader has its hand-back)
+            jid = s["informs"]
+            who = {b.get("book") or book.wallet(b["agent"]) for b in book.bets if b["job"] == jid}
+            who.add(book.wallet(book.proposers.get(jid) or st.jobs[jid]["spec"].get("proposer") or B.HUMAN))
+            for a in sorted(who & set(book.active()) - {book.payer(s), B.REFLECT}):
+                self.echo(f"agent {a} -> wake (read:{rid}:{jid})")
+                self.lg.append({"t": "wake", "agent": a, "reason": f"read:{rid}:{jid}"}, B.iso(now))
         cut = B.iso(now - timedelta(seconds=self.c["market_wake_floor_s"]))
         for a in book.active():
             js = [j for j, w in new if w != a]
@@ -894,12 +906,30 @@ def wake_tag(reason: str) -> str:
     return reason
 
 
+def readout(res: dict) -> str:
+    return (res.get("result") or {}).get("readout") or res.get("log") or json.dumps(res.get("result", {}))
+
+
+def read_landed(st: L.State, rid: str, jid: str) -> str:
+    """The hand-back of a readout to someone with money on the run it informs."""
+    rd = st.jobs.get(rid)
+    if not rd or not rd["result"] or jid not in st.jobs:
+        return f"You were woken: read:{rid}:{jid}."
+    claim = " ".join(rd["spec"].get("claim", "").split())
+    return (f"A read informing {jid} (you posted it or have money on it) has landed: {readout(rd['result'])}. "
+            f"The reader's claim, written before the readout: {claim} "
+            f"Read it the way you read a transcript: what the model was weighing when it read the wording. {jid} has not run; "
+            f"its betting is open until it is claimed: bet again if the reading moved what you expect "
+            f"(`q bet {jid} PASS|FAIL <usd> --why '…'`), or write `pass: <reason>`.")
+
+
 def finished(jid: str, j: dict) -> str:
     res, s = j["result"], j["spec"]
     c = res.get("cost", {})
     if res["verdict"] == "read":
-        where = (res.get("result") or {}).get("readout") or res.get("log") or json.dumps(res.get("result", {}))
-        return (f"Your read is in: {where}; write what it makes you expect, as a finding, before you post a rollout. "
+        nxt = (f"before {s['informs']} runs; everyone with money on it has it now" if s.get("informs")
+               else "before you post a rollout")
+        return (f"Your read is in: {readout(res)}; write what it makes you expect, as a finding, {nxt}. "
                 f"cost ${c.get('usd', 0):.2f} ({c.get('wall_s', 0):.0f}s on {c.get('lane', '?')})."
                 + (f" You said you would: {s['then']}" if s.get("then") else ""))
     branch = s.get(f"if_{res['verdict']}")

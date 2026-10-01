@@ -158,6 +158,9 @@ class State:
         if jid in self.stale:
             s = self.stale[jid]
             out.append(f"stale: {s['refuted']} refuted by {s['by']} at {s['ts']} (q review {jid} to re-admit)")
+        for rid in specmod.informed_by(self.jobs, jid):      # its bets stay open until the readout has reached them
+            if self.jobs[rid]["state"] in ("queued", "running"):
+                out.append(f"waits for {rid}, the read that informs it ({self.jobs[rid]['state']})")
         for d in j["spec"]["depends_on"]:
             r = self.dep_reason(d)
             if r:

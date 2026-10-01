@@ -495,6 +495,29 @@ class Autopilot(unittest.TestCase):
         ap.tick(t0 + timedelta(seconds=80))
         self.assertIn(("b", "market:n0,n1,n2+2"), self.mwakes())
 
+    def test_a_readout_wakes_everyone_with_money_on_the_run_it_informs(self):
+        self.lg.append(B.agent_row(B.Book(self.lg.rows()), "c", "c brief"))
+        self.lg.append({"t": "sleep", "agent": "c", "until": {"event": True}, "note": "fixture"})
+        ap = self.ap()
+        t0 = datetime.now(timezone.utc)
+        ap.tick(t0)
+        self.post(job("x"), "a")
+        rows = self.lg.rows()
+        self.lg.append(B.bet_row(B.Book(rows), L.fold(rows), "x", "main", "fail", 1, "b", why="no"))
+        self.post(job("rd", kind="read", claim="it will ask which client", informs="x", then="t", lane="ci", run="true"), "c")
+        ap.tick(t0 + timedelta(seconds=1))
+        ap.wait()
+        self.lg.append({"t": "result", "job": "rd", "verdict": "read", "result": {"readout": "reads/rd/readout.md"},
+                        "cost": {"usd": 0.1, "wall_s": 6, "lane": "ci"}})
+        ap.tick(t0 + timedelta(seconds=60))
+        ap.wait()
+        self.assertEqual(sorted((r["agent"], r["reason"]) for r in self.lg.rows() if r["t"] == "wake" and r["reason"].startswith("read:")),
+                         [("a", "read:rd:x"), ("b", "read:rd:x")])                      # proposer and bettor, not the reader
+        c = next(c for c in self.stub_calls() if "You are b-" in c and "A read informing x" in c)
+        self.assertIn("has landed: reads/rd/readout.md. The reader's claim, written before the readout: it will ask which client", c)
+        self.assertIn("before x runs; everyone with money on it has it now",
+                      A.finished("rd", L.fold(self.lg.rows()).jobs["rd"]))
+
     def test_own_result_wakes_before_the_gap(self):
         self.post(slow("p1", s=0), "a")
         ap = self.ap()

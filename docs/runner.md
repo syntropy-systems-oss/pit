@@ -45,7 +45,7 @@ base = "main"                                         # the default ref; a spec'
 | `repo`, `ref`, `script` | a repository, a ref (a branch, a tag, a sha, or `refs/pull/N/head`) and a shell command to run in a checkout of it at that ref |
 | `funded_s` | seconds the funding buys: the run is killed at this many seconds after the request arrived |
 | `base` | comparison ref for the diffstat (defaults to `ref` for direct protocol callers) |
-| `env` | extra environment: the dispatcher sends `PIT_JOB`, `PIT_LANE`, `PIT_FUNDED_S` |
+| `env` | extra environment: the dispatcher sends `PIT_JOB`, `PIT_LANE`, `PIT_FUNDED_S`, `PIT_CLAIM` |
 
 The reply is `text/plain`, streamed line by line as the command prints (stdout and stderr merged). The dispatcher reads
 it exactly as it reads a forked process: the command's own `pit: verdict=... meters={...} result={...}` line is the

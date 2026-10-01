@@ -592,6 +592,20 @@ def new_markets(rows: list[dict], cfg: dict, agent: str, since: int, n: int = 10
     return "New markets since your last turn:\n" + "\n".join(out[:n] + more) + "\n" + NEW_RULE
 
 
+def read_moves(rows: list[dict], rid: str, jid: str) -> str:
+    """The book on jid before and after the read rid landed: what the reading was worth to the market."""
+    res = next((r for r in rows if r["t"] == "result" and r["job"] == rid), None)
+    bets = [b for b in rows if b["t"] == "bet" and b["job"] == jid]
+
+    def book(bs):
+        pas, fail = (sum(b["usd"] for b in bs if b["side"] == x) for x in ("pass", "fail"))
+        return f"PASS ${pas:.2f} / FAIL ${fail:.2f} ({len(bs)} bets)"
+    if not res:
+        return f"read {rid}: not landed; so far {book(bets)}"
+    return (f"read {rid} landed {res['ts'][:19]}Z ({res['verdict']}): before {book([b for b in bets if b['ts'] < res['ts']])}"
+            f" · after {book([b for b in bets if b['ts'] >= res['ts']])}")
+
+
 def until_text(u: dict) -> str:
     return ", ".join(filter(None, [u.get("event") and "the next board event", u.get("balance") is not None and f"balance ${u['balance']:.2f}",
                                    u.get("result") and f"{u['result']} has a result",

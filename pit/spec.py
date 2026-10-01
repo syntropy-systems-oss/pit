@@ -28,6 +28,11 @@ def is_read(spec: dict) -> bool:
     return spec.get("kind") == "read"
 
 
+def informed_by(jobs: dict, jid: str) -> list[str]:
+    """The reads whose `informs` names jid, in posting order."""
+    return [r for r, j in jobs.items() if is_read(j["spec"]) and j["spec"].get("informs") == jid]
+
+
 def load(path) -> dict:
     return normalize(tomllib.loads(Path(path).read_text()))
 
@@ -138,6 +143,14 @@ def validate(spec: dict, lanes: dict, known: list[str] | None = None, drivers: l
         errs.append("claim must be a string")
     elif not claim.strip() and not (is_read(spec) or spec.get("bag")):
         errs.append("a post states its claim")
+    informs = spec.get("informs")
+    if informs is not None:
+        if not is_read(spec):
+            errs.append("informs is a read's: it names the run the reading is for")
+        elif not isinstance(informs, str) or not ID_RE.match(informs):
+            errs.append("informs must be a job id")
+        elif isinstance(claim, str) and not claim.strip():
+            errs.append("a read that informs a run states its claim: what you expect that run to do, written before the readout")
     if spec.get("kind") not in (None, "read"):
         errs.append(f"unknown kind {spec['kind']!r} (a job, or \"read\")")
     for k in ("id", "question", *(("then",) if is_read(spec) else ("if_pass", "if_fail"))):
