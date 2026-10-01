@@ -216,7 +216,7 @@ def run_job(root, ledger: L.Ledger, cfg: dict, jid: str, lane: str | None = None
             r = {"rc": None, "wall_s": time.monotonic() - t0, "output": str(e),
                  "report": {"verdict": "invalid", "note": f"worktree: {e}"}}
     else:
-        r = execute(cmd, funded, s["fail_on"], cwd=os.path.expanduser(s["cwd"]) if s.get("cwd") else (root if synth else None),
+        r = execute(cmd, funded, s["fail_on"], cwd=os.path.expanduser(s["cwd"]) if s.get("cwd") else root,     # the state root, whoever dispatches it
                     echo=echo, env=env)
     # the transcript: autopilot's log of this process (PIT_RUN_LOG), else a q run by hand writes one in the same place
     r["log"] = os.environ.pop("PIT_RUN_LOG", None)

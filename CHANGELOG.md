@@ -20,6 +20,7 @@
 - `[autopilot] runtimes.<rt>.turns_per_hour`: a hard hourly cap on turns per runtime (0 = none); a hand-back whose runtime is at cap waits for the hour to roll, it is not refused.
 - `[pit.seats]`: the population's composition by `runtime/model`. `q agent add` without a runtime takes the first seat with room; with one, refuses when that seat is full. Reflect is told the seats and vacancies. Retire an Opus agent and the replacement is Opus.
 - `[autopilot] reflect.notes`: a file under the state root the reflection pass reads verbatim, for what an operator's own gate says the product fails and the directions that follow; the operator keeps it, the pass decides.
+- A run on a lane without `repo` executes in the state root whoever dispatches it (an agent's `q run` from its own tree no longer changes what a relative path means).
 - Lane `admit`: a command run at post time with the pinned spec on stdin; non-zero refuses the post with its last line. Deterministic site checks move out of agents' bootstrap text into code; the reflection prompt now says so.
 - `[lanes.X.env]`: environment every run on the lane inherits, runner and free-form `run` alike (ports, timeouts, endpoints), so a hand-written run cannot collide with the lane's conventions by omission.
 - Reflect never takes an agent turn: a result on a root it posted does not wake it (its only turns are reflection passes; the digest carries the result).
