@@ -89,15 +89,26 @@ class State:
                     out.append({"type": "edits", "from": m[2] or m[5], "to": jid, "ts": j["added"]})
         return out
 
+    def adjacency(self) -> tuple[dict, dict]:
+        """(children, parents) of every node, built once from all_edges and kept while the graph is unchanged. metrics()
+        asks for children and parents thousands of times per tick; rebuilding the edge list each time was quadratic."""
+        key = (len(self.edges), len(self.jobs))
+        if getattr(self, "_adj_key", None) != key:
+            kids, parents = {}, {}
+            for e in self.all_edges():
+                t = e["type"]
+                if t == "depends-on":
+                    kids.setdefault(e["to"], set()).add(e["from"]); parents.setdefault(e["from"], set()).add(e["to"])
+                elif t in ("produces", "edits", "refines"):
+                    kids.setdefault(e["from"], set()).add(e["to"]); parents.setdefault(e["to"], set()).add(e["from"])
+                elif t == "refutes":
+                    parents.setdefault(e["to"], set()).add(e["from"])
+            self._adj_key, self._kids, self._parents = key, kids, parents
+        return self._kids, self._parents
+
     def children(self, node: str) -> set[str]:
         """Nodes whose validity rests on `node` (the direction staleness flows)."""
-        kids = set()
-        for e in self.all_edges():
-            if e["type"] == "depends-on" and e["to"] == node:
-                kids.add(e["from"])
-            elif e["type"] in ("produces", "edits", "refines") and e["from"] == node:
-                kids.add(e["to"])
-        return kids
+        return set(self.adjacency()[0].get(node, ()))
 
     def downstream(self, node: str, skip: frozenset = frozenset()) -> set[str]:
         seen, todo = set(), [node]
@@ -110,12 +121,10 @@ class State:
 
     def upstream(self, node: str) -> set[str]:
         seen, todo = set(), [node]
+        parents = self.adjacency()[1]
         while todo:
             n = todo.pop()
-            for e in self.all_edges():
-                parent = (e["to"] if e["type"] == "depends-on" and e["from"] == n else
-                          e["from"] if e["type"] in ("produces", "edits", "refines", "refutes") and e["to"] == n
-                          else None)
+            for parent in parents.get(n, ()):
                 if parent and parent not in seen:
                     seen.add(parent)
                     todo.append(parent)
